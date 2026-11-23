@@ -21,8 +21,8 @@ localStorage saves · Vitest unit tests + headless-browser QA playthroughs per s
 | 3 | Enemy AI & telegraphs | ✅ Done | Fair, readable fights |
 | 4 | Rewards & loot | ✅ Done | Kill → loot → equip → stronger |
 | 5 | Skills & flasks | ✅ Done | Full combat kit |
-| 6 | Passive skill tree | ⬜ Next | Meaningful build choice |
-| 7 | Zone objective & boss | ⬜ Planned | Complete the loop |
+| 6 | Passive skill tree | ✅ Done | Meaningful build choice |
+| 7 | Zone objective & boss | ⬜ Next | Complete the loop |
 | 8 | Save slots | ⬜ Planned | Survive reload; migration tested |
 | 9 | Polish & release | ⬜ Planned | Ship-ready build |
 
@@ -88,10 +88,18 @@ time survived) and rising again keeps progression while restoring the kit.
 The HUD reads at a glance: cooldown sweeps, mana costs, unaffordable dimming,
 flask charge pips.
 
-### Slice 6 — Passive skill tree
-A ~30-node PoE-flavored tree with clusters (offense/defense/utility), one point per
-level, allocation UI with node tooltips and refund rules; stat effects visible in the
-character sheet; build choices meaningfully change combat numbers (verified by tests).
+### Slice 6 — Passive skill tree ✅
+A 33-node tree radiating from "The Exile's Path" into offence, defence and
+utility clusters, with five keystones at the branch ends (Annihilation,
+Archmage, Unbreakable, Shimmering Veil, Pathfinder). One point per level;
+nodes unlock only when every prerequisite is allocated, and refunds are
+blocked only when they would orphan an allocated node (the root is
+permanent). Passive bonuses feed the shared stat derivation before attribute
+synergies, so attribute nodes compound — the tree visibly moves attack/spell
+damage, armour, evasion, energy shield, life and mana in the character sheet
+and in combat numbers. The tree screen (P) renders the graph with lit
+connectors, cluster-coloured nodes, hover tooltips and allocate/refund
+clicks; unspent points nag from the HUD.
 
 ### Slice 7 — Zone objective & boss
 Zone objective tracking ("clear the camps", "slay the Ashen Warden") with HUD tracker;

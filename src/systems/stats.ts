@@ -1,7 +1,8 @@
 import { getClass } from '../content/classes';
-import { getAffix } from '../content/affixes';
+import { getAffix, type AffixStat } from '../content/affixes';
 import type { ClassDef } from '../content/types';
 import type { ItemSlot } from '../content/items';
+import { getPassive } from '../content/passives';
 import type { GameState, InventoryState } from '../sim/state';
 import { PLAYER_MAX_HP, PLAYER_BASE_MANA, SYNERGY, manaRegenFor } from '../sim/state';
 
@@ -35,6 +36,45 @@ export interface EffectiveStats {
 
 type Equipment = InventoryState['equipment'];
 
+/** Shared bonus application for equipment affixes and passive effects. */
+function applyStatBonus(stats: EffectiveStats, stat: AffixStat, value: number): void {
+  switch (stat) {
+    case 'maxHp':
+      stats.maxHp += value;
+      break;
+    case 'maxMana':
+      stats.maxMana += value;
+      break;
+    case 'attackDamagePct':
+      stats.attackDamagePct += value;
+      break;
+    case 'spellDamagePct':
+      stats.spellDamagePct += value;
+      break;
+    case 'armour':
+      stats.armour += value;
+      break;
+    case 'evasion':
+      stats.evasion += value;
+      break;
+    case 'energyShield':
+      stats.energyShield += value;
+      break;
+    case 'moveSpeedPct':
+      stats.moveSpeedPct += value;
+      break;
+    case 'strength':
+      stats.strength += value;
+      break;
+    case 'dexterity':
+      stats.dexterity += value;
+      break;
+    case 'intelligence':
+      stats.intelligence += value;
+      break;
+  }
+}
+
 /** Chance cap for a fully evaded attack hit. */
 export const EVADE_CAP = 0.75;
 /** Mitigation cap for armour against a single hit. */
@@ -45,11 +85,16 @@ export const ES_RECHARGE_DELAY = 2;
 export const ES_RECHARGE_RATE = 0.35;
 
 /**
- * Derived stats: class base + level growth + equipment affixes, then
- * attribute synergies. Pure and recomputed on every change so nothing stale
- * can leak into combat.
+ * Derived stats: class base + level growth + equipment affixes + passive
+ * tree, then attribute synergies. Pure and recomputed on every change so
+ * nothing stale can leak into combat.
  */
-export function computeStats(classDef: ClassDef, level: number, equipment: Equipment): EffectiveStats {
+export function computeStats(
+  classDef: ClassDef,
+  level: number,
+  equipment: Equipment,
+  allocated: readonly string[] = [],
+): EffectiveStats {
   const stats: EffectiveStats = {
     strength: classDef.stats.strength,
     dexterity: classDef.stats.dexterity,
@@ -69,43 +114,15 @@ export function computeStats(classDef: ClassDef, level: number, equipment: Equip
     const item = equipment[slot];
     if (!item) continue;
     for (const affix of item.affixes) {
-      const def = getAffix(affix.id);
-      switch (def.stat) {
-        case 'maxHp':
-          stats.maxHp += affix.value;
-          break;
-        case 'maxMana':
-          stats.maxMana += affix.value;
-          break;
-        case 'attackDamagePct':
-          stats.attackDamagePct += affix.value;
-          break;
-        case 'spellDamagePct':
-          stats.spellDamagePct += affix.value;
-          break;
-        case 'armour':
-          stats.armour += affix.value;
-          break;
-        case 'evasion':
-          stats.evasion += affix.value;
-          break;
-        case 'energyShield':
-          stats.energyShield += affix.value;
-          break;
-        case 'moveSpeedPct':
-          stats.moveSpeedPct += affix.value;
-          break;
-        case 'strength':
-          stats.strength += affix.value;
-          break;
-        case 'dexterity':
-          stats.dexterity += affix.value;
-          break;
-        case 'intelligence':
-          stats.intelligence += affix.value;
-          break;
-      }
+      applyStatBonus(stats, getAffix(affix.id).stat, affix.value);
     }
+  }
+
+  // Passive tree bonuses land before synergies so attribute nodes compound.
+  for (const id of allocated) {
+    const node = getPassive(id);
+    if (!node) continue;
+    for (const effect of node.effects) applyStatBonus(stats, effect.stat, effect.value);
   }
 
   // Attribute synergies (see SYNERGY in sim/state.ts).
@@ -123,7 +140,12 @@ export function computeStats(classDef: ClassDef, level: number, equipment: Equip
 }
 
 export function getPlayerStats(state: GameState): EffectiveStats {
-  return computeStats(getClass(state.player.classId), state.level, state.inventory.equipment);
+  return computeStats(
+    getClass(state.player.classId),
+    state.level,
+    state.inventory.equipment,
+    state.passives.allocated,
+  );
 }
 
 /** Re-derive player combat stats after level or equipment changes. */

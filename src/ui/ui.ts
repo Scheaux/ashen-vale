@@ -68,6 +68,7 @@ export class Ui {
   private readonly manaText: HTMLElement;
   private readonly xpFill: HTMLElement;
   private readonly levelText: HTMLElement;
+  private readonly pointsBadge: HTMLElement;
   private readonly toastLayer: HTMLElement;
   private readonly hotbar: HTMLElement;
   private readonly flaskEls = new Map<FlaskKind, HTMLElement>();
@@ -94,6 +95,7 @@ export class Ui {
     this.manaText = root.querySelector('[data-mana-text]') as HTMLElement;
     this.xpFill = root.querySelector('[data-xp-fill]') as HTMLElement;
     this.levelText = root.querySelector('[data-hud-level]') as HTMLElement;
+    this.pointsBadge = root.querySelector('[data-hud-points]') as HTMLElement;
     this.toastLayer = root.querySelector('[data-toasts]') as HTMLElement;
     this.hotbar = root.querySelector('[data-hotbar]') as HTMLElement;
 
@@ -152,6 +154,14 @@ export class Ui {
     const ratio = Math.max(0, Math.min(1, xp / Math.max(1, xpToNext)));
     this.xpFill.style.width = `${(ratio * 100).toFixed(1)}%`;
     this.levelText.textContent = `LVL ${level}`;
+  }
+
+  /** Unspent passive points nag (slice 6). */
+  setPassivePoints(available: number): void {
+    this.pointsBadge.classList.toggle('hidden', available <= 0);
+    if (available > 0) {
+      this.pointsBadge.textContent = `${available} passive point${available === 1 ? '' : 's'} — press P`;
+    }
   }
 
   /** Per-frame resource readout: mana bar, cooldown sweeps, flask charges. */
@@ -334,6 +344,7 @@ export class Ui {
             <div class="hud__xp-fill" data-xp-fill></div>
             <span class="hud__lvl" data-hud-level>LVL 1</span>
           </div>
+          <div class="hud__pts hidden" data-hud-points></div>
         </div>
         <div class="hotbar-row">
           <div class="hotbar" data-hotbar></div>
@@ -350,7 +361,7 @@ export class Ui {
             </button>
           </div>
         </div>
-        <div class="hud__hints">Left click: move · Click a husk: attack · Q W E R: skills · 1 2: flasks · I: inventory · Esc: pause</div>
+        <div class="hud__hints">Left click: move · Click a husk: attack · Q W E R: skills · 1 2: flasks · P: passives · I: inventory · Esc: pause</div>
         <div class="hud__badge">Skills &amp; flasks · v0.5</div>
       </div>
 

@@ -26,11 +26,20 @@ import { damagePlayer } from './systems/combat';
 import { useFlask, type FlaskKind } from './systems/flasks';
 import { equipItem, unequipItem } from './systems/inventory';
 import { setMoveTarget } from './systems/movement';
+import {
+  allocatePassive,
+  passivePointsAvailable,
+  passivePointsSpent,
+  passivePointsTotal,
+  passiveRefusalMessage,
+  refundPassive,
+} from './systems/passives';
 import { grantXp } from './systems/progression';
 import { evadeChance, getPlayerStats } from './systems/stats';
 import { FloatingTextLayer } from './ui/floatingText';
 import { InventoryPanel } from './ui/inventory';
 import { NameplateLayer } from './ui/nameplates';
+import { PassiveTreePanel } from './ui/passives';
 import { Ui, type GameMode } from './ui/ui';
 
 type GameEvents = {
@@ -80,6 +89,7 @@ export interface AshenDebug {
     cooldowns: Record<string, number>;
     flasks: { health: number; mana: number; max: number };
     run: { kills: number; damageTaken: number; evades: number; lastBlow: string | null; seconds: number };
+    passives: { allocated: string[]; spent: number; total: number; available: number };
     level: number;
     xp: number;
     xpToNext: number;
@@ -130,6 +140,7 @@ class Game {
   private readonly floatingText: FloatingTextLayer;
   private readonly nameplates: NameplateLayer;
   private readonly inventoryPanel: InventoryPanel;
+  private readonly passivePanel: PassiveTreePanel;
   private readonly ui: Ui;
   private readonly loop: GameLoop;
   private readonly bus = new EventBus<GameEvents>();
@@ -200,6 +211,10 @@ class Game {
       onEquip: (uid) => this.handleEquip(uid),
       onUnequip: (slot) => this.handleUnequip(slot),
     });
+    this.passivePanel = new PassiveTreePanel(uiRoot, {
+      onAllocate: (id) => this.handlePassiveAllocate(id),
+      onRefund: (id) => this.handlePassiveRefund(id),
+    });
     this.ui.setMode('title');
 
     this.bus.on('input:move-target', ({ x, z }) => {
@@ -267,6 +282,7 @@ class Game {
     this.lootViews.clear();
     this.nameplates.clear();
     this.inventoryPanel.close();
+    this.passivePanel.close();
     this.dead = false;
     this.tellTelegraphs = 0;
     this.tellPlayerDamages = 0;
@@ -379,6 +395,8 @@ class Game {
         flasks: state.flasks,
       });
       if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
+      if (this.passivePanel.visible) this.passivePanel.sync(state);
+      this.ui.setPassivePoints(passivePointsAvailable(state));
       this.rig.follow(state.player.position.x, state.player.position.z, dt);
     }
     this.updateHover();
@@ -500,7 +518,18 @@ class Game {
         if (this.inventoryPanel.visible && this.state) this.inventoryPanel.sync(this.state);
         return;
       }
+      if (key === 'p' || key === 'P') {
+        if (this.mode !== 'playing' || this.dead || e.repeat) return;
+        e.preventDefault();
+        this.passivePanel.toggle();
+        if (this.passivePanel.visible && this.state) this.passivePanel.sync(this.state);
+        return;
+      }
       if (e.key !== 'Escape') return;
+      if (this.passivePanel.visible) {
+        this.passivePanel.close();
+        return;
+      }
       if (this.inventoryPanel.visible) {
         this.inventoryPanel.close();
         return;
@@ -581,6 +610,26 @@ class Game {
     }
   }
 
+  // ---------- Passive tree (slice 6) ----------
+
+  private handlePassiveAllocate(id: string): void {
+    const state = this.state;
+    if (!state || this.mode !== 'playing' || this.dead) return;
+    const result = allocatePassive(state, id);
+    if (!result.ok) this.ui.showToast(passiveRefusalMessage(result), '#ff8577');
+    this.passivePanel.sync(state);
+    if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
+  }
+
+  private handlePassiveRefund(id: string): void {
+    const state = this.state;
+    if (!state || this.mode !== 'playing' || this.dead) return;
+    const result = refundPassive(state, id);
+    if (!result.ok) this.ui.showToast(passiveRefusalMessage(result), '#ff8577');
+    this.passivePanel.sync(state);
+    if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
+  }
+
   // ---------- Debug / QA ----------
 
   snapshot(): ReturnType<AshenDebug['snapshot']> {
@@ -646,6 +695,12 @@ class Game {
         evades: state?.runStats.evades ?? 0,
         lastBlow: state?.runStats.lastBlow?.sourceName ?? null,
         seconds: Math.round((state?.runStats.seconds ?? 0) * 10) / 10,
+      },
+      passives: {
+        allocated: state ? [...state.passives.allocated] : [],
+        spent: state ? passivePointsSpent(state) : 0,
+        total: state ? passivePointsTotal(state) : 0,
+        available: state ? passivePointsAvailable(state) : 0,
       },
       level: state?.level ?? 0,
       xp: state?.xp ?? 0,

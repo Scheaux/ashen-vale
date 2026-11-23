@@ -985,3 +985,167 @@ body {
   font-family: var(--serif);
   text-align: right;
 }
+
+/* ---------- Passive skill tree (slice 6) ---------- */
+
+.passive-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.passive-panel {
+  pointer-events: auto;
+  width: min(1230px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1.2rem 1.5rem 1rem;
+  background: rgba(13, 17, 28, 0.96);
+  border: 1px solid rgba(200, 162, 74, 0.4);
+  box-shadow: 0 12px 60px rgba(0, 0, 0, 0.6);
+}
+
+.passive-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.passive-points {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.passive-tree {
+  position: relative;
+  width: 1180px;
+  height: 660px;
+  margin: 0.8rem auto 0;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(200, 162, 74, 0.07), transparent 62%),
+    rgba(8, 11, 20, 0.65);
+  border: 1px solid rgba(200, 162, 74, 0.16);
+  overflow: hidden;
+}
+
+.passive-edges {
+  position: absolute;
+  inset: 0;
+}
+
+.passive-edges line {
+  stroke: rgba(200, 162, 74, 0.16);
+  stroke-width: 2;
+}
+
+.passive-edges .passive-edge--lit {
+  stroke: rgba(232, 200, 119, 0.75);
+  stroke-width: 3;
+}
+
+.pnode {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(26, 31, 45, 0.95), rgba(15, 19, 29, 0.95));
+  border: 2px solid color-mix(in srgb, var(--cluster-color) 45%, transparent);
+  transition: box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.pnode--keystone {
+  width: 62px;
+  height: 62px;
+}
+
+.pnode__label {
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--cluster-color) 80%, #e8dcc0);
+}
+
+.pnode__name {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 96px;
+  font-size: 0.52rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.pnode--allocated {
+  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--cluster-color) 75%, #ffffff 8%), color-mix(in srgb, var(--cluster-color) 55%, #000 20%));
+  border-color: color-mix(in srgb, var(--cluster-color) 90%, #fff 25%);
+  box-shadow: 0 0 16px -2px var(--cluster-color);
+}
+
+.pnode--allocated .pnode__label {
+  color: #f2ecd8;
+}
+
+.pnode--available {
+  border-color: var(--cluster-color);
+  box-shadow: 0 0 14px -3px var(--cluster-color);
+  animation: pnode-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pnode-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px -3px var(--cluster-color);
+  }
+  50% {
+    box-shadow: 0 0 22px -1px var(--cluster-color);
+  }
+}
+
+.pnode--refundable:hover {
+  border-color: #ff8577;
+  box-shadow: 0 0 16px -2px #ff8577;
+}
+
+.pnode:hover {
+  border-color: var(--cluster-color);
+  box-shadow: 0 0 18px -2px var(--cluster-color);
+}
+
+/* ---------- HUD passive points badge ---------- */
+
+.hud__pts {
+  margin-top: 0.4rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-bright);
+  animation: pts-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes pts-glow {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}

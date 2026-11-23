@@ -9,6 +9,7 @@ import type {
 } from '../content/types';
 import { getEnemy } from '../content/enemies';
 import type { ItemSlot } from '../content/items';
+import { PASSIVE_ROOT } from '../content/passives';
 import { createRng, type Rng } from '../core/rng';
 import type { ItemInstance } from './items';
 
@@ -160,6 +161,11 @@ export interface InventoryState {
   equipment: Record<ItemSlot, ItemInstance | null>;
 }
 
+export interface PassivesState {
+  /** Allocated passive node ids (slice 6); `root` is granted at creation. */
+  allocated: string[];
+}
+
 /**
  * Authoritative combat events emitted by the simulation. Rendering and UI
  * consume these; they never infer gameplay outcomes from visual state.
@@ -225,6 +231,8 @@ export interface GameState {
   bounds: ZoneBounds;
   inventory: InventoryState;
   loot: LootDrop[];
+  /** Passive skill tree allocation (slice 6). */
+  passives: PassivesState;
   /** Health/mana flasks with refill-on-kill charges. */
   flasks: { health: FlaskState; mana: FlaskState };
   /** Character progression (slice 4). */
@@ -345,6 +353,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       equipment: { weapon: null, helm: null, chest: null, gloves: null, boots: null, amulet: null },
     },
     loot: [],
+    passives: { allocated: [PASSIVE_ROOT] },
     flasks: {
       health: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },
       mana: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },

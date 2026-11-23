@@ -1,10 +1,11 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG prototype in TypeScript + three.js.
-Built in vertical slices; this repo currently covers **Slices 0–5**: scaffold,
-movement, combat, enemy AI with telegraphs, rewards/loot, and the full combat
-kit — QWER skill hotbars, mana, flasks and the death → checkpoint retry flow —
-plus jointed procedural character rigs with full animation sets.
+Built in vertical slices; this repo currently covers **Slices 0–6**: scaffold,
+movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
+(QWER skill hotbars, mana, flasks and the death → checkpoint retry flow) and a
+passive skill tree — plus jointed procedural character rigs with full
+animation sets.
 See [MVP.md](./MVP.md) for the full slice-by-slice roadmap to the MVP.
 
 ## Run
@@ -26,6 +27,7 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
 | Hover near an enemy, then left click | Highlight, pursue and attack |
 | Q / W / E / R | Cast hotbar skills (Q = basic attack) |
 | 1 / 2 | Drink the health / mana flask |
+| P | Open or close the passive skill tree |
 | Right drag | Rotate camera |
 | Scroll | Zoom |
 | I | Open or close inventory |
@@ -75,6 +77,11 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
   per-skill cooldown sweeps, health/mana flasks (1/2) with refill-on-kill
   charges, and distinct VFX per skill — slash arcs, nova rings, shard bursts,
   draped strike telegraphs
+- **Passive skill tree:** a 33-node tree (offence / defence / utility
+  clusters, five keystones) with one point per level, adjacency-gated
+  allocation and no-orphan refunds; passive bonuses feed the shared stat
+  derivation (attribute nodes compound through synergies) and the tree
+  screen on P shows tooltips, lit connectors and the points budget
 - Player health bar, death screen with a death recap (killing blow, damage
   taken, kills, time survived) and respawn at the checkpoint, which preserves
   progression and encounter damage while refilling mana and flasks and
@@ -90,14 +97,14 @@ src/
   content/   data-only definitions: classes, skills, enemies/attacks, items/affixes, zone layout
   sim/       pure deterministic game state + authoritative combat events (no three.js imports)
   systems/   movement, centralized combat pipeline (skills, cooldowns, mana, area strikes),
-             enemy AI machine, flasks, inventory transactions, stats derivation
-             (attributes, armour/evasion/energy shield, attack vs spell damage),
-             progression (XP), loot
+             enemy AI machine, flasks, passive tree rules, inventory transactions,
+             stats derivation (attributes, armour/evasion/energy shield, attack vs
+             spell damage), progression (XP), loot
   render/    three.js scene, terrain, props, character rigs, enemies, projectiles, telegraphs,
              skill VFX, loot drops, camera, cursor; anim.ts holds the animation curves,
              materials.ts procedural normal/roughness maps, geo.ts bevel/lathe/sweep/rock toolkit
-  ui/        DOM-overlay screens (title, class select, HUD with hotbar/flasks, pause, death
-             recap, inventory), floating combat text, nameplates
+  ui/        DOM-overlay screens (title, class select, HUD with hotbar/flasks, passive
+             tree, pause, death recap, inventory), floating combat text, nameplates
   save/      versioned save schema + migration (localStorage slots in slice 8)
 ```
 
