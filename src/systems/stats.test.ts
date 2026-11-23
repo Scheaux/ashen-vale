@@ -3,11 +3,14 @@ import { getClass } from '../content/classes';
 import type { ZoneLayout } from '../content/types';
 import { createGameState, type GameState, type SimEvent } from '../sim/state';
 import { damagePlayer, stepPlayerCombat } from './combat';
+import { equipItem } from './inventory';
 import {
   armourMitigation,
+  computeStats,
   ES_RECHARGE_DELAY,
   ES_RECHARGE_RATE,
   evadeChance,
+  scalePlayerDamage,
   syncPlayerStats,
 } from './stats';
 
@@ -115,5 +118,79 @@ describe('defence layers (stat rework)', () => {
     expect(evadeChance(200)).toBeCloseTo(0.5, 5);
     expect(evadeChance(1e9)).toBeLessThanOrEqual(0.75);
     expect(evadeChance(500)).toBeGreaterThan(evadeChance(100));
+  });
+});
+
+describe('flat and increased modifiers', () => {
+  const emptyGear = { weapon: null, helm: null, chest: null, gloves: null, boots: null, amulet: null };
+
+  it('"+X to Attack/Spell Damage" adds flat damage before the increased multiplier', () => {
+    const state = freshState('marauder');
+    state.player.addedAttackDamage = 10;
+    state.player.attackDamagePct = 100;
+    expect(scalePlayerDamage(state, 20, 'attack')).toBeCloseTo(60); // (20 + 10) * 2
+
+    state.player.addedSpellDamage = 4;
+    state.player.spellDamagePct = 50;
+    expect(scalePlayerDamage(state, 20, 'spell')).toBeCloseTo(36); // (20 + 4) * 1.5
+  });
+
+  it('"X% increased Armour" multiplies every armour source', () => {
+    const classDef = getClass('marauder');
+    const base = computeStats(classDef, 1, emptyGear);
+    const boosted = computeStats(classDef, 1, {
+      ...emptyGear,
+      chest: {
+        uid: 'c1',
+        baseId: 'padded-vest',
+        slot: 'chest',
+        rarity: 'magic',
+        name: 'Padded Vest',
+        itemLevel: 1,
+        affixes: [{ id: 'increased-armour', value: 50 }],
+      },
+    });
+    expect(boosted.armour).toBeCloseTo(base.armour * 1.5, 5);
+    expect(boosted.armourIncPct).toBe(50);
+  });
+
+  it('flat defences land before the increase multiplier', () => {
+    const classDef = getClass('marauder');
+    const base = computeStats(classDef, 1, emptyGear);
+    const mixed = computeStats(classDef, 1, {
+      ...emptyGear,
+      chest: {
+        uid: 'c2',
+        baseId: 'padded-vest',
+        slot: 'chest',
+        rarity: 'rare',
+        name: 'Padded Vest',
+        itemLevel: 1,
+        affixes: [
+          { id: 'armour-greater', value: 100 },
+          { id: 'increased-armour', value: 50 },
+        ],
+      },
+    });
+    expect(mixed.armour).toBeCloseTo((base.armour + 100) * 1.5, 5);
+  });
+
+  it('equipping "+X to Attack Damage" feeds the damage pipeline', () => {
+    const state = freshState('marauder');
+    expect(scalePlayerDamage(state, 0, 'attack')).toBe(0);
+    state.inventory.bags.push({
+      uid: 'axe',
+      baseId: 'rusted-axe',
+      slot: 'weapon',
+      rarity: 'magic',
+      name: 'Rusted Axe',
+      itemLevel: 1,
+      affixes: [{ id: 'attack-damage', value: 10 }],
+    });
+    expect(equipItem(state, 'axe').ok).toBe(true);
+
+    expect(scalePlayerDamage(state, 0, 'attack')).toBeGreaterThan(0); // flat damage on every roll
+    expect(scalePlayerDamage(state, 0, 'spell')).toBe(0); // ...but only for attacks
+    expect(scalePlayerDamage(state, 20, 'attack')).toBeGreaterThan(20);
   });
 });

@@ -87,8 +87,9 @@ export class InventoryPanel {
       ['Level', `${state.level} · ${state.xp}/${state.xpToNext} XP`],
       ['Attributes', `STR ${Math.round(stats.strength)} · DEX ${Math.round(stats.dexterity)} · INT ${Math.round(stats.intelligence)}`],
       ['Defence', `Armour ${Math.round(stats.armour)} · Evasion ${Math.round(stats.evasion)} · Energy Shield ${Math.round(stats.energyShield)}`],
-      ['Offence', `Attack +${stats.attackDamagePct.toFixed(0)}% · Spell +${stats.spellDamagePct.toFixed(0)}%`],
-      ['Vitals', `Life ${Math.round(stats.maxHp)} · Mana ${Math.round(stats.maxMana)} · Move +${stats.moveSpeedPct.toFixed(0)}%`],
+      ['Attack Damage', `+${stats.addedAttackDamage.toFixed(0)} added · ${stats.attackDamagePct.toFixed(0)}% increased`],
+      ['Spell Damage', `+${stats.addedSpellDamage.toFixed(0)} added · ${stats.spellDamagePct.toFixed(0)}% increased`],
+      ['Vitals', `Life ${Math.round(stats.maxHp)} · Mana ${Math.round(stats.maxMana)} · ${stats.moveSpeedPct.toFixed(0)}% increased Movement Speed`],
     ];
     this.statsLine.innerHTML = rows
       .map(([label]) => `<div class="char-row"><span class="char-label">${label}</span><span class="char-value"></span></div>`)

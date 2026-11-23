@@ -55,6 +55,9 @@ export interface PlayerState {
   evasion: number;
   attackDamagePct: number;
   spellDamagePct: number;
+  /** Flat "+X to Attack/Spell Damage" added to every skill roll. */
+  addedAttackDamage: number;
+  addedSpellDamage: number;
   speed: number;
   radius: number;
   classId: ClassDef['id'];
@@ -303,6 +306,8 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
         def.stats.strength * SYNERGY.strength.attackDamagePct +
         def.stats.dexterity * SYNERGY.dexterity.attackDamagePct,
       spellDamagePct: def.stats.intelligence * SYNERGY.intelligence.spellDamagePct,
+      addedAttackDamage: 0,
+      addedSpellDamage: 0,
       speed: def.speed,
       radius: 0.55,
       classId: def.id,

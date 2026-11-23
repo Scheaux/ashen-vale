@@ -126,8 +126,9 @@ notes and rollback readiness.
   Witch (projectile, intelligence) — 4-skill QWER kits each (basic + 3 actives) since slice 5.
 - **Enemies (3 + elites):** Ashen Husk (melee charger), ranged caster, fast swarm —
   elite modifiers from slice 3.
-- **Loot:** 4 rarity tiers, 6 equipment slots, ~17 affixes (attributes, life/mana,
-  attack/spell damage, armour, evasion, energy shield, move speed).
+- **Loot:** 4 rarity tiers, 6 equipment slots, ~24 affixes in plain stat
+  language — flat `+X to Stat` and `X% increased Stat` forms across life/mana,
+  armour, evasion, energy shield, attack/spell damage, movement and attributes.
 - **Zone (1):** fixed handcrafted layout with seeded prop/enemy population,
   boss arena at the end.
 - **Passive tree:** ~30 nodes with clusters.
@@ -143,6 +144,12 @@ life and recharges after 2s without damage). Offence splits into **Attack
 Damage** and **Spell Damage**, matched against each skill's `damageClass`;
 spells bypass armour and evasion. Attribute synergies live in one place
 (`SYNERGY` in `sim/state.ts`) shared by state creation and stat derivation.
+
+Item and passive bonuses speak one plain language: flat `+X to Stat` and
+percentage `X% increased Stat` — e.g. `+45 to Armour`, `+3 to Attack Damage`,
+`50% increased Armour`. Flat attack/spell damage lands on the skill roll
+before the increased multiplier; "increased" defences multiply every source
+of the pool.
 
 ## Validation bar (every slice)
 

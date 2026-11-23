@@ -67,6 +67,8 @@ export interface AshenDebug {
       energyShield: number;
       attackDamagePct: number;
       spellDamagePct: number;
+      addedAttackDamage: number;
+      addedSpellDamage: number;
       evadeChance: number;
     };
     playerPos: { x: number; z: number };
@@ -654,6 +656,8 @@ class Game {
           energyShield: state?.player.maxEnergyShield ?? 0,
           attackDamagePct: Math.round((state?.player.attackDamagePct ?? 0) * 10) / 10,
           spellDamagePct: Math.round((state?.player.spellDamagePct ?? 0) * 10) / 10,
+          addedAttackDamage: Math.round((state?.player.addedAttackDamage ?? 0) * 10) / 10,
+          addedSpellDamage: Math.round((state?.player.addedSpellDamage ?? 0) * 10) / 10,
           evadeChance: Math.round(evadeChance(state?.player.evasion ?? 0) * 1000) / 1000,
         };
       })(),

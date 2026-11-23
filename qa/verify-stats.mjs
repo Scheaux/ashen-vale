@@ -156,7 +156,8 @@ async function main() {
   const sheet = await page.locator('.char-sheet').innerText();
   check('character sheet lists the three attributes', /STR \d+ · DEX \d+ · INT \d+/.test(sheet), sheet.split('\n')[1] ?? '');
   check('character sheet lists the three defences', /Armour \d+ · Evasion \d+ · Energy Shield \d+/.test(sheet));
-  check('character sheet lists attack and spell damage', /Attack [+\d]+% · Spell [+\d]+%/.test(sheet));
+  check('character sheet reads damage as added and increased',
+    /\+\d+ added · \d+% increased/.test(sheet) && /ATTACK DAMAGE/.test(sheet) && /SPELL DAMAGE/.test(sheet));
   await page.screenshot({ path: `${SHOTS}42-character-sheet.png` });
   await page.keyboard.press('Escape');
   await sleep(200);

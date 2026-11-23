@@ -1,13 +1,24 @@
 import type { ItemSlot } from './items';
 
+/**
+ * Item stat vocabulary (plain-language rework): affix lines read as direct
+ * stat modifiers — flat bonuses as `+X to Stat`, percentage ones as
+ * `X% increased Stat` — with no flavour naming in between. The same
+ * vocabulary drives item tooltips, passive tooltips and the character sheet.
+ */
 export type AffixStat =
   | 'maxHp'
   | 'maxMana'
+  | 'attackDamage'
+  | 'spellDamage'
   | 'attackDamagePct'
   | 'spellDamagePct'
   | 'armour'
   | 'evasion'
   | 'energyShield'
+  | 'armourIncPct'
+  | 'evasionIncPct'
+  | 'energyShieldIncPct'
   | 'moveSpeedPct'
   | 'strength'
   | 'dexterity'
@@ -15,7 +26,6 @@ export type AffixStat =
 
 export interface AffixDef {
   id: string;
-  label: string;
   stat: AffixStat;
   /** Roll range at item level 1. */
   min: number;
@@ -29,31 +39,32 @@ export interface AffixDef {
 }
 
 export const AFFIXES: readonly AffixDef[] = [
-  // Vitals
-  { id: 'life', label: 'of the Ox', stat: 'maxHp', min: 8, max: 14, perLevel: 2, slots: ['helm', 'chest', 'gloves', 'boots', 'amulet'], weight: 100 },
-  { id: 'bulwark', label: 'of the Bulwark', stat: 'maxHp', min: 16, max: 26, perLevel: 3, slots: ['chest', 'helm'], weight: 60 },
-  { id: 'mind', label: 'of the Mind', stat: 'maxMana', min: 8, max: 14, perLevel: 2, slots: ['helm', 'amulet'], weight: 70 },
-  // Offence: attack damage
-  { id: 'brutality', label: 'Brutal', stat: 'attackDamagePct', min: 4, max: 8, perLevel: 1, slots: ['weapon', 'gloves', 'amulet'], weight: 90 },
-  { id: 'warlord', label: 'Warlord\'s', stat: 'attackDamagePct', min: 9, max: 15, perLevel: 1.5, slots: ['weapon'], weight: 45 },
-  // Offence: spell damage
-  { id: 'sorcery', label: 'Sorcerer\'s', stat: 'spellDamagePct', min: 4, max: 8, perLevel: 1, slots: ['weapon', 'helm', 'amulet'], weight: 90 },
-  { id: 'arcane', label: 'Arcane', stat: 'spellDamagePct', min: 9, max: 15, perLevel: 1.5, slots: ['weapon'], weight: 45 },
-  // Defence: armour
-  { id: 'fortress', label: 'Fortified', stat: 'armour', min: 15, max: 30, perLevel: 4, slots: ['chest', 'helm', 'gloves'], weight: 70 },
-  { id: 'ironhide', label: 'Ironhide', stat: 'armour', min: 40, max: 70, perLevel: 8, slots: ['chest'], weight: 40 },
-  // Defence: evasion
-  { id: 'phantasm', label: 'Phantom\'s', stat: 'evasion', min: 15, max: 30, perLevel: 4, slots: ['gloves', 'boots', 'helm'], weight: 70 },
-  { id: 'shadowstep', label: 'of Shadows', stat: 'evasion', min: 40, max: 70, perLevel: 8, slots: ['boots'], weight: 40 },
-  // Defence: energy shield
-  { id: 'warding', label: 'Warding', stat: 'energyShield', min: 10, max: 20, perLevel: 3, slots: ['helm', 'chest', 'amulet'], weight: 70 },
-  { id: 'aegis', label: 'Aegis', stat: 'energyShield', min: 25, max: 45, perLevel: 5, slots: ['chest'], weight: 40 },
-  // Utility
-  { id: 'haste', label: 'of Haste', stat: 'moveSpeedPct', min: 2, max: 4, perLevel: 0.4, slots: ['boots', 'amulet'], weight: 70 },
-  // Attributes
-  { id: 'might', label: 'of Might', stat: 'strength', min: 2, max: 5, perLevel: 0.6, slots: ['weapon', 'chest', 'helm'], weight: 80 },
-  { id: 'grace', label: 'of Grace', stat: 'dexterity', min: 2, max: 5, perLevel: 0.6, slots: ['gloves', 'boots', 'amulet'], weight: 80 },
-  { id: 'insight', label: 'of Insight', stat: 'intelligence', min: 2, max: 5, perLevel: 0.6, slots: ['helm', 'amulet', 'weapon'], weight: 80 },
+  // Flat additions: "+X to Stat"
+  { id: 'life', stat: 'maxHp', min: 8, max: 14, perLevel: 2, slots: ['helm', 'chest', 'gloves', 'boots', 'amulet'], weight: 100 },
+  { id: 'life-greater', stat: 'maxHp', min: 16, max: 26, perLevel: 3, slots: ['chest', 'helm'], weight: 60 },
+  { id: 'mana', stat: 'maxMana', min: 8, max: 14, perLevel: 2, slots: ['helm', 'amulet'], weight: 70 },
+  { id: 'armour', stat: 'armour', min: 15, max: 30, perLevel: 4, slots: ['chest', 'helm', 'gloves'], weight: 70 },
+  { id: 'armour-greater', stat: 'armour', min: 40, max: 70, perLevel: 8, slots: ['chest'], weight: 40 },
+  { id: 'evasion', stat: 'evasion', min: 15, max: 30, perLevel: 4, slots: ['gloves', 'boots', 'helm'], weight: 70 },
+  { id: 'evasion-greater', stat: 'evasion', min: 40, max: 70, perLevel: 8, slots: ['boots'], weight: 40 },
+  { id: 'energy-shield', stat: 'energyShield', min: 10, max: 20, perLevel: 3, slots: ['helm', 'chest', 'amulet'], weight: 70 },
+  { id: 'energy-shield-greater', stat: 'energyShield', min: 25, max: 45, perLevel: 5, slots: ['chest'], weight: 40 },
+  { id: 'attack-damage', stat: 'attackDamage', min: 2, max: 4, perLevel: 0.4, slots: ['weapon', 'gloves', 'amulet'], weight: 90 },
+  { id: 'attack-damage-greater', stat: 'attackDamage', min: 5, max: 8, perLevel: 0.6, slots: ['weapon'], weight: 45 },
+  { id: 'spell-damage', stat: 'spellDamage', min: 2, max: 4, perLevel: 0.4, slots: ['weapon', 'helm', 'amulet'], weight: 90 },
+  { id: 'spell-damage-greater', stat: 'spellDamage', min: 5, max: 8, perLevel: 0.6, slots: ['weapon'], weight: 45 },
+  { id: 'strength', stat: 'strength', min: 2, max: 5, perLevel: 0.6, slots: ['weapon', 'chest', 'helm'], weight: 80 },
+  { id: 'dexterity', stat: 'dexterity', min: 2, max: 5, perLevel: 0.6, slots: ['gloves', 'boots', 'amulet'], weight: 80 },
+  { id: 'intelligence', stat: 'intelligence', min: 2, max: 5, perLevel: 0.6, slots: ['helm', 'amulet', 'weapon'], weight: 80 },
+  // Percentage increases: "X% increased Stat"
+  { id: 'increased-armour', stat: 'armourIncPct', min: 8, max: 15, perLevel: 1, slots: ['chest', 'helm'], weight: 55 },
+  { id: 'increased-evasion', stat: 'evasionIncPct', min: 8, max: 15, perLevel: 1, slots: ['boots', 'gloves'], weight: 55 },
+  { id: 'increased-energy-shield', stat: 'energyShieldIncPct', min: 8, max: 15, perLevel: 1, slots: ['helm', 'amulet'], weight: 55 },
+  { id: 'increased-attack-damage', stat: 'attackDamagePct', min: 4, max: 8, perLevel: 1, slots: ['weapon', 'gloves', 'amulet'], weight: 90 },
+  { id: 'increased-attack-damage-greater', stat: 'attackDamagePct', min: 9, max: 15, perLevel: 1.5, slots: ['weapon'], weight: 45 },
+  { id: 'increased-spell-damage', stat: 'spellDamagePct', min: 4, max: 8, perLevel: 1, slots: ['weapon', 'helm', 'amulet'], weight: 90 },
+  { id: 'increased-spell-damage-greater', stat: 'spellDamagePct', min: 9, max: 15, perLevel: 1.5, slots: ['weapon'], weight: 45 },
+  { id: 'increased-movement-speed', stat: 'moveSpeedPct', min: 2, max: 4, perLevel: 0.4, slots: ['boots', 'amulet'], weight: 70 },
 ] as const;
 
 export function getAffix(id: string): AffixDef {
@@ -62,7 +73,41 @@ export function getAffix(id: string): AffixDef {
   return def;
 }
 
-/** Whether an affix value reads as a percentage on tooltips. */
-export function isPercentStat(stat: AffixStat): boolean {
-  return stat === 'attackDamagePct' || stat === 'spellDamagePct' || stat === 'moveSpeedPct';
+const STAT_NAMES: Record<AffixStat, string> = {
+  maxHp: 'Life',
+  maxMana: 'Mana',
+  attackDamage: 'Attack Damage',
+  spellDamage: 'Spell Damage',
+  attackDamagePct: 'Attack Damage',
+  spellDamagePct: 'Spell Damage',
+  armour: 'Armour',
+  evasion: 'Evasion',
+  energyShield: 'Energy Shield',
+  armourIncPct: 'Armour',
+  evasionIncPct: 'Evasion',
+  energyShieldIncPct: 'Energy Shield',
+  moveSpeedPct: 'Movement Speed',
+  strength: 'Strength',
+  dexterity: 'Dexterity',
+  intelligence: 'Intelligence',
+};
+
+const INCREASED_STATS = new Set<AffixStat>([
+  'attackDamagePct',
+  'spellDamagePct',
+  'armourIncPct',
+  'evasionIncPct',
+  'energyShieldIncPct',
+  'moveSpeedPct',
+]);
+
+/** Whether a bonus reads as "X% increased Stat" rather than "+X to Stat". */
+export function isIncreasedStat(stat: AffixStat): boolean {
+  return INCREASED_STATS.has(stat);
+}
+
+/** Plain stat line, e.g. "+45 to Armour" or "50% increased Armour". */
+export function formatStatBonus(stat: AffixStat, value: number): string {
+  const name = STAT_NAMES[stat] ?? stat;
+  return INCREASED_STATS.has(stat) ? `${value}% increased ${name}` : `+${value} to ${name}`;
 }

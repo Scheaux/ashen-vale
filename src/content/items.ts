@@ -42,9 +42,9 @@ export const UNIQUES: readonly UniqueDef[] = [
     slot: 'helm',
     lore: 'It remembers the fire that made it.',
     affixes: [
-      { id: 'bulwark', value: 28 },
-      { id: 'fortress', value: 45 },
-      { id: 'insight', value: 6 },
+      { id: 'life-greater', value: 28 },
+      { id: 'armour-greater', value: 60 },
+      { id: 'intelligence', value: 6 },
     ],
   },
   {
@@ -53,8 +53,8 @@ export const UNIQUES: readonly UniqueDef[] = [
     slot: 'gloves',
     lore: 'The grip never cools.',
     affixes: [
-      { id: 'warlord', value: 12 },
-      { id: 'might', value: 5 },
+      { id: 'increased-attack-damage-greater', value: 12 },
+      { id: 'strength', value: 5 },
     ],
   },
 ] as const;

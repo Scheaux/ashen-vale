@@ -20,13 +20,18 @@ export interface EffectiveStats {
   strength: number;
   dexterity: number;
   intelligence: number;
-  /** Offence. */
+  /** Offence: flat added damage plus increased percentages. */
   attackDamagePct: number;
   spellDamagePct: number;
-  /** Defence. */
+  addedAttackDamage: number;
+  addedSpellDamage: number;
+  /** Defence: flat pools plus increased percentages. */
   armour: number;
   evasion: number;
   energyShield: number;
+  armourIncPct: number;
+  evasionIncPct: number;
+  energyShieldIncPct: number;
   /** Vitals. */
   maxHp: number;
   maxMana: number;
@@ -45,6 +50,12 @@ function applyStatBonus(stats: EffectiveStats, stat: AffixStat, value: number): 
     case 'maxMana':
       stats.maxMana += value;
       break;
+    case 'attackDamage':
+      stats.addedAttackDamage += value;
+      break;
+    case 'spellDamage':
+      stats.addedSpellDamage += value;
+      break;
     case 'attackDamagePct':
       stats.attackDamagePct += value;
       break;
@@ -59,6 +70,15 @@ function applyStatBonus(stats: EffectiveStats, stat: AffixStat, value: number): 
       break;
     case 'energyShield':
       stats.energyShield += value;
+      break;
+    case 'armourIncPct':
+      stats.armourIncPct += value;
+      break;
+    case 'evasionIncPct':
+      stats.evasionIncPct += value;
+      break;
+    case 'energyShieldIncPct':
+      stats.energyShieldIncPct += value;
       break;
     case 'moveSpeedPct':
       stats.moveSpeedPct += value;
@@ -101,9 +121,14 @@ export function computeStats(
     intelligence: classDef.stats.intelligence,
     attackDamagePct: 0,
     spellDamagePct: 0,
+    addedAttackDamage: 0,
+    addedSpellDamage: 0,
     armour: 0,
     evasion: 0,
     energyShield: 0,
+    armourIncPct: 0,
+    evasionIncPct: 0,
+    energyShieldIncPct: 0,
     maxHp: PLAYER_MAX_HP + (level - 1) * 12,
     maxMana: PLAYER_BASE_MANA + (level - 1) * 4,
     manaRegen: 0,
@@ -136,6 +161,11 @@ export function computeStats(
     stats.strength * SYNERGY.strength.attackDamagePct + stats.dexterity * SYNERGY.dexterity.attackDamagePct;
   stats.spellDamagePct += stats.intelligence * SYNERGY.intelligence.spellDamagePct;
   stats.moveSpeedPct += stats.dexterity * SYNERGY.dexterity.moveSpeedPct;
+
+  // "X% increased" multiplies every source of the defence pool.
+  stats.armour *= 1 + stats.armourIncPct / 100;
+  stats.evasion *= 1 + stats.evasionIncPct / 100;
+  stats.energyShield *= 1 + stats.energyShieldIncPct / 100;
   return stats;
 }
 
@@ -163,18 +193,25 @@ export function syncPlayerStats(state: GameState): void {
   p.evasion = stats.evasion;
   p.attackDamagePct = stats.attackDamagePct;
   p.spellDamagePct = stats.spellDamagePct;
+  p.addedAttackDamage = stats.addedAttackDamage;
+  p.addedSpellDamage = stats.addedSpellDamage;
   const classDef = getClass(p.classId);
   p.speed = classDef.speed * (1 + stats.moveSpeedPct / 100);
 }
 
-/** Outgoing player damage after the matching offence multiplier. */
+/**
+ * Outgoing player damage: flat "+X to Attack/Spell Damage" lands on the skill
+ * roll first, then "X% increased" multiplies the total.
+ */
 export function scalePlayerDamage(
   state: GameState,
   amount: number,
   damageClass: 'attack' | 'spell' = 'attack',
 ): number {
-  const pct = damageClass === 'spell' ? state.player.spellDamagePct : state.player.attackDamagePct;
-  return amount * (1 + pct / 100);
+  const p = state.player;
+  const added = damageClass === 'spell' ? p.addedSpellDamage : p.addedAttackDamage;
+  const pct = damageClass === 'spell' ? p.spellDamagePct : p.attackDamagePct;
+  return (amount + added) * (1 + pct / 100);
 }
 
 /** Chance to completely evade an incoming attack hit. Spells cannot be evaded. */

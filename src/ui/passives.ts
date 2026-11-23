@@ -1,4 +1,5 @@
 import { PASSIVE_NODES, passiveEdges, type PassiveNode } from '../content/passives';
+import { formatStatBonus } from '../content/affixes';
 import type { GameState } from '../sim/state';
 import { passivePointsAvailable, passivePointsTotal, canAllocatePassive, canRefundPassive } from '../systems/passives';
 
@@ -12,22 +13,6 @@ const CLUSTER_COLORS: Record<PassiveNode['cluster'], string> = {
   defense: '#5d8fe0',
   utility: '#c8a24a',
 };
-
-const EFFECT_LABELS: Record<string, string> = {
-  maxHp: 'Life',
-  maxMana: 'Mana',
-  attackDamagePct: 'Attack Damage',
-  spellDamagePct: 'Spell Damage',
-  armour: 'Armour',
-  evasion: 'Evasion',
-  energyShield: 'Energy Shield',
-  moveSpeedPct: 'Movement Speed',
-  strength: 'Strength',
-  dexterity: 'Dexterity',
-  intelligence: 'Intelligence',
-};
-
-const PERCENT_STATS = new Set(['attackDamagePct', 'spellDamagePct', 'moveSpeedPct']);
 
 /** Tree layout mapping (content coords -> panel pixels). */
 const SCALE = 52;
@@ -151,10 +136,7 @@ export class PassiveTreePanel {
   }
 
   private showTooltip(node: PassiveNode, event: MouseEvent): void {
-    const effects = node.effects.map((e) => {
-      const sign = PERCENT_STATS.has(e.stat) ? '%' : '';
-      return `<li>+${e.value}${sign} ${EFFECT_LABELS[e.stat] ?? e.stat}</li>`;
-    });
+    const effects = node.effects.map((e) => `<li>${formatStatBonus(e.stat, e.value)}</li>`);
     const prereqs = node.prereqs
       .map((id) => PASSIVE_NODES.find((n) => n.id === id)?.name ?? id)
       .join(', ');

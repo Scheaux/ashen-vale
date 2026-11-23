@@ -60,7 +60,10 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
 - **Progression & loot:** XP/levels with toasts and a HUD XP bar; rarity tiers
   with data-driven affix rolls; world drops with beams; auto-pickup;
   inventory/equipment screens with tooltips; derived stats feed combat.
-  Transactions are loss-tested (identity conservation)
+  Item lines read as plain stat modifiers — `+45 to Armour`,
+  `+3 to Attack Damage`, `50% increased Armour` — in flat and increased
+  forms, with no flavour naming. Transactions are loss-tested
+  (identity conservation)
 - **Combat stats:** three primary attributes (strength / dexterity /
   intelligence) each drive offence and defence — STR → life, armour and
   attack damage; DEX → evasion, move speed and attack damage; INT → mana,

@@ -165,7 +165,7 @@ describe('derived stats', () => {
     const armored = computeStats(classDef, 1, {
       weapon: null,
       helm: null,
-      chest: { ...lifeItem(1), uid: 'c', affixes: [{ id: 'ironhide', value: 500 }] },
+      chest: { ...lifeItem(1), uid: 'c', affixes: [{ id: 'armour-greater', value: 500 }] },
       gloves: null,
       boots: null,
       amulet: null,

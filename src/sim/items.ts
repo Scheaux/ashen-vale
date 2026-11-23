@@ -1,5 +1,5 @@
 import type { Rng } from '../core/rng';
-import { AFFIXES, getAffix, isPercentStat, type AffixDef } from '../content/affixes';
+import { AFFIXES, formatStatBonus, getAffix, type AffixDef } from '../content/affixes';
 import {
   getItemBase,
   getUnique,
@@ -120,11 +120,9 @@ export function rollItem(rng: Rng, itemLevel: number, forcedRarity?: Rarity): It
   };
 }
 
-/** Human-readable affix line for tooltips. */
+/** Plain stat line for tooltips, e.g. "+45 to Armour" or "50% increased Armour". */
 export function affixLine(affix: ItemAffix): string {
-  const def = getAffix(affix.id);
-  const sign = isPercentStat(def.stat) ? '%' : '';
-  return `+${affix.value}${sign} ${def.label.replace(/^(of |'s )?/, '')}`.trim();
+  return formatStatBonus(getAffix(affix.id).stat, affix.value);
 }
 
 /** Display name for an equipped/base reference. */
