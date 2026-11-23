@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
 import { getEnemy } from '../content/enemies';
 import type { CircleCollider, EnemySpawn, ZoneLayout } from '../content/types';
-import { createGameState, type GameState, type SimEvent } from '../sim/state';
-import { stepMovement } from './movement';
-import { stepProjectiles } from './combat';
+import { createGameState, drainEvents, type GameState, type SimEvent } from '../sim/state';
+import { stepRun } from '../sim/run';
 import { stepEnemies } from './enemyAi';
 
 /**
@@ -34,11 +33,10 @@ function husk(x: number, z: number, elite: EnemySpawn['elite'] = []): EnemySpawn
 
 function run(state: GameState, events: SimEvent[], ticks: number, onTick?: (state: GameState) => void, dt = 1 / 60): void {
   for (let i = 0; i < ticks; i++) {
-    stepEnemies(state, dt, events);
-    stepMovement(state, dt);
-    stepProjectiles(state, dt, events);
+    stepRun(state, dt);
     onTick?.(state);
   }
+  events.push(...drainEvents(state));
 }
 
 describe('target acquisition & reset', () => {
@@ -62,7 +60,7 @@ describe('target acquisition & reset', () => {
     expect(state.enemies[0].phase).toBe('chase');
 
     state.player.hp = 0;
-    run(state, events, 5);
+    stepEnemies(state, 1 / 60, events);
     expect(state.enemies[0].phase).toBe('idle');
     expect(state.enemies[0].aggro).toBe(false);
   });
@@ -104,8 +102,7 @@ describe('telegraph commitment & dodge counterplay', () => {
 
     // Run until the windup starts, then teleport the player behind the husk.
     for (let i = 0; i < 300 && state.enemies[0].phase !== 'windup'; i++) {
-      stepEnemies(state, 1 / 60, events);
-      stepMovement(state, 1 / 60);
+      run(state, events, 1);
     }
     expect(state.enemies[0].phase).toBe('windup');
 
@@ -114,7 +111,8 @@ describe('telegraph commitment & dodge counterplay', () => {
     state.player.position.x = e.position.x + 3;
     state.player.position.z = e.position.z + 3;
 
-    run(state, events, 30);
+    run(state, events, 60);
+    expect(events.some((ev) => ev.kind === 'attack' && ev.sourceId === e.id)).toBe(true);
     expect(events.some((ev) => ev.kind === 'damage' && ev.targetKind === 'player')).toBe(false);
     expect(state.player.hp).toBe(state.player.maxHp);
   });
@@ -126,7 +124,10 @@ describe('telegraph commitment & dodge counterplay', () => {
       // Stand still inside the sweep: no movement at all.
       s.player.moveTarget = null;
     });
-    expect(events.some((ev) => ev.kind === 'damage' && ev.targetKind === 'player')).toBe(true);
+    const tell = events.find((ev) => ev.kind === 'telegraph');
+    expect(tell).toBeDefined();
+    const hit = events.findIndex((ev) => ev.kind === 'damage' && ev.attackId === tell?.attackId);
+    expect(hit).toBeGreaterThan(events.indexOf(tell!));
     expect(state.player.hp).toBeLessThan(state.player.maxHp);
   });
 
@@ -170,20 +171,47 @@ describe('behavior spacing', () => {
     expect(events.some((ev) => ev.kind === 'telegraph')).toBe(true);
   });
 
-  it('caster bolts travel and can be dodged by moving', () => {
+  it('caster bolts follow the advertised lane even when the player dodges during windup', () => {
     const state = createGameState(getClass('marauder'), layoutWith([{ enemyId: 'cinder-cultist', x: 0, z: 8, elite: [] }]));
     const events: SimEvent[] = [];
 
-    // Let the cast begin, then dodge perpendicular when the bolt fires.
-    let dodged = false;
-    run(state, events, 60 * 4, (s) => {
-      if (!dodged && s.projectiles.length > 0) {
-        s.player.position.x += 6; // side-step the incoming bolt line
-        dodged = true;
-      }
-    });
-    expect(dodged).toBe(true);
+    run(state, events, 2);
+    const tell = events.find((ev) => ev.kind === 'telegraph');
+    expect(tell).toBeDefined();
+    state.player.position.x += 6;
+    run(state, events, 60);
+    expect(state.projectiles).toHaveLength(1);
+    const [bolt] = state.projectiles;
+    expect(bolt.attackId).toBe(tell?.attackId);
+    expect(Math.atan2(bolt.velocity.x, bolt.velocity.z)).toBeCloseTo(tell!.facing);
+    run(state, events, 120);
     expect(events.some((ev) => ev.kind === 'damage' && ev.targetKind === 'player')).toBe(false);
+  });
+
+  it('pounce deals damage once on swept travel, not at takeoff', () => {
+    const state = createGameState(getClass('marauder'), layoutWith([{ enemyId: 'mire-skitterer', x: 0, z: 13, elite: [] }]));
+    const events: SimEvent[] = [];
+    const [enemy] = state.enemies;
+    while (enemy.phase !== 'active' && state.tick < 60) run(state, events, 1);
+    expect(enemy.phase).toBe('active');
+    expect(enemy.position.z).toBe(13);
+    expect(events.some((ev) => ev.kind === 'damage')).toBe(false);
+    run(state, events, 25);
+    const hits = events.filter((ev) => ev.kind === 'damage');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ attackId: enemy.attackId, targetKind: 'player' });
+  });
+
+  it('clips the pounce tell and movement at a solid obstacle', () => {
+    const state = createGameState(getClass('marauder'), layoutWith(
+      [{ enemyId: 'mire-skitterer', x: 0, z: 13, elite: [] }],
+      [{ id: 'pounce-obstacle', x: 0, z: 16, radius: 1 }],
+    ));
+    const events: SimEvent[] = [];
+    run(state, events, 50);
+    expect(events.find((ev) => ev.kind === 'telegraph')).toMatchObject({ range: 1.5 });
+    expect(state.enemies[0].position.z).toBeCloseTo(14.5);
+    expect(events.some((ev) => ev.kind === 'damage')).toBe(false);
   });
 
   it('swarmer rushes into pounce range and lunges', () => {

@@ -38,14 +38,14 @@ export class GameLoop {
 
       if (this.running) {
         this.accumulator += dt;
-        while (this.accumulator >= this.simDt) {
-          this.hooks.fixedUpdate(this.simDt);
+        while (this.running && this.accumulator >= this.simDt) {
           this.accumulator -= this.simDt;
+          this.hooks.fixedUpdate(this.simDt);
         }
       } else {
         this.accumulator = 0;
       }
-      this.hooks.render(dt, this.accumulator / this.simDt, this.elapsed);
+      this.hooks.render(dt, this.running ? this.accumulator / this.simDt : 1, this.elapsed);
     };
     this.rafId = requestAnimationFrame(frame);
   }

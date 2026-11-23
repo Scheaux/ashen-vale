@@ -14,3 +14,12 @@ export function angleDiff(a: number, b: number): number {
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
+
+/** Squared distance to a finite horizontal segment, including its endpoints. */
+export function segmentDistanceSq(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const lenSq = dx * dx + dz * dz;
+  const t = lenSq > 0 ? clamp(((px - ax) * dx + (pz - az) * dz) / lenSq, 0, 1) : 0;
+  return (px - ax - t * dx) ** 2 + (pz - az - t * dz) ** 2;
+}

@@ -1,5 +1,8 @@
 import type { ClassId, SkillId } from './types';
 
+/** Normalized strike keys used by both basic-attack simulation and pose curves. */
+export const BASIC_ATTACK_CONTACT = { melee: 0.45, projectile: 0.6 } as const;
+
 export interface SkillDef {
   id: SkillId;
   name: string;
@@ -8,9 +11,12 @@ export interface SkillDef {
   damage: { min: number; max: number };
   /** Seconds between uses. */
   cooldown: number;
+  /** Full committed pose duration and normalized contact/release frame. */
+  duration: number;
+  contact: number;
   /** Maximum strike distance (melee reach, or projectile travel budget). */
   range: number;
-  /** Chase stops here; between pursueRange and range the player stands and attacks. */
+  /** Distance at which auto-pursuit stops and windup can begin. */
   pursueRange: number;
   /** Melee sweep half-arc is arcDeg/2 around facing. */
   arcDeg?: number;
@@ -32,6 +38,8 @@ export const SKILLS: readonly SkillDef[] = [
     type: 'melee',
     damage: { min: 9, max: 14 },
     cooldown: 0.85,
+    duration: 0.42,
+    contact: BASIC_ATTACK_CONTACT.melee,
     range: 2.7,
     pursueRange: 2.2,
     arcDeg: 110,
@@ -45,6 +53,8 @@ export const SKILLS: readonly SkillDef[] = [
     type: 'projectile',
     damage: { min: 7, max: 12 },
     cooldown: 0.75,
+    duration: 0.42,
+    contact: BASIC_ATTACK_CONTACT.projectile,
     range: 30,
     pursueRange: 11,
     projectile: { speed: 26, radius: 0.35, ttl: 1.25 },
@@ -58,6 +68,8 @@ export const SKILLS: readonly SkillDef[] = [
     type: 'projectile',
     damage: { min: 8, max: 13 },
     cooldown: 0.9,
+    duration: 0.42,
+    contact: BASIC_ATTACK_CONTACT.projectile,
     range: 30,
     pursueRange: 11,
     projectile: { speed: 20, radius: 0.4, ttl: 1.6 },

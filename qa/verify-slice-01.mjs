@@ -53,6 +53,9 @@ async function main() {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
+  const snapshot = () => page.evaluate(() => window.__ashen.snapshot());
+  const resources = ({ render }) => ({ geometries: render.geometries, textures: render.textures });
+  const sameResources = (a, b) => JSON.stringify(resources(a)) === JSON.stringify(resources(b));
 
   // --- Title screen ---
   const title = page.locator('.game-title');
@@ -61,7 +64,10 @@ async function main() {
 
   // --- Class select ---
   await page.click('[data-action="new-game"]');
-  await page.waitForTimeout(400);
+  check('class select updates game mode', (await snapshot()).mode === 'class-select');
+  await page.keyboard.press('Escape');
+  check('Escape returns from class select to title', await title.isVisible() && (await snapshot()).mode === 'title');
+  await page.click('[data-action="new-game"]');
   check('class select shows 3 classes', (await page.locator('.class-card').count()) === 3);
   await page.click('[data-class="ranger"]');
   check(
@@ -85,12 +91,12 @@ async function main() {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
 
-  // Sample the rendered scene via pixel diff: moving camera/player changes frames.
-  const before = await page.screenshot();
+  const before = (await snapshot()).playerPos;
   await page.mouse.click(cx + 260, cy - 60); // click right-ish on the ground
   await page.waitForTimeout(1600);
   const after = await page.screenshot();
-  check('scene changes after click-to-move', !before.equals(after));
+  const moved = (await snapshot()).playerPos;
+  check('click-to-move changes player position', Math.hypot(moved.x - before.x, moved.z - before.z) > 1);
   await page.screenshot({ path: `${SHOTS}04-after-move.png` });
 
   // Click somewhere else; movement continues (camera follows player).
@@ -124,6 +130,15 @@ async function main() {
     !(await page.locator('[data-screen="paused"]').isVisible()) &&
       (await page.locator('[data-hud]').isVisible()),
   );
+  const restarted = await snapshot();
+  await page.keyboard.press('Escape');
+  await page.click('[data-action="restart"]');
+  await page.waitForTimeout(800);
+  const restartedAgain = await snapshot();
+  check('repeated restarts do not grow the GPU resource count',
+    resources(restartedAgain).geometries <= resources(restarted).geometries &&
+      resources(restartedAgain).textures <= resources(restarted).textures,
+    `${JSON.stringify(resources(restarted))} -> ${JSON.stringify(resources(restartedAgain))}`);
 
   // Quit to title.
   await page.keyboard.press('Escape');
@@ -131,6 +146,24 @@ async function main() {
   await page.click('[data-action="quit"]');
   await page.waitForTimeout(400);
   check('quit returns to title', await page.locator('.game-title').isVisible());
+  const quit = await snapshot();
+  check('quit clears nameplates and releases run resources',
+    (await page.locator('.nameplate').count()) === 0 &&
+      resources(quit).geometries < resources(restartedAgain).geometries &&
+      resources(quit).textures < resources(restartedAgain).textures,
+    `${JSON.stringify(resources(restartedAgain))} -> ${JSON.stringify(resources(quit))}`);
+
+  // Use the warmed title as the baseline; the renderer can lazily upload
+  // persistent world meshes/textures as the player moves around the zone.
+  await page.click('[data-action="new-game"]');
+  await page.click('[data-action="begin"]');
+  await page.waitForTimeout(800);
+  await page.keyboard.press('Escape');
+  await page.click('[data-action="quit"]');
+  await page.waitForTimeout(400);
+  const quitAgain = await snapshot();
+  check('another run returns GPU resources to the warmed title baseline', sameResources(quit, quitAgain),
+    `${JSON.stringify(resources(quit))} -> ${JSON.stringify(resources(quitAgain))}`);
 
   // --- Console health ---
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

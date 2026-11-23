@@ -9,6 +9,7 @@ import {
   walkPhaseAdvance,
   type CreaturePoseInput,
 } from './anim';
+import { fleshMaterial, leatherMaterial } from './materials';
 
 /**
  * Mire Skitterer: a low quadruped with a trot gait and a crouch-and-leap
@@ -27,8 +28,8 @@ export function createSkittererRig(def: EnemyDef): {
   body.position.y = 0.52;
   root.add(body);
 
-  const hide = new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.85, metalness: 0 });
-  const belly = new THREE.MeshStandardMaterial({ color: 0x1a2118, roughness: 0.9, metalness: 0 });
+  const hide = fleshMaterial(def.color, 3, 1.0);
+  const belly = leatherMaterial(0x1a2118, 3, 0.85);
   const flashMaterials = [hide, belly];
   const glow = new THREE.MeshStandardMaterial({
     color: def.eyeColor,

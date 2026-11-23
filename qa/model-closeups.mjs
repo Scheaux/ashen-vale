@@ -46,6 +46,8 @@ async function main() {
     await page.mouse.click(Math.min(1410, Math.max(30, sx)), Math.min(870, Math.max(30, sy)));
   };
 
+  let stats = null;
+
   for (const cls of ['marauder', 'ranger', 'witch']) {
     await page.click('[data-action="new-game"]');
     await page.waitForTimeout(250);
@@ -87,11 +89,13 @@ async function main() {
     await sleep(250);
     await page.click('[data-action="quit"]');
     await sleep(350);
+    stats = (await snap()).render;
   }
 
   await browser.close();
   stopServer(server);
   console.log('close-ups captured in qa/shots/model-*.png');
+  console.log('render budget:', JSON.stringify(stats));
 }
 
 main().catch((err) => {

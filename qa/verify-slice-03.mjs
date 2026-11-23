@@ -1,7 +1,7 @@
 /**
  * Slice 3 browser QA: enemy AI with telegraphs. Verifies archetype variety,
- * elite packs with nameplates, that telegraphs are observed before the player
- * takes damage (tell-first ordering), and captures a telegraph frame.
+ * elite packs with nameplates, that each hit has its own preceding telegraph,
+ * and captures a telegraph frame.
  *
  * Run: node qa/verify-slice-03.mjs   (starts `vite preview` on :4173 itself)
  */
@@ -116,9 +116,9 @@ async function main() {
   check('windup/telegraph state observed before the fight ends', sawWindup);
   check('telegraph frame captured', sawTelegraphFrame, '21-telegraph.png');
   check('telegraph events recorded by the sim', tell.telegraphs > 0, `${tell.telegraphs} telegraphs`);
-  check('no damage taken before any telegraph', !tell.damageBeforeTelegraph);
+  check('no damage from an attack without a preceding tell', !tell.damageBeforeTelegraph);
   check(
-    'damage lands only after a telegraph',
+    'damage lands only after its own telegraph',
     tell.playerDamages > 0 && !tell.damageBeforeTelegraph,
     `${tell.playerDamages} hits after ${tell.telegraphs} telegraphs`,
   );

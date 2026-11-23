@@ -9,6 +9,7 @@ import {
   idlePose,
   type CreaturePoseInput,
 } from './anim';
+import { clothMaterial, leatherMaterial } from './materials';
 
 /**
  * Cinder Cultist: a hooded, robe-clad caster that hovers instead of walking.
@@ -26,8 +27,8 @@ export function createCultistRig(def: EnemyDef): {
   const body = new THREE.Group();
   root.add(body);
 
-  const robe = new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.92, metalness: 0 });
-  const trim = new THREE.MeshStandardMaterial({ color: 0x1c1216, roughness: 0.85, metalness: 0 });
+  const robe = clothMaterial(def.color, 3, 0.85);
+  const trim = leatherMaterial(0x1c1216, 3, 0.8);
   const flashMaterials = [robe, trim];
   const glow = new THREE.MeshStandardMaterial({
     color: def.eyeColor,

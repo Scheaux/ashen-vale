@@ -1,4 +1,4 @@
-import { angleDiff, angleLerp } from '../core/math';
+import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
 import { getEnemy, type AttackDef } from '../content/enemies';
 import { basicAttackFor, type SkillDef } from '../content/skills';
 import type { EnemyState, GameState, SimEvent } from '../sim/state';
@@ -37,7 +37,7 @@ export function damageEnemy(state: GameState, enemy: EnemyState, amount: number,
   }
 }
 
-export function damagePlayer(state: GameState, amount: number, events: SimEvent[]): void {
+export function damagePlayer(state: GameState, amount: number, events: SimEvent[], attackId?: string): void {
   const p = state.player;
   if (p.hp <= 0) return;
   const dealt = Math.max(1, Math.round(reducePlayerDamage(state, amount)));
@@ -46,12 +46,14 @@ export function damagePlayer(state: GameState, amount: number, events: SimEvent[
     kind: 'damage',
     targetKind: 'player',
     targetId: 'player',
+    ...(attackId ? { attackId } : {}),
     amount: dealt,
     x: p.position.x,
     y: 2.1,
     z: p.position.z,
   });
   if (p.hp === 0) {
+    p.attack = null;
     events.push({ kind: 'death', targetKind: 'player', targetId: 'player', x: p.position.x, z: p.position.z });
   }
 }
@@ -69,6 +71,17 @@ export function stepPlayerCombat(state: GameState, dt: number, events: SimEvent[
   const p = state.player;
   if (p.attackCooldown > 0) p.attackCooldown -= dt;
   if (p.hp <= 0) return;
+  const skill = basicAttackFor(p.classId);
+  if (p.attack) {
+    const previous = p.attack.elapsed;
+    p.attack.elapsed += dt;
+    const contactTime = skill.duration * skill.contact;
+    if (previous < contactTime && p.attack.elapsed >= contactTime) {
+      resolvePlayerAttack(state, skill, p.attack.facing, events);
+    }
+    if (p.attack.elapsed >= skill.duration) p.attack = null;
+    return;
+  }
 
   const target = findEnemy(state, p.attackTargetId);
   if (!target) {
@@ -76,7 +89,6 @@ export function stepPlayerCombat(state: GameState, dt: number, events: SimEvent[
     return;
   }
 
-  const skill = basicAttackFor(p.classId);
   const dx = target.position.x - p.position.x;
   const dz = target.position.z - p.position.z;
   const dist = Math.hypot(dx, dz);
@@ -89,13 +101,21 @@ export function stepPlayerCombat(state: GameState, dt: number, events: SimEvent[
 
   // In stance: stop moving and face the target.
   cancelMove(state);
-  p.facing = angleLerp(p.facing, Math.atan2(dx, dz), Math.min(1, 14 * dt));
+  const aim = dist > 0.001 ? Math.atan2(dx, dz) : p.facing;
+  p.facing = angleLerp(p.facing, aim, Math.min(1, 14 * dt));
 
-  if (dist > skill.range || p.attackCooldown > 0) return;
+  if (dist > skill.range || p.attackCooldown > 0 || Math.abs(angleDiff(p.facing, aim)) > 0.2) return;
 
+  p.facing = aim;
+  p.velocity.x = 0;
+  p.velocity.z = 0;
+  p.attack = { elapsed: 0, facing: aim };
   p.attackCooldown = skill.cooldown;
   events.push({ kind: 'attack', sourceId: 'player', skillId: skill.id, x: p.position.x, z: p.position.z });
+}
 
+function resolvePlayerAttack(state: GameState, skill: SkillDef, facing: number, events: SimEvent[]): void {
+  const p = state.player;
   if (skill.type === 'melee') {
     const halfArc = ((skill.arcDeg ?? 360) / 2) * (Math.PI / 180);
     for (const enemy of state.enemies) {
@@ -104,28 +124,25 @@ export function stepPlayerCombat(state: GameState, dt: number, events: SimEvent[
       const ez = enemy.position.z - p.position.z;
       const d = Math.hypot(ex, ez);
       if (d > skill.range + enemy.radius) continue;
-      if (Math.abs(angleDiff(p.facing, Math.atan2(ex, ez))) > halfArc) continue;
+      if (d > 0.001 && Math.abs(angleDiff(facing, Math.atan2(ex, ez))) > halfArc) continue;
       damageEnemy(state, enemy, scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max)), events);
     }
   } else {
-    spawnProjectile(state, skill, target.position);
+    spawnProjectile(state, skill, facing);
   }
 }
 
-export function spawnProjectile(state: GameState, skill: SkillDef, aim: { x: number; z: number }): void {
+function spawnProjectile(state: GameState, skill: SkillDef, facing: number): void {
   const p = state.player;
   const spec = skill.projectile;
   if (!spec) return;
-  const dx = aim.x - p.position.x;
-  const dz = aim.z - p.position.z;
-  const dist = Math.max(0.001, Math.hypot(dx, dz));
   state.projectiles.push({
     id: `proj-${state.tick}-${state.projectiles.length}`,
     owner: 'player',
     skillId: skill.id,
     position: { x: p.position.x, z: p.position.z },
     y: 1.25,
-    velocity: { x: (dx / dist) * spec.speed, z: (dz / dist) * spec.speed },
+    velocity: { x: Math.sin(facing) * spec.speed, z: Math.cos(facing) * spec.speed },
     damage: scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max)),
     radius: spec.radius,
     ttl: spec.ttl,
@@ -133,28 +150,25 @@ export function spawnProjectile(state: GameState, skill: SkillDef, aim: { x: num
   });
 }
 
-/** Enemy bolt: aimed at the player's position at strike time (travel = dodge window). */
+/** Enemy bolt travels along the direction advertised at windup start. */
 export function spawnEnemyBolt(
   state: GameState,
   enemy: EnemyState,
   attack: AttackDef,
-  aim: { x: number; z: number },
 ): void {
   const spec = attack.projectile;
   if (!spec) return;
-  const dx = aim.x - enemy.position.x;
-  const dz = aim.z - enemy.position.z;
-  const dist = Math.max(0.001, Math.hypot(dx, dz));
   state.projectiles.push({
     id: `bolt-${state.tick}-${state.projectiles.length}`,
     owner: enemy.id,
+    attackId: enemy.attackId ?? undefined,
     skillId: 'enemy-bolt',
     position: { x: enemy.position.x, z: enemy.position.z },
     y: 1.35,
-    velocity: { x: (dx / dist) * spec.speed, z: (dz / dist) * spec.speed },
+    velocity: { x: Math.sin(enemy.windupFacing) * spec.speed, z: Math.cos(enemy.windupFacing) * spec.speed },
     damage: rollDamage(state, attack.damage.min, attack.damage.max) * enemy.damageMult,
     radius: spec.radius,
-    ttl: spec.ttl,
+    ttl: Math.min(spec.ttl, attack.range / spec.speed),
     color: getEnemy(enemy.defId).eyeColor,
   });
 }
@@ -164,8 +178,11 @@ export function stepProjectiles(state: GameState, dt: number, events: SimEvent[]
   if (state.projectiles.length === 0) return;
   const remaining = [];
   for (const proj of state.projectiles) {
-    proj.position.x += proj.velocity.x * dt;
-    proj.position.z += proj.velocity.z * dt;
+    const x = proj.position.x;
+    const z = proj.position.z;
+    const travelDt = Math.min(dt, proj.ttl);
+    proj.position.x += proj.velocity.x * travelDt;
+    proj.position.z += proj.velocity.z * travelDt;
     proj.ttl -= dt;
 
     let consumed = false;
@@ -180,9 +197,9 @@ export function stepProjectiles(state: GameState, dt: number, events: SimEvent[]
       }
     } else {
       const p = state.player;
-      const dist = Math.hypot(p.position.x - proj.position.x, p.position.z - proj.position.z);
-      if (p.hp > 0 && dist <= proj.radius + p.radius) {
-        damagePlayer(state, proj.damage, events);
+      if (p.hp > 0 && segmentDistanceSq(p.position.x, p.position.z, x, z, proj.position.x, proj.position.z)
+        <= (proj.radius + p.radius) ** 2) {
+        damagePlayer(state, proj.damage, events, proj.attackId);
         consumed = true;
       }
     }

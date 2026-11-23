@@ -8,6 +8,7 @@ import { generateZoneLayout } from './content/zone';
 import { createPlayerView, type PlayerView } from './render/player';
 import { CameraRig } from './render/camera';
 import { CursorMarker } from './render/cursor';
+import { disposeMeshTree } from './render/dispose';
 import { createEmbers, type EmberField } from './render/effects';
 import { EnemyViews } from './render/enemies';
 import { LootViews } from './render/loot';
@@ -17,12 +18,11 @@ import { createProps, type PropsRenderer } from './render/props';
 import { createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
 import { createGameState, drainEvents, type GameState } from './sim/state';
+import { respawnPlayer, stepRun } from './sim/run';
 import { createSave, serializeSave } from './save/schema';
-import { damagePlayer, stepPlayerCombat, stepProjectiles } from './systems/combat';
-import { stepEnemies } from './systems/enemyAi';
+import { damagePlayer } from './systems/combat';
 import { equipItem, unequipItem } from './systems/inventory';
-import { stepPickups } from './systems/loot';
-import { setMoveTarget, stepMovement } from './systems/movement';
+import { setMoveTarget } from './systems/movement';
 import { grantXp } from './systems/progression';
 import { FloatingTextLayer } from './ui/floatingText';
 import { InventoryPanel } from './ui/inventory';
@@ -32,6 +32,7 @@ import { Ui, type GameMode } from './ui/ui';
 type GameEvents = {
   'input:move-target': { x: number; z: number };
 };
+const QA_DAMAGE_ID = 'qa-fixture';
 
 /** Debug/QA surface: numeric state snapshots + world-to-screen projection. */
 export interface AshenDebug {
@@ -62,6 +63,7 @@ export interface AshenDebug {
     drops: number;
     dropPositions: Array<{ x: number; z: number }>;
     tellOrder: { telegraphs: number; playerDamages: number; damageBeforeTelegraph: boolean };
+    render: { triangles: number; drawCalls: number; geometries: number; textures: number };
   };
   worldToScreen(x: number, z: number): { x: number; y: number };
   /** Review fixture: force damage to reach edge states (death flow, low HP). */
@@ -103,7 +105,7 @@ class Game {
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly tmpVec = new THREE.Vector3();
 
-  private layout: ZoneLayout;
+  private readonly layout: ZoneLayout;
   private state: GameState | null = null;
   private playerView: PlayerView | null = null;
   private classDef: ClassDef = getClass('marauder');
@@ -111,7 +113,8 @@ class Game {
   private rotating = false;
   private destinationActive = false;
   private dead = false;
-  /** Event-order recorder: telegraphs must always precede player damage. */
+  /** Event-order recorder, scoped to the attack instance that caused the hit. */
+  private readonly advertisedAttacks = new Set<string>();
   private tellTelegraphs = 0;
   private tellPlayerDamages = 0;
   private tellDamageBeforeTelegraph = false;
@@ -140,6 +143,8 @@ class Game {
     this.rig.snapTo(this.layout.spawn.x, this.layout.spawn.z);
 
     this.ui = new Ui(uiRoot, {
+      onNewGame: () => this.setMode('class-select'),
+      onBack: () => this.setMode('title'),
       onStartRun: (id) => this.startRun(id),
       onPause: () => this.pause(),
       onResume: () => this.resume(),
@@ -180,23 +185,14 @@ class Game {
   // ---------- Mode state machine ----------
 
   private startRun(id: ClassId): void {
+    this.clearRun();
     this.classDef = getClass(id);
-    this.layout = generateZoneLayout();
     this.state = createGameState(this.classDef, this.layout);
 
-    if (this.playerView) this.scene.remove(this.playerView.group);
     this.playerView = createPlayerView(this.classDef);
     this.scene.add(this.playerView.group);
 
     this.rig.snapTo(this.layout.spawn.x, this.layout.spawn.z);
-    this.cursor.setDestination(null);
-    this.destinationActive = false;
-    this.dead = false;
-    this.tellTelegraphs = 0;
-    this.tellPlayerDamages = 0;
-    this.tellDamageBeforeTelegraph = false;
-    this.inventoryPanel.close();
-    this.ui.hideDeath();
     this.ui.setPlayerHp(this.state.player.hp, this.state.player.maxHp);
     this.ui.showHud(this.classDef, this.layout.name);
     this.setMode('playing');
@@ -213,33 +209,46 @@ class Game {
   }
 
   private quitToTitle(): void {
+    this.clearRun();
+    this.setMode('title');
+  }
+
+  private clearRun(): void {
     this.state = null;
     if (this.playerView) {
-      this.scene.remove(this.playerView.group);
+      disposeMeshTree(this.playerView.group);
       this.playerView = null;
     }
+    this.enemyViews.clear();
+    this.clearCombatViews();
+    this.lootViews.clear();
+    this.nameplates.clear();
+    this.inventoryPanel.close();
+    this.dead = false;
+    this.tellTelegraphs = 0;
+    this.tellPlayerDamages = 0;
+    this.tellDamageBeforeTelegraph = false;
+    this.ui.hideDeath();
+    this.ui.clearToasts();
+  }
+
+  private clearCombatViews(): void {
+    this.projectileViews.clear();
+    this.telegraphs.clear();
+    this.floatingText.clear();
+    this.advertisedAttacks.clear();
     this.cursor.setDestination(null);
     this.destinationActive = false;
-    this.dead = false;
-    this.ui.hideDeath();
-    this.setMode('title');
   }
 
   private respawn(): void {
     const state = this.state;
-    if (!state) return;
-    const p = state.player;
-    p.hp = p.maxHp;
-    p.position.x = this.layout.spawn.x;
-    p.position.z = this.layout.spawn.z;
-    p.previousPosition.x = p.position.x;
-    p.previousPosition.z = p.position.z;
-    p.velocity.x = 0;
-    p.velocity.z = 0;
-    p.attackTargetId = null;
-    p.moveTarget = null;
-    for (const enemy of state.enemies) enemy.aggro = false;
+    if (!state || !this.dead) return;
+    respawnPlayer(state, this.layout.spawn);
+    this.clearCombatViews();
     this.dead = false;
+    this.ui.hideDeath();
+    const p = state.player;
     this.ui.setPlayerHp(p.hp, p.maxHp);
     this.rig.snapTo(p.position.x, p.position.z);
     this.loop.setRunning(true);
@@ -247,6 +256,7 @@ class Game {
 
   private onPlayerDeath(): void {
     this.dead = true;
+    this.inventoryPanel.close();
     this.loop.setRunning(false);
     this.ui.showDeath();
   }
@@ -263,11 +273,8 @@ class Game {
     const state = this.state;
     if (!state) return;
 
-    stepPlayerCombat(state, dt, state.events);
-    stepMovement(state, dt);
-    stepEnemies(state, dt, state.events);
-    stepProjectiles(state, dt, state.events);
-    stepPickups(state, state.events);
+    stepRun(state, dt);
+    if (state.player.hp <= 0) this.loop.setRunning(false);
 
     if (this.destinationActive && !state.player.moveTarget && !state.player.attackTargetId) {
       this.cursor.setDestination(null);
@@ -286,10 +293,11 @@ class Game {
         this.floatingText.handleEvents(events, this.rig.camera);
         for (const ev of events) {
           if (ev.kind === 'telegraph') {
+            this.advertisedAttacks.add(ev.attackId);
             this.tellTelegraphs++;
-          } else if (ev.kind === 'damage' && ev.targetKind === 'player') {
+          } else if (ev.kind === 'damage' && ev.targetKind === 'player' && ev.attackId !== QA_DAMAGE_ID) {
             this.tellPlayerDamages++;
-            if (this.tellTelegraphs === 0) this.tellDamageBeforeTelegraph = true;
+            if (!ev.attackId || !this.advertisedAttacks.delete(ev.attackId)) this.tellDamageBeforeTelegraph = true;
           }
         }
         for (const ev of events) {
@@ -303,7 +311,7 @@ class Game {
       }
 
       this.playerView.update(state, dt, alpha, elapsed);
-      this.enemyViews.sync(state, dt, this.rig.camera);
+      this.enemyViews.sync(state, dt, alpha, this.rig.camera);
       this.projectileViews.sync(state);
       this.telegraphs.sync(state, dt);
       this.lootViews.sync(state, elapsed);
@@ -422,7 +430,7 @@ class Game {
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'i' || e.key === 'I' || e.key === 'Tab') {
-        if (this.mode !== 'playing' && !this.inventoryPanel.visible) return;
+        if (this.mode !== 'playing' || this.dead || e.repeat) return;
         e.preventDefault();
         this.inventoryPanel.toggle();
         if (this.inventoryPanel.visible && this.state) this.inventoryPanel.sync(this.state);
@@ -505,6 +513,12 @@ class Game {
         playerDamages: this.tellPlayerDamages,
         damageBeforeTelegraph: this.tellDamageBeforeTelegraph,
       },
+      render: {
+        triangles: this.world.renderer.info.render.triangles,
+        drawCalls: this.world.renderer.info.render.calls,
+        geometries: this.world.renderer.info.memory.geometries,
+        textures: this.world.renderer.info.memory.textures,
+      },
     };
   }
 
@@ -518,7 +532,7 @@ class Game {
 
   hurtPlayer(amount: number): void {
     if (!this.state) return;
-    damagePlayer(this.state, amount, this.state.events);
+    damagePlayer(this.state, amount, this.state.events, QA_DAMAGE_ID);
   }
 
   healPlayer(amount: number): void {

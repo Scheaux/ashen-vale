@@ -23,6 +23,7 @@ describe('save schema v2', () => {
     const state = createGameState(getClass('witch'), emptyLayout());
     state.player.hp = 77;
     const save = createSave(state, 123456);
+    expect(save.zoneSeed).toBe(7);
     const restored = deserializeSave(serializeSave(save));
     expect(restored).toEqual(save);
   });
@@ -59,13 +60,36 @@ describe('save schema v2', () => {
 
   it('defensively copies inventory', () => {
     const state = createGameState(getClass('ranger'), emptyLayout());
-    state.inventory.bags.push(rollItem(createRng(5), 1));
+    state.inventory.bags.push(rollItem(createRng(5), 1, 'magic'));
     const save = createSave(state);
-    const restored = migrateSave(JSON.parse(serializeSave(save)));
+    const restored = migrateSave(save);
+    expect(restored.inventory.bags[0].affixes[0]).not.toBe(save.inventory.bags[0].affixes[0]);
     restored.inventory.bags[0].uid = 'tampered';
     restored.inventory.bags.pop();
     expect(save.inventory.bags[0].uid).not.toBe('tampered');
     expect(save.inventory.bags).toHaveLength(1);
+  });
+
+  it('rejects unknown classes, invalid numbers, and impossible progression', () => {
+    const save = createSave(createGameState(getClass('witch'), emptyLayout()));
+    for (const fields of [{ classId: 'unknown' }, { hp: NaN }, { hp: save.maxHp + 1 }, { xp: 60 }, { zoneSeed: -1 }]) {
+      expect(() => migrateSave({ ...save, ...fields })).toThrow();
+    }
+  });
+
+  it('rejects corrupt item records, duplicate identities, and incompatible equipment', () => {
+    const save = createSave(createGameState(getClass('witch'), emptyLayout()));
+    const item = rollItem(createRng(5), 1, 'magic');
+    const badSlot = item.slot === 'helm' ? 'weapon' : 'helm';
+    for (const inventory of [
+      { ...save.inventory, equipment: null },
+      { ...save.inventory, bags: [null] },
+      { ...save.inventory, bags: [item, item] },
+      { ...save.inventory, bags: [{ ...item, affixes: [{ id: 'unknown', value: 1 }] }] },
+      { ...save.inventory, equipment: { [badSlot]: item } },
+    ]) {
+      expect(() => migrateSave({ ...save, inventory })).toThrow();
+    }
   });
 });
 

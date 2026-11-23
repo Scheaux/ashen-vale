@@ -12,6 +12,7 @@ import {
   walkPhaseAdvance,
   type CreaturePoseInput,
 } from './anim';
+import { clothMaterial, fleshMaterial } from './materials';
 
 interface HuskJoints {
   body: THREE.Group;
@@ -58,8 +59,8 @@ export function createHuskRig(def: EnemyDef): HuskRig {
   const body = new THREE.Group();
   root.add(body);
 
-  const flesh = new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.88, metalness: 0 });
-  const rags = new THREE.MeshStandardMaterial({ color: 0x1c161f, roughness: 0.95, metalness: 0 });
+  const flesh = fleshMaterial(def.color, 2.5, 0.95);
+  const rags = clothMaterial(0x1c161f, 3, 0.85);
   const flashMaterials = [flesh, rags];
 
   const hips = new THREE.Group();

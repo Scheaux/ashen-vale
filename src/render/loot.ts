@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RARITY_COLORS, type Rarity } from '../content/items';
 import type { GameState } from '../sim/state';
+import { disposeMeshTree } from './dispose';
 
 interface LootView {
   crystal: THREE.Mesh;
@@ -28,12 +29,20 @@ export class LootViews {
     scene.add(this.group);
   }
 
+  clear(): void {
+    for (const view of this.views.values()) this.remove(view);
+    this.views.clear();
+  }
+
+  private remove(view: LootView): void {
+    disposeMeshTree(view.crystal);
+    disposeMeshTree(view.beam);
+  }
+
   sync(state: GameState, elapsed: number): void {
     for (const [id, view] of this.views) {
       if (!state.loot.some((d) => d.id === id)) {
-        this.group.remove(view.crystal, view.beam);
-        view.crystal.geometry.dispose();
-        view.beam.geometry.dispose();
+        this.remove(view);
         this.views.delete(id);
       }
     }
@@ -67,7 +76,7 @@ export class LootViews {
       view.crystal.rotation.y = elapsed * 1.4 + view.phase;
       view.crystal.position.y = 0.42 + Math.sin(elapsed * 2 + view.phase) * 0.08;
       view.beamMaterial.opacity =
-        BEAM_OPACITY[state.loot.find((d) => d.id === drop.id)?.item.rarity ?? 'normal'] *
+        BEAM_OPACITY[drop.item.rarity] *
         (0.8 + 0.2 * Math.sin(elapsed * 2.4 + view.phase));
     }
   }

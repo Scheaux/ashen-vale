@@ -105,7 +105,8 @@ export class InventoryPanel {
       row.className = 'eq-row';
       if (item) {
         row.style.borderColor = RARITY_COLORS[item.rarity].cssColor;
-        row.innerHTML = `<span class="eq-slot">${SLOT_LABELS[slot]}</span><span class="eq-item" style="color:${RARITY_COLORS[item.rarity].cssColor}">${item.name}</span>`;
+        row.innerHTML = `<span class="eq-slot">${SLOT_LABELS[slot]}</span><span class="eq-item" style="color:${RARITY_COLORS[item.rarity].cssColor}"></span>`;
+        row.querySelector('.eq-item')!.textContent = item.name;
         row.addEventListener('click', () => this.callbacks.onUnequip(slot));
         row.addEventListener('mouseenter', (e) => this.showTooltip(item, e));
         row.addEventListener('mouseleave', () => this.tooltip.classList.add('hidden'));
@@ -133,9 +134,10 @@ export class InventoryPanel {
     const color = RARITY_COLORS[item.rarity].cssColor;
     const lines = item.affixes.map((a) => `<li>${affixLine(a)}</li>`).join('');
     this.tooltip.innerHTML = `
-      <div class="tt-name" style="color:${color}">${item.name}</div>
+      <div class="tt-name" style="color:${color}"></div>
       <div class="tt-meta">${item.rarity.toUpperCase()} ${SLOT_LABELS[item.slot]} · ilvl ${item.itemLevel}</div>
       <ul class="tt-affixes">${lines || '<li class="tt-empty">no properties</li>'}</ul>`;
+    this.tooltip.querySelector('.tt-name')!.textContent = item.name;
     this.tooltip.classList.remove('hidden');
     const x = Math.min(window.innerWidth - 260, event.clientX + 16);
     const y = Math.min(window.innerHeight - 160, event.clientY + 16);

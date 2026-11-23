@@ -5,6 +5,8 @@ import './styles.css';
 export type GameMode = 'title' | 'class-select' | 'playing' | 'paused';
 
 export interface UiCallbacks {
+  onNewGame(): void;
+  onBack(): void;
   onStartRun(id: ClassId): void;
   onPause(): void;
   onResume(): void;
@@ -97,6 +99,10 @@ export class Ui {
     window.setTimeout(() => el.remove(), 2800);
   }
 
+  clearToasts(): void {
+    this.toastLayer.replaceChildren();
+  }
+
   showDeath(): void {
     this.deathScreen.classList.remove('hidden');
   }
@@ -115,10 +121,10 @@ export class Ui {
   private onAction(action: string): void {
     switch (action) {
       case 'new-game':
-        this.setMode('class-select');
+        this.callbacks.onNewGame();
         break;
       case 'back':
-        this.setMode('title');
+        this.callbacks.onBack();
         break;
       case 'begin':
         this.callbacks.onStartRun(this.selected);
@@ -136,7 +142,6 @@ export class Ui {
         this.callbacks.onQuitToTitle();
         break;
       case 'respawn':
-        this.hideDeath();
         this.callbacks.onRespawn();
         break;
     }

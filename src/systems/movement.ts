@@ -107,7 +107,7 @@ export function stepMovement(state: GameState, dt: number): void {
   let desiredX = 0;
   let desiredZ = 0;
 
-  if (p.moveTarget) {
+  if (p.moveTarget && !p.attack) {
     const dx = p.moveTarget.x - p.position.x;
     const dz = p.moveTarget.z - p.position.z;
     const dist = Math.hypot(dx, dz);

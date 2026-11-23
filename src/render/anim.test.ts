@@ -130,25 +130,15 @@ describe('locomotion and layers', () => {
   });
 });
 
-describe('AnimClock', () => {
-  it('reports attack progress only while swinging', () => {
-    const clock = new A.AnimClock();
-    expect(clock.attackProgress).toBeNull();
-    clock.triggerAttack();
-    expect(clock.attackProgress).toBeCloseTo(0, 6);
-    clock.advance(clock.attackDuration / 2);
-    expect(clock.attackProgress).toBeCloseTo(0.5, 2);
-    clock.advance(clock.attackDuration);
-    expect(clock.attackProgress).toBeNull();
-  });
-
-  it('decays hit and attack timers without going negative', () => {
-    const clock = new A.AnimClock();
-    clock.triggerAttack();
+describe('HitClock', () => {
+  it('runs the cosmetic flinch once and returns to idle', () => {
+    const clock = new A.HitClock();
+    expect(clock.hitProgress).toBeNull();
     clock.triggerHit();
+    expect(clock.hitProgress).toBe(0);
+    clock.advance(clock.hitDuration / 2);
+    expect(clock.hitProgress).toBeCloseTo(0.5);
     clock.advance(10);
-    expect(clock.attack).toBe(0);
-    expect(clock.hit).toBe(0);
     expect(clock.hitProgress).toBeNull();
   });
 });

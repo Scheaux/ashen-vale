@@ -3,6 +3,7 @@ import { getEnemy, ELITE_MODIFIERS } from '../content/enemies';
 import type { EnemyState, GameState, SimEvent } from '../sim/state';
 import { phaseAttackProgress, type CreaturePoseInput } from './anim';
 import { createCultistRig } from './cultistModel';
+import { disposeMeshTree } from './dispose';
 import { createHuskRig } from './huskModel';
 import { createSkittererRig } from './skittererModel';
 
@@ -54,6 +55,13 @@ export class EnemyViews {
     this.highlightedId = enemyId;
   }
 
+  clear(): void {
+    for (const view of this.views.values()) disposeMeshTree(view.model.root);
+    this.views.clear();
+    this.pickMeshes.clear();
+    this.highlightedId = null;
+  }
+
   /** Consume authoritative events: damage -> hit flinch + flash. */
   handleEvents(events: readonly SimEvent[]): void {
     for (const ev of events) {
@@ -66,10 +74,10 @@ export class EnemyViews {
     }
   }
 
-  sync(state: GameState, dt: number, camera: THREE.Camera): void {
+  sync(state: GameState, dt: number, alpha: number, camera: THREE.Camera): void {
     for (const [id, view] of this.views) {
       if (!state.enemies.some((e) => e.id === id)) {
-        this.group.remove(view.model.root);
+        disposeMeshTree(view.model.root);
         this.pickMeshes.delete(view.model.pickTarget);
         this.views.delete(id);
       }
@@ -82,7 +90,8 @@ export class EnemyViews {
         this.views.set(enemy.id, view);
         this.group.add(view.model.root);
       }
-      this.updateView(view, enemy, dt, camera);
+      if (enemy.dead) this.pickMeshes.delete(view.model.pickTarget);
+      this.updateView(view, enemy, dt, alpha, camera);
     }
   }
 
@@ -140,13 +149,13 @@ export class EnemyViews {
     return { model, barFill, barRoot, hitTime: 0, flash: 0, facing: enemy.facing, eliteRing };
   }
 
-  private updateView(view: EnemyView, enemy: EnemyState, dt: number, camera: THREE.Camera): void {
+  private updateView(view: EnemyView, enemy: EnemyState, dt: number, alpha: number, camera: THREE.Camera): void {
     const def = getEnemy(enemy.defId);
 
-    // Smooth visual follow (sim position is authoritative).
-    const follow = Math.min(1, 12 * dt);
-    view.model.root.position.x += (enemy.position.x - view.model.root.position.x) * follow;
-    view.model.root.position.z += (enemy.position.z - view.model.root.position.z) * follow;
+    // Interpolate one tick rather than damping: a fast pounce must not lag
+    // several body lengths behind its actual contact point.
+    view.model.root.position.x = THREE.MathUtils.lerp(enemy.previousPosition.x, enemy.position.x, alpha);
+    view.model.root.position.z = THREE.MathUtils.lerp(enemy.previousPosition.z, enemy.position.z, alpha);
 
     // Facing: locked during windup/active (the counterplay reads off it),
     // smoothed during chase.

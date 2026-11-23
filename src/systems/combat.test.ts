@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
+import { basicAttackFor } from '../content/skills';
 import type { CircleCollider, ZoneLayout } from '../content/types';
 import { drainEvents, type GameState, type SimEvent } from '../sim/state';
 import { createGameState } from '../sim/state';
-import { stepMovement } from './movement';
-import { stepEnemies } from './enemyAi';
+import { stepRun } from '../sim/run';
 import {
   damageEnemy,
   damagePlayer,
@@ -26,11 +26,9 @@ function layoutWith(enemies: Array<{ x: number; z: number }> = [], colliders: Ci
 
 function runCombatTicks(state: GameState, ticks: number, events: SimEvent[], dt = 1 / 60): void {
   for (let i = 0; i < ticks; i++) {
-    stepPlayerCombat(state, dt, events);
-    stepMovement(state, dt);
-    stepEnemies(state, dt, events);
-    stepProjectiles(state, dt, events);
+    stepRun(state, dt);
   }
+  events.push(...drainEvents(state));
 }
 
 describe('damage pipeline', () => {
@@ -74,7 +72,7 @@ describe('damage pipeline', () => {
 });
 
 describe('player combat verb', () => {
-  it('melee cleave damages the enemy in front and emits attack + damage', () => {
+  it('melee cleave deals one hit at the pose contact frame, not at startup', () => {
     const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 16 }]));
     const events: SimEvent[] = [];
     state.player.attackTargetId = state.enemies[0].id;
@@ -82,19 +80,25 @@ describe('player combat verb', () => {
     stepPlayerCombat(state, 1 / 60, events);
 
     expect(events.some((e) => e.kind === 'attack' && e.sourceId === 'player')).toBe(true);
-    expect(events.some((e) => e.kind === 'damage' && e.targetKind === 'enemy')).toBe(true);
+    const skill = basicAttackFor('marauder');
+    const contact = skill.duration * skill.contact;
+    stepPlayerCombat(state, contact - 0.001, events);
+    expect(state.enemies[0].hp).toBe(state.enemies[0].maxHp);
+    stepPlayerCombat(state, 0.002, events);
+    stepPlayerCombat(state, 0.1, events);
+    expect(events.filter((e) => e.kind === 'damage' && e.targetKind === 'enemy')).toHaveLength(1);
     expect(state.enemies[0].hp).toBeLessThan(state.enemies[0].maxHp);
   });
 
-  it('melee arc ignores enemies behind the swing', () => {
-    const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 20 }]));
+  it('melee arc ignores enemies behind the committed swing', () => {
+    const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 16 }, { x: 0, z: 20 }]));
     const events: SimEvent[] = [];
     state.player.attackTargetId = state.enemies[0].id;
 
-    // One tick: the player has barely turned, the swing arc faces -Z.
     stepPlayerCombat(state, 1 / 60, events);
-    expect(events.some((e) => e.kind === 'damage')).toBe(false);
-    expect(state.enemies[0].hp).toBe(state.enemies[0].maxHp);
+    stepPlayerCombat(state, 0.25, events);
+    expect(state.enemies[0].hp).toBeLessThan(state.enemies[0].maxHp);
+    expect(state.enemies[1].hp).toBe(state.enemies[1].maxHp);
   });
 
   it('respects the attack cooldown', () => {
@@ -132,6 +136,10 @@ describe('player combat verb', () => {
     state.player.attackTargetId = enemy.id;
 
     stepPlayerCombat(state, 1 / 60, events);
+    expect(state.projectiles).toHaveLength(0);
+    stepPlayerCombat(state, 0.24, events);
+    expect(state.projectiles).toHaveLength(0);
+    stepPlayerCombat(state, 0.02, events);
     expect(state.projectiles).toHaveLength(1);
 
     for (let i = 0; i < 60; i++) stepProjectiles(state, 1 / 60, events);
@@ -147,10 +155,7 @@ describe('player combat verb', () => {
     state.player.attackTargetId = enemy.id;
 
     for (let i = 0; i < 60 * 12 && state.enemies.length > 0; i++) {
-      stepPlayerCombat(state, 1 / 60, events);
-      stepMovement(state, 1 / 60);
-      stepProjectiles(state, 1 / 60, events);
-      stepEnemies(state, 1 / 60, events);
+      runCombatTicks(state, 1, events);
     }
 
     expect(events.some((e) => e.kind === 'death' && e.targetKind === 'enemy')).toBe(true);

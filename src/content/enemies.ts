@@ -17,8 +17,6 @@ export interface AttackDef {
   cooldown: number;
   /** Sweep half-angle is arcDeg/2 around the locked facing. */
   arcDeg?: number;
-  /** Pounce dash speed during the active window. */
-  lungeSpeed?: number;
   projectile?: {
     speed: number;
     radius: number;
@@ -118,7 +116,6 @@ export const ENEMIES: readonly EnemyDef[] = [
       recovery: 0.35,
       cooldown: 1.1,
       arcDeg: 70,
-      lungeSpeed: 11,
       damage: { min: 2, max: 5 },
     },
     color: 0x2e3a2c,

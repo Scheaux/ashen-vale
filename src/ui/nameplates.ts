@@ -20,6 +20,11 @@ export class NameplateLayer {
     parent.appendChild(this.root);
   }
 
+  clear(): void {
+    this.root.replaceChildren();
+    this.plates.clear();
+  }
+
   sync(state: GameState, camera: THREE.Camera): void {
     const alive = new Set<string>();
 

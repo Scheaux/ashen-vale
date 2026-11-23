@@ -1,7 +1,8 @@
-import { angleDiff, angleLerp } from '../core/math';
+import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
 import { getEnemy, type EnemyDef } from '../content/enemies';
 import type { EnemyState, GameState, SimEvent } from '../sim/state';
-import { damagePlayer, spawnEnemyBolt } from './combat';import { clampCircleToBounds, resolveCircleCollisions } from './movement';
+import { damagePlayer, rollDamage, spawnEnemyBolt } from './combat';
+import { clampCircleToBounds, resolveCircleCollisions } from './movement';
 
 /**
  * Enemy AI: an explicit state machine with constrained intents.
@@ -10,7 +11,7 @@ import { damagePlayer, spawnEnemyBolt } from './combat';import { clampCircleToBo
  *   chase     approach/reposition. -> windup   when in range and cooldown ready
  *   windup    COMMITMENT: facing + position lock; telegraph is visible.
  *             -> active after the windup duration (never instant turn-and-hit)
- *   active    the strike resolves ONCE at entry against the locked shape.
+ *   active    strikes fire at entry; pounces hit once on swept contact.
  *             -> recovery after the active window
  *   recovery  no attacks, no repositioning beyond drift.
  *             -> chase; the attack cooldown starts here (prevents recovery spam)
@@ -39,6 +40,40 @@ function enterPhase(enemy: EnemyState, phase: EnemyState['phase']): void {
   enemy.phaseTime = 0;
 }
 
+/** Clip the advertised straight pounce lane to the first solid or zone edge. */
+function pounceDistance(state: GameState, enemy: EnemyState, range: number): number {
+  const vx = Math.sin(enemy.windupFacing);
+  const vz = Math.cos(enemy.windupFacing);
+  const { x, z } = enemy.position;
+  const dx = x - state.bounds.center.x;
+  const dz = z - state.bounds.center.z;
+  const dot = dx * vx + dz * vz;
+  const boundary = state.bounds.radius - enemy.radius;
+  let reach = Math.min(range, Math.max(0, -dot + Math.sqrt(Math.max(0, dot * dot + boundary ** 2 - dx * dx - dz * dz))));
+  for (const collider of state.colliders) {
+    const cx = collider.x - x;
+    const cz = collider.z - z;
+    const along = cx * vx + cz * vz;
+    if (along <= 0) continue;
+    const discriminant = (collider.radius + enemy.radius) ** 2 - (cx * cx + cz * cz - along * along);
+    if (discriminant > 0) reach = Math.min(reach, Math.max(0, along - Math.sqrt(discriminant)));
+  }
+  return reach;
+}
+
+export function resetEnemyCombat(enemy: EnemyState): void {
+  enterPhase(enemy, 'idle');
+  enemy.aggro = false;
+  enemy.attackCooldown = 0;
+  enemy.attackId = null;
+  enemy.lungeRemaining = 0;
+  enemy.lungeHit = false;
+  enemy.velocity.x = 0;
+  enemy.velocity.z = 0;
+  enemy.previousPosition.x = enemy.position.x;
+  enemy.previousPosition.z = enemy.position.z;
+}
+
 function canStartAttack(enemy: EnemyState, def: EnemyDef, dist: number): boolean {
   if (enemy.attackCooldown > 0) return false;
   switch (def.behavior) {
@@ -64,16 +99,18 @@ function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, event
   events.push({ kind: 'attack', sourceId: enemy.id, skillId: 'enemy-strike', x: enemy.position.x, z: enemy.position.z });
 
   if (attack.shape === 'bolt') {
-    spawnEnemyBolt(state, enemy, attack, p.position);
+    spawnEnemyBolt(state, enemy, attack);
     return;
   }
 
-  // melee-arc and pounce: hit only what is inside the locked sweep.
+  if (attack.shape === 'pounce') return; // resolved along the dash, not at takeoff
+
+  // Melee arc only hits what is inside the locked sweep.
   const halfArc = ((attack.arcDeg ?? 360) / 2) * (Math.PI / 180);
   const inArc = Math.abs(angleDiff(enemy.windupFacing, Math.atan2(dx, dz))) <= halfArc;
   if (dist <= attack.range + p.radius && inArc) {
     const amount = attack.damage.min + state.rng() * (attack.damage.max - attack.damage.min);
-    damagePlayer(state, amount * enemy.damageMult, events);
+    damagePlayer(state, amount * enemy.damageMult, events, enemy.attackId ?? undefined);
   }
 }
 
@@ -118,8 +155,15 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
   const p = state.player;
 
   for (const enemy of state.enemies) {
+    enemy.previousPosition.x = enemy.position.x;
+    enemy.previousPosition.z = enemy.position.z;
     if (enemy.dead) {
       enemy.deadTime += dt;
+      continue;
+    }
+
+    if (p.hp <= 0) {
+      resetEnemyCombat(enemy);
       continue;
     }
 
@@ -136,7 +180,7 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
       case 'idle': {
         enemy.velocity.x = 0;
         enemy.velocity.z = 0;
-        if (p.hp > 0 && dist <= def.aggroRange) {
+        if (dist <= def.aggroRange) {
           enemy.aggro = true;
           enterPhase(enemy, 'chase');
         }
@@ -144,16 +188,12 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
       }
 
       case 'chase': {
-        if (p.hp <= 0) {
-          enterPhase(enemy, 'idle');
-          enemy.aggro = false;
-          break;
-        }
         if (canStartAttack(enemy, def, dist)) {
-          // COMMIT: lock facing and position at windup start. The player can
-          // read the telegraph and step out of the locked sweep.
+          // The player can read and leave the locked danger area.
           enemy.windupFacing = Math.atan2(dx, dz);
-          enemy.windupPosition = { x: enemy.position.x, z: enemy.position.z };
+          enemy.attackId = `${enemy.id}:${state.tick}`;
+          enemy.lungeRemaining = attack.shape === 'pounce' ? pounceDistance(state, enemy, attack.range) : 0;
+          enemy.lungeHit = false;
           enemy.velocity.x = 0;
           enemy.velocity.z = 0;
           enemy.facing = enemy.windupFacing;
@@ -161,11 +201,17 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
           events.push({
             kind: 'telegraph',
             enemyId: enemy.id,
+            attackId: enemy.attackId,
             shape: attack.shape,
             x: enemy.position.x,
             z: enemy.position.z,
             facing: enemy.windupFacing,
-            range: attack.range,
+            range: attack.shape === 'pounce'
+              ? enemy.lungeRemaining
+              : attack.shape === 'bolt' && attack.projectile
+                ? Math.min(attack.range, attack.projectile.speed * attack.projectile.ttl)
+                : attack.range + p.radius,
+            radius: p.radius + (attack.shape === 'pounce' ? enemy.radius : attack.projectile?.radius ?? 0),
             arcDeg: attack.arcDeg ?? 360,
             duration: attack.windup,
           });
@@ -188,18 +234,26 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
 
       case 'active': {
         if (attack.shape === 'pounce') {
-          // Lunge along the locked facing; the dash IS the dodge window.
-          enemy.velocity.x = Math.sin(enemy.windupFacing) * (attack.lungeSpeed ?? 8);
-          enemy.velocity.z = Math.cos(enemy.windupFacing) * (attack.lungeSpeed ?? 8);
+          const distance = Math.min(enemy.lungeRemaining, (attack.range / attack.active) * dt);
+          enemy.lungeRemaining -= distance;
+          const x = enemy.position.x;
+          const z = enemy.position.z;
+          enemy.velocity.x = Math.sin(enemy.windupFacing) * distance / dt;
+          enemy.velocity.z = Math.cos(enemy.windupFacing) * distance / dt;
           enemy.position.x += enemy.velocity.x * dt;
           enemy.position.z += enemy.velocity.z * dt;
-          resolveCircleCollisions(enemy.position, enemy.velocity, enemy.radius, state.colliders);
-          clampCircleToBounds(enemy.position, enemy.velocity, enemy.radius, state.bounds);
+          if (!enemy.lungeHit && segmentDistanceSq(p.position.x, p.position.z, x, z, enemy.position.x, enemy.position.z)
+            <= (p.radius + enemy.radius) ** 2) {
+            enemy.lungeHit = true;
+            damagePlayer(state, rollDamage(state, attack.damage.min, attack.damage.max) * enemy.damageMult, events, enemy.attackId ?? undefined);
+          }
         } else {
           enemy.velocity.x = 0;
           enemy.velocity.z = 0;
         }
         if (enemy.phaseTime >= attack.active) {
+          enemy.velocity.x = 0;
+          enemy.velocity.z = 0;
           enterPhase(enemy, 'recovery');
         }
         break;

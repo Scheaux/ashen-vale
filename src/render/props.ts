@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { noise2D } from '../core/noise';
 import type { PropKind, PropPlacement, ZoneLayout } from '../content/types';
+import { rockGeometry, sweptBranch, sweptTube, sweptTrunk, latheProfile } from './geo';
+import { barkMaterial, stoneMaterial } from './materials';
 
 export interface PropsRenderer {
   group: THREE.Group;
@@ -15,48 +18,74 @@ export interface PropPickTarget {
   kind: PropKind;
 }
 
-const WHITE = new THREE.Color(1, 1, 1);
-const HOVER_TINT = new THREE.Color(2.15, 1.95, 1.45);
-
 function deadTreeGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
-  const trunk = new THREE.CylinderGeometry(0.16, 0.3, 3.6, 7);
-  trunk.translate(0, 1.8, 0);
-  parts.push(trunk);
 
-  const branches: Array<[number, number, number, number, number]> = [
-    // [rotZ, rotY, y, length, tiltX]
-    [0.9, 0.3, 2.7, 1.7, 0.35],
-    [-0.8, 1.9, 2.9, 1.5, -0.3],
-    [1.15, 3.6, 2.2, 1.35, 0.2],
-    [-1.05, 5.1, 3.15, 1.2, -0.15],
-    [0.35, 2.6, 3.45, 1.0, 0.55],
+  // Trunk: adaptive sweep with a flared root and dense base rings.
+  const trunk = sweptTrunk(3.6, 0.3, 14);
+  parts.push(sweptTube(trunk.centers, trunk.radii, 10));
+
+  // Branches sweep outward with taper; starts are buried inside the trunk.
+  const branches: Array<{ origin: THREE.Vector3; dir: THREE.Vector3; length: number }> = [
+    { origin: new THREE.Vector3(0.05, 2.55, 0.1), dir: new THREE.Vector3(0.8, 0.75, 0.35), length: 1.85 },
+    { origin: new THREE.Vector3(-0.12, 2.85, -0.05), dir: new THREE.Vector3(-0.85, 0.7, -0.2), length: 1.6 },
+    { origin: new THREE.Vector3(0.1, 2.15, -0.12), dir: new THREE.Vector3(0.55, 0.65, -0.85), length: 1.45 },
+    { origin: new THREE.Vector3(-0.08, 3.25, 0.08), dir: new THREE.Vector3(-0.5, 0.95, 0.5), length: 1.2 },
+    { origin: new THREE.Vector3(0.02, 3.5, 0), dir: new THREE.Vector3(0.15, 1, -0.2), length: 0.95 },
   ];
-  for (const [rotZ, rotY, y, length, tiltX] of branches) {
-    const branch = new THREE.CylinderGeometry(0.045, 0.11, length, 5);
-    branch.translate(0, length / 2, 0);
-    branch.rotateX(tiltX);
-    branch.rotateZ(rotZ);
-    branch.rotateY(rotY);
-    branch.translate(0, y, 0);
-    parts.push(branch);
+  for (const b of branches) {
+    const branch = sweptBranch(b.origin, b.dir, b.length, 0.085, 0.018, 7, 0.22);
+    parts.push(sweptTube(branch.centers, branch.radii, 7));
   }
-  return mergeGeometries(parts, false) ?? trunk;
-}
 
-function rockGeometry(): THREE.BufferGeometry {
-  return new THREE.IcosahedronGeometry(1, 1);
+  const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
+  return merged ?? new THREE.CylinderGeometry(0.14, 0.3, 3.6, 8);
 }
 
 function pillarGeometry(): THREE.BufferGeometry {
-  const geo = new THREE.CylinderGeometry(0.5, 0.64, 1, 12);
-  geo.translate(0, 0.5, 0);
-  return geo;
+  // Weathered column: plinth, entasis swell, capital — lathed so curved
+  // surfaces stay round and the rim highlights travel.
+  const profile: Array<[number, number]> = [
+    [0.03, 0],
+    [0.78, 0],
+    [0.74, 0.05],
+    [0.58, 0.11],
+    [0.535, 0.3],
+    [0.515, 0.52],
+    [0.525, 0.72],
+    [0.575, 0.885],
+    [0.68, 0.945],
+    [0.72, 1.0],
+    [0.03, 1.0],
+  ];
+  return latheProfile(profile, 22);
 }
 
 function pillarBrokenGeometry(): THREE.BufferGeometry {
-  const geo = new THREE.CylinderGeometry(0.52, 0.72, 1, 12);
-  geo.translate(0, 0.5, 0);
+  const profile: Array<[number, number]> = [
+    [0.03, 0],
+    [0.82, 0],
+    [0.78, 0.05],
+    [0.62, 0.12],
+    [0.565, 0.34],
+    [0.55, 0.6],
+    [0.565, 0.82],
+    [0.03, 0.92],
+  ];
+  const geo = latheProfile(profile, 22);
+  // Chip the top: jagged rim where the shaft snapped.
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y > 0.62) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const chip = noise2D(x * 5.2 + 11.3, z * 5.2 - 7.7) * 0.14 + noise2D(x * 12, z * 12) * 0.06;
+      pos.setY(i, Math.max(0.55, y + chip * (y - 0.6) / 0.32));
+    }
+  }
+  geo.computeVertexNormals();
   return geo;
 }
 
@@ -70,23 +99,23 @@ interface KindStyle {
 function styles(): Record<PropKind, KindStyle> {
   return {
     rock: {
-      geometry: rockGeometry(),
-      material: new THREE.MeshStandardMaterial({ color: 0x4e505a, roughness: 0.92, metalness: 0 }),
+      geometry: rockGeometry(1, 3.7, 2),
+      material: stoneMaterial(0x565862, 1.6, 0.85),
       scaleAxes: { x: [0.7, 1.7], y: [0.55, 1.15], z: [0.7, 1.7] },
     },
     deadTree: {
       geometry: deadTreeGeometry(),
-      material: new THREE.MeshStandardMaterial({ color: 0x32261a, roughness: 0.95, metalness: 0 }),
+      material: barkMaterial(0x32261a, 2.2, 0.95),
       scaleAxes: { x: [0.85, 1.15], y: [0.85, 1.3], z: [0.85, 1.15] },
     },
     pillar: {
       geometry: pillarGeometry(),
-      material: new THREE.MeshStandardMaterial({ color: 0x6b665c, roughness: 0.9, metalness: 0 }),
+      material: stoneMaterial(0x6b665c, 1.4, 0.85),
       scaleAxes: { x: [0.9, 1.1], y: [2.4, 4.3], z: [0.9, 1.1] },
     },
     pillarBroken: {
       geometry: pillarBrokenGeometry(),
-      material: new THREE.MeshStandardMaterial({ color: 0x625d54, roughness: 0.9, metalness: 0 }),
+      material: stoneMaterial(0x625d54, 1.4, 0.85),
       scaleAxes: { x: [0.9, 1.1], y: [0.9, 1.8], z: [0.9, 1.1] },
     },
   };
@@ -139,7 +168,7 @@ export function createProps(layout: ZoneLayout): PropsRenderer {
       );
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(i, matrix);
-      mesh.setColorAt(i, WHITE);
+      mesh.setColorAt(i, new THREE.Color(1, 1, 1));
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -150,10 +179,12 @@ export function createProps(layout: ZoneLayout): PropsRenderer {
   }
 
   let highlighted: { mesh: THREE.InstancedMesh; id: number } | null = null;
+  const white = new THREE.Color(1, 1, 1);
+  const hoverTint = new THREE.Color(2.15, 1.95, 1.45);
 
   function clearHighlight(): void {
     if (!highlighted) return;
-    highlighted.mesh.setColorAt(highlighted.id, WHITE);
+    highlighted.mesh.setColorAt(highlighted.id, white);
     if (highlighted.mesh.instanceColor) highlighted.mesh.instanceColor.needsUpdate = true;
     highlighted = null;
   }
@@ -163,7 +194,7 @@ export function createProps(layout: ZoneLayout): PropsRenderer {
     if (!mesh) return;
     if (highlighted && highlighted.mesh === mesh && highlighted.id === instanceId) return;
     clearHighlight();
-    mesh.setColorAt(instanceId, HOVER_TINT);
+    mesh.setColorAt(instanceId, hoverTint);
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     highlighted = { mesh, id: instanceId };
   }

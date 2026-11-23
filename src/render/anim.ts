@@ -1,4 +1,7 @@
+import type { AttackDef } from '../content/enemies';
+import { BASIC_ATTACK_CONTACT } from '../content/skills';
 import { clamp } from '../core/math';
+import type { EnemyPhase } from '../sim/state';
 
 /**
  * Procedural animation curves for the jointed rigs.
@@ -23,8 +26,8 @@ export function deg(d: number): number {
 }
 
 /** Canonical arm segment lengths (shared by rigs and measurement tests). */
-export const HERO_ARM = { upper: 0.28, fore: 0.26, contact: 0.45 } as const;
-export const HUSK_ARM = { upper: 0.34, fore: 0.32, contact: 0.5 } as const;
+export const HERO_ARM = { upper: 0.28, fore: 0.26, contact: BASIC_ATTACK_CONTACT.melee } as const;
+export const HUSK_ARM = { upper: 0.34, fore: 0.32, contact: 0.52 } as const;
 
 export const ARM_RULES = {
   maxRaise: deg(105),
@@ -73,21 +76,23 @@ export interface CreaturePoseInput {
 
 /**
  * Map the AI phase machine onto the strike curve: windup plays the
- * anticipation (0 -> 0.42), active the contact (-> 0.52), recovery the
- * follow-through (-> 1). Animation therefore always follows sim state.
+ * anticipation up to takeoff (pounce) or contact (slam/cast), then
+ * active and recovery. Animation follows the same phase as the strike.
  */
 export function phaseAttackProgress(
-  phase: 'idle' | 'chase' | 'windup' | 'active' | 'recovery',
+  phase: EnemyPhase,
   phaseTime: number,
-  attack: { windup: number; active: number; recovery: number },
+  attack: Pick<AttackDef, 'windup' | 'active' | 'recovery' | 'shape'>,
 ): number | null {
+  const activeStart = attack.shape === 'pounce' ? 0.42 : HUSK_ARM.contact;
+  const recoveryStart = attack.shape === 'pounce' ? 0.52 : 0.64;
   switch (phase) {
     case 'windup':
-      return clamp(phaseTime / Math.max(0.001, attack.windup), 0, 1) * 0.42;
+      return clamp(phaseTime / Math.max(0.001, attack.windup), 0, 1) * activeStart;
     case 'active':
-      return 0.42 + clamp(phaseTime / Math.max(0.001, attack.active), 0, 1) * 0.1;
+      return activeStart + clamp(phaseTime / Math.max(0.001, attack.active), 0, 1) * (recoveryStart - activeStart);
     case 'recovery':
-      return 0.52 + clamp(phaseTime / Math.max(0.001, attack.recovery), 0, 1) * 0.48;
+      return recoveryStart + clamp(phaseTime / Math.max(0.001, attack.recovery), 0, 1) * (1 - recoveryStart);
     default:
       return null;
   }
@@ -106,16 +111,16 @@ export function handDistance(upper: number, fore: number, flexRad: number): numb
 // ---------------------------------------------------------------------------
 
 const HERO_MELEE_RAISE: ReadonlyArray<readonly [number, number]> = [
-  [0, 8], [0.3, 95], [0.45, 55], [0.7, -12], [1, 8],
+  [0, 8], [0.3, 95], [HERO_ARM.contact, 55], [0.7, -12], [1, 8],
 ];
 const HERO_MELEE_FLEX: ReadonlyArray<readonly [number, number]> = [
-  [0, 12], [0.3, 88], [0.45, 42], [0.7, 72], [1, 12],
+  [0, 12], [0.3, 88], [HERO_ARM.contact, 42], [0.7, 72], [1, 12],
 ];
 const HERO_MELEE_TWIST: ReadonlyArray<readonly [number, number]> = [
-  [0, 0], [0.3, 24], [0.45, -28], [0.72, -7], [1, 0],
+  [0, 0], [0.3, 24], [HERO_ARM.contact, -28], [0.72, -7], [1, 0],
 ];
 const HERO_MELEE_LEAN: ReadonlyArray<readonly [number, number]> = [
-  [0, 0], [0.3, -5], [0.45, 7], [0.7, 3], [1, 0],
+  [0, 0], [0.3, -5], [HERO_ARM.contact, 7], [0.7, 3], [1, 0],
 ];
 
 export function heroMeleeArm(p: number): ArmPose {
@@ -137,13 +142,13 @@ export function heroMeleeTorso(p: number): { twistRad: number; leanRad: number }
 // ---------------------------------------------------------------------------
 
 const HERO_RANGED_RAISE: ReadonlyArray<readonly [number, number]> = [
-  [0, 15], [0.22, 62], [0.5, 62], [0.6, 72], [0.8, 42], [1, 15],
+  [0, 15], [0.22, 62], [0.5, 62], [BASIC_ATTACK_CONTACT.projectile, 72], [0.8, 42], [1, 15],
 ];
 const HERO_RANGED_FLEX: ReadonlyArray<readonly [number, number]> = [
-  [0, 15], [0.22, 88], [0.5, 88], [0.6, 34], [0.8, 30], [1, 15],
+  [0, 15], [0.22, 88], [0.5, 88], [BASIC_ATTACK_CONTACT.projectile, 34], [0.8, 30], [1, 15],
 ];
 const HERO_RANGED_TWIST: ReadonlyArray<readonly [number, number]> = [
-  [0, 0], [0.22, -18], [0.5, -18], [0.6, 8], [0.8, 2], [1, 0],
+  [0, 0], [0.22, -18], [0.5, -18], [BASIC_ATTACK_CONTACT.projectile, 8], [0.8, 2], [1, 0],
 ];
 
 export function heroRangedArm(p: number): ArmPose {
@@ -165,13 +170,13 @@ export function heroRangedTorso(p: number): { twistRad: number; leanRad: number 
 // ---------------------------------------------------------------------------
 
 const HUSK_SLAM_RAISE: ReadonlyArray<readonly [number, number]> = [
-  [0, 6], [0.42, 100], [0.52, 25], [0.72, -14], [1, 6],
+  [0, 6], [0.42, 100], [HUSK_ARM.contact, 25], [0.72, -14], [1, 6],
 ];
 const HUSK_SLAM_FLEX: ReadonlyArray<readonly [number, number]> = [
-  [0, 16], [0.42, 60], [0.52, 32], [0.72, 58], [1, 16],
+  [0, 16], [0.42, 60], [HUSK_ARM.contact, 32], [0.72, 58], [1, 16],
 ];
 const HUSK_SLAM_LEAN: ReadonlyArray<readonly [number, number]> = [
-  [0, 0], [0.42, -10], [0.52, 16], [0.72, 8], [1, 0],
+  [0, 0], [0.42, -10], [HUSK_ARM.contact, 16], [0.72, 8], [1, 0],
 ];
 
 export function huskSlamArm(p: number): ArmPose {
@@ -254,29 +259,17 @@ export function walkPhaseAdvance(phase: number, distance: number, frequency = 2.
   return (phase + distance * frequency) % (Math.PI * 2);
 }
 
-/** Attack/hit timing envelope shared by every rig. */
-export class AnimClock {
-  attack = 0;
-  hit = 0;
-  attackDuration = 0.42;
-  hitDuration = 0.26;
+/** Cosmetic hit-flinch envelope; attack clocks live in the simulation. */
+export class HitClock {
+  private hit = 0;
+  readonly hitDuration = 0.26;
 
   advance(dt: number): void {
-    this.attack = Math.max(0, this.attack - dt);
     this.hit = Math.max(0, this.hit - dt);
-  }
-
-  triggerAttack(): void {
-    this.attack = this.attackDuration;
   }
 
   triggerHit(): void {
     this.hit = this.hitDuration;
-  }
-
-  /** Attack progress in [0, 1], or null when idle. */
-  get attackProgress(): number | null {
-    return this.attack > 0 ? 1 - this.attack / this.attackDuration : null;
   }
 
   get hitProgress(): number | null {

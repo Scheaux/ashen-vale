@@ -16,6 +16,10 @@ export class FloatingTextLayer {
     parent.appendChild(this.root);
   }
 
+  clear(): void {
+    this.root.replaceChildren();
+  }
+
   handleEvents(events: readonly SimEvent[], camera: THREE.Camera): void {
     for (const ev of events) {
       if (ev.kind === 'damage') {

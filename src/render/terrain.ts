@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { noise2D, smoothstep } from '../core/noise';
+import { detailNormal } from './materials';
 import { createGroundTexture } from './textures';
 
 /**
@@ -40,8 +41,11 @@ export function createTerrain(size = 170): THREE.Mesh {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
 
+  const detail = detailNormal('stone', 46, 0.55);
   const mat = new THREE.MeshStandardMaterial({
     map: createGroundTexture(),
+    normalMap: detail.map,
+    normalScale: detail.scale,
     vertexColors: true,
     roughness: 0.96,
     metalness: 0,

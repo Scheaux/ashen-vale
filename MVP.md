@@ -122,6 +122,6 @@ notes and rollback readiness.
 4. `npm run qa` — headless-Chromium playthrough of the slice's gate with screenshots
    (`qa/shots/`) and zero console errors; earlier slices' suites must stay green.
 
-Simulation is deterministic and serializable by design: content is data, rendering
-consumes authoritative sim events, and all gameplay randomness flows through seeded
-RNGs so tests, QA and future replays are reproducible.
+Simulation is deterministic for the same seed and tick-by-tick inputs. Rendering
+consumes authoritative sim events. The current save format is a character
+checkpoint, not a snapshot of the simulation or its RNG state.

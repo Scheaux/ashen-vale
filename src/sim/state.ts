@@ -29,6 +29,8 @@ export interface PlayerState {
   /** Enemy being pursued/attacked, or null. */
   attackTargetId: string | null;
   attackCooldown: number;
+  /** Committed basic attack; normalized pose and contact share this clock. */
+  attack: { elapsed: number; facing: number } | null;
   hp: number;
   maxHp: number;
   speed: number;
@@ -47,6 +49,7 @@ export interface EnemyState {
   id: string;
   defId: EnemySpawn['enemyId'];
   position: Vec2;
+  previousPosition: Vec2;
   velocity: Vec2;
   facing: number;
   hp: number;
@@ -62,8 +65,10 @@ export interface EnemyState {
   attackCooldown: number;
   /** Facing locked at windup start — the dodge counterplay reads off this. */
   windupFacing: number;
-  /** Position locked at windup start (pounce target). */
-  windupPosition: Vec2;
+  attackId: string | null;
+  /** Locked pounce travel budget and whether this dash has already hit. */
+  lungeRemaining: number;
+  lungeHit: boolean;
   aggro: boolean;
   dead: boolean;
   /** Seconds since death, for the corpse fade. */
@@ -74,6 +79,7 @@ export interface ProjectileState {
   id: string;
   /** 'player' or the enemy id that fired it. */
   owner: string;
+  attackId?: string;
   skillId: SkillId | 'enemy-bolt';
   position: Vec2;
   /** Fixed projectile height. */
@@ -105,19 +111,22 @@ export type SimEvent =
   | { kind: 'attack'; sourceId: string; skillId: string; x: number; z: number }
   | {
       kind: 'telegraph';
-      enemyId: string;
+       enemyId: string;
+       attackId: string;
       shape: 'melee-arc' | 'bolt' | 'pounce';
       x: number;
       z: number;
       facing: number;
-      range: number;
+       range: number;
+       radius: number;
       arcDeg: number;
       duration: number;
     }
   | {
       kind: 'damage';
       targetKind: 'player' | 'enemy';
-      targetId: string;
+       targetId: string;
+       attackId?: string;
       amount: number;
       x: number;
       y: number;
@@ -129,6 +138,7 @@ export type SimEvent =
 
 export interface GameState {
   tick: number;
+  zoneSeed: number;
   player: PlayerState;
   enemies: EnemyState[];
   projectiles: ProjectileState[];
@@ -151,6 +161,7 @@ export const PLAYER_MAX_HP = 120;
 export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ffee): GameState {
   return {
     tick: 0,
+    zoneSeed: layout.seed,
     player: {
       position: { x: layout.spawn.x, z: layout.spawn.z },
       previousPosition: { x: layout.spawn.x, z: layout.spawn.z },
@@ -159,6 +170,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       moveTarget: null,
       attackTargetId: null,
       attackCooldown: 0,
+      attack: null,
       hp: PLAYER_MAX_HP,
       maxHp: PLAYER_MAX_HP,
       speed: def.speed,
@@ -178,6 +190,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
         id: `enemy-${i}`,
         defId: spawn.enemyId,
         position: { x: spawn.x, z: spawn.z },
+        previousPosition: { x: spawn.x, z: spawn.z },
         velocity: { x: 0, z: 0 },
         facing: 0,
         hp: maxHp,
@@ -190,7 +203,9 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
         phaseTime: 0,
         attackCooldown: 0,
         windupFacing: 0,
-        windupPosition: { x: spawn.x, z: spawn.z },
+        attackId: null,
+        lungeRemaining: 0,
+        lungeHit: false,
         aggro: false,
         dead: false,
         deadTime: 0,
