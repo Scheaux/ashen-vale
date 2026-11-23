@@ -4,12 +4,12 @@ import type { EnemyState, GameState, SimEvent } from '../sim/state';
 import { phaseAttackProgress, type CreaturePoseInput } from './anim';
 import { createCultistRig } from './cultistModel';
 import { disposeMeshTree } from './dispose';
+import { scoreTarget, TargetProjection } from './targeting';
 import { createHuskRig } from './huskModel';
 import { createSkittererRig } from './skittererModel';
 
 interface CreatureModel {
   root: THREE.Group;
-  pickTarget: THREE.Mesh;
   flashMaterials: THREE.MeshStandardMaterial[];
   pose(input: CreaturePoseInput): void;
 }
@@ -26,6 +26,11 @@ interface EnemyView {
 
 const HIT_DURATION = 0.26;
 const DEATH_DURATION = 1.4;
+const BODY_HEIGHT: Record<EnemyState['defId'], number> = {
+  'ashen-husk': 1.62,
+  'cinder-cultist': 1.85,
+  'mire-skitterer': 1.02,
+};
 
 /**
  * Enemy views: one jointed rig per sim entity (husk / cultist / skitterer),
@@ -36,19 +41,34 @@ const DEATH_DURATION = 1.4;
 export class EnemyViews {
   readonly group = new THREE.Group();
   private readonly views = new Map<string, EnemyView>();
-  private readonly pickMeshes = new Map<THREE.Object3D, string>();
+  private readonly targetProjection = new TargetProjection();
   private highlightedId: string | null = null;
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group);
   }
 
-  get pickTargets(): THREE.Object3D[] {
-    return [...this.pickMeshes.keys()];
-  }
-
-  enemyIdFor(object: THREE.Object3D): string | null {
-    return this.pickMeshes.get(object) ?? null;
+  pick(state: GameState, camera: THREE.Camera, width: number, height: number, x: number, y: number):
+    { id: string; point: THREE.Vector3; radius: number } | null {
+    let best: { id: string; point: THREE.Vector3; radius: number } | null = null;
+    let bestScore = Infinity;
+    let bestDepth = Infinity;
+    for (const enemy of state.enemies) {
+      if (enemy.dead) continue;
+      const view = this.views.get(enemy.id);
+      if (!view) continue;
+      const origin = view.model.root.position;
+      const area = this.targetProjection.project(camera, width, height, origin, BODY_HEIGHT[enemy.defId], enemy.radius);
+      if (!area) continue;
+      const score = scoreTarget(area, x, y, enemy.id === this.highlightedId);
+      if (!Number.isFinite(score)) continue;
+      if (score < bestScore - 0.025 || (Math.abs(score - bestScore) <= 0.025 && area.depth < bestDepth)) {
+        best = { id: enemy.id, point: origin, radius: enemy.radius };
+        bestScore = score;
+        bestDepth = area.depth;
+      }
+    }
+    return best;
   }
 
   setHighlight(enemyId: string | null): void {
@@ -58,7 +78,6 @@ export class EnemyViews {
   clear(): void {
     for (const view of this.views.values()) disposeMeshTree(view.model.root);
     this.views.clear();
-    this.pickMeshes.clear();
     this.highlightedId = null;
   }
 
@@ -78,7 +97,6 @@ export class EnemyViews {
     for (const [id, view] of this.views) {
       if (!state.enemies.some((e) => e.id === id)) {
         disposeMeshTree(view.model.root);
-        this.pickMeshes.delete(view.model.pickTarget);
         this.views.delete(id);
       }
     }
@@ -90,7 +108,6 @@ export class EnemyViews {
         this.views.set(enemy.id, view);
         this.group.add(view.model.root);
       }
-      if (enemy.dead) this.pickMeshes.delete(view.model.pickTarget);
       this.updateView(view, enemy, dt, alpha, camera);
     }
   }
@@ -110,7 +127,6 @@ export class EnemyViews {
   private createView(enemy: EnemyState): EnemyView {
     const model = this.createModel(enemy.defId);
     model.root.position.set(enemy.position.x, 0, enemy.position.z);
-    this.pickMeshes.set(model.pickTarget, enemy.id);
 
     const barRoot = new THREE.Group();
     barRoot.position.y = 2.15;

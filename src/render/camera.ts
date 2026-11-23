@@ -57,5 +57,6 @@ export class CameraRig {
       this.target.z + Math.cos(this.yaw) * horiz,
     );
     this.camera.lookAt(this.target.x, 1.1, this.target.z);
+    this.camera.updateMatrixWorld();
   }
 }

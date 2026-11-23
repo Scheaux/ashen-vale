@@ -14,7 +14,7 @@ import { EnemyViews } from './render/enemies';
 import { LootViews } from './render/loot';
 import { ProjectileViews } from './render/projectiles';
 import { TelegraphLayer } from './render/telegraphs';
-import { createProps, type PropsRenderer } from './render/props';
+import { createProps } from './render/props';
 import { createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
 import { createGameState, drainEvents, type GameState } from './sim/state';
@@ -43,6 +43,7 @@ export interface AshenDebug {
     playerMaxHp: number;
     playerPos: { x: number; z: number };
     attackTargetId: string | null;
+    hoverTargetId: string | null;
     enemies: Array<{
       id: string;
       type: string;
@@ -65,7 +66,7 @@ export interface AshenDebug {
     tellOrder: { telegraphs: number; playerDamages: number; damageBeforeTelegraph: boolean };
     render: { triangles: number; drawCalls: number; geometries: number; textures: number };
   };
-  worldToScreen(x: number, z: number): { x: number; y: number };
+  worldToScreen(x: number, z: number, height?: number): { x: number; y: number };
   /** Review fixture: force damage to reach edge states (death flow, low HP). */
   hurtPlayer(amount: number): void;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
@@ -85,8 +86,6 @@ class Game {
   private readonly world: WorldScene;
   private readonly scene: THREE.Scene;
   private readonly rig: CameraRig;
-  private readonly props: PropsRenderer;
-  private readonly propMeshes: THREE.Object3D[];
   private readonly enemyViews: EnemyViews;
   private readonly projectileViews: ProjectileViews;
   private readonly telegraphs: TelegraphLayer;
@@ -104,6 +103,9 @@ class Game {
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly tmpVec = new THREE.Vector3();
+  private readonly viewport = new THREE.Vector2();
+  private pointerInside = false;
+  private hoverTargetId: string | null = null;
 
   private readonly layout: ZoneLayout;
   private state: GameState | null = null;
@@ -127,13 +129,12 @@ class Game {
     this.scene = this.world.scene;
     this.layout = generateZoneLayout();
 
-    this.scene.add(createTerrain());
-    this.props = createProps(this.layout);
-    this.propMeshes = this.props.pickTargets.map((t) => t.mesh);
-    this.scene.add(this.props.group);
+    const terrain = createTerrain();
+    this.scene.add(terrain.mesh);
+    this.scene.add(createProps(this.layout));
     this.enemyViews = new EnemyViews(this.scene);
     this.projectileViews = new ProjectileViews(this.scene);
-    this.telegraphs = new TelegraphLayer(this.scene);
+    this.telegraphs = new TelegraphLayer(this.scene, terrain.surface);
     this.lootViews = new LootViews(this.scene);
     this.embers = createEmbers(this.layout.bounds);
     this.scene.add(this.embers.points);
@@ -220,6 +221,8 @@ class Game {
       this.playerView = null;
     }
     this.enemyViews.clear();
+    this.setHoverTarget(null);
+    this.cursor.setHover(null);
     this.clearCombatViews();
     this.lootViews.clear();
     this.nameplates.clear();
@@ -334,72 +337,66 @@ class Game {
     return this.raycaster.ray.intersectPlane(this.groundPlane, this.tmpVec) ? this.tmpVec : null;
   }
 
-  private pickEnemy(): { id: string; point: THREE.Vector3 } | null {
-    this.raycaster.setFromCamera(this.pointer, this.rig.camera);
-    const hits = this.raycaster.intersectObjects(this.enemyViews.pickTargets, false);
-    for (const hit of hits) {
-      const id = this.enemyViews.enemyIdFor(hit.object);
-      if (id) return { id, point: hit.point.clone() };
-    }
-    return null;
+  private pickEnemy() {
+    if (!this.state || !this.pointerInside) return null;
+    const { x: width, y: height } = this.viewport;
+    return this.enemyViews.pick(this.state, this.rig.camera, width, height,
+      (this.pointer.x + 1) * width * 0.5, (1 - this.pointer.y) * height * 0.5);
   }
 
   private updateHover(): void {
-    if (this.mode !== 'playing' || this.dead) {
+    if (this.mode !== 'playing' || this.dead || !this.pointerInside || this.rotating) {
       this.cursor.setHover(null);
-      this.props.clearHighlight();
-      this.enemyViews.setHighlight(null);
+      this.setHoverTarget(null);
       return;
     }
     const enemyHit = this.pickEnemy();
+    this.setHoverTarget(enemyHit?.id ?? null);
     if (enemyHit) {
-      this.props.clearHighlight();
-      this.enemyViews.setHighlight(enemyHit.id);
-      this.cursor.setHover(enemyHit.point);
+      this.cursor.setHover(enemyHit.point, enemyHit.radius);
       return;
     }
-    this.enemyViews.setHighlight(null);
-
-    this.raycaster.setFromCamera(this.pointer, this.rig.camera);
-    const hits = this.raycaster.intersectObjects(this.propMeshes, false);
-    if (hits.length > 0) {
-      const hit = hits[0];
-      const entry = this.props.pickTargets.find((t) => t.mesh === hit.object);
-      if (entry && hit.instanceId !== undefined) {
-        this.props.setHighlight(entry.kind, hit.instanceId);
-        this.cursor.setHover(hit.point);
-        return;
-      }
-    }
-    this.props.clearHighlight();
     this.cursor.setHover(this.groundPoint());
   }
 
+  private setHoverTarget(id: string | null): void {
+    if (this.hoverTargetId === id) return;
+    this.hoverTargetId = id;
+    this.canvas.toggleAttribute('data-enemy-hover', id !== null);
+    this.enemyViews.setHighlight(id);
+  }
+
   // ---------- Input ----------
+
+  private setPointer(e: PointerEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.viewport.set(rect.width, rect.height);
+    this.pointer.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      1 - ((e.clientY - rect.top) / rect.height) * 2,
+    );
+    this.pointerInside = true;
+  }
 
   private bindInput(): void {
     window.addEventListener('resize', () => this.onResize());
 
     this.canvas.addEventListener('pointermove', (e) => {
-      const rect = this.canvas.getBoundingClientRect();
-      this.pointer.set(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1,
-      );
+      this.setPointer(e);
       if (this.rotating) this.rig.rotate(e.movementX);
     });
 
+    this.canvas.addEventListener('pointerenter', (e) => this.setPointer(e));
+    this.canvas.addEventListener('pointerleave', () => { this.pointerInside = false; });
+    this.canvas.addEventListener('pointercancel', () => { this.pointerInside = this.rotating = false; });
+
     this.canvas.addEventListener('pointerdown', (e) => {
-      const rect = this.canvas.getBoundingClientRect();
-      this.pointer.set(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1,
-      );
+      this.setPointer(e);
       if (e.button === 2) {
         this.rotating = true;
         return;
       }
-      if (e.button !== 0 || this.mode !== 'playing' || this.dead || !this.state) return;
+      if (e.button !== 0 || this.mode !== 'playing' || this.dead || this.rotating || !this.state) return;
 
       // Click an enemy to attack it; click the ground to move.
       const enemyHit = this.pickEnemy();
@@ -453,6 +450,7 @@ class Game {
     this.world.renderer.setSize(w, h);
     this.world.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.rig.setAspect(w / h);
+    this.viewport.set(w, h);
   }
 
   private handleEquip(uid: string): void {
@@ -488,6 +486,7 @@ class Game {
       playerMaxHp: state?.player.maxHp ?? 0,
       playerPos: state ? { x: state.player.position.x, z: state.player.position.z } : { x: 0, z: 0 },
       attackTargetId: state?.player.attackTargetId ?? null,
+      hoverTargetId: this.hoverTargetId,
       enemies:
         state?.enemies.map((e) => ({
           id: e.id,
@@ -522,8 +521,8 @@ class Game {
     };
   }
 
-  worldToScreen(x: number, z: number): { x: number; y: number } {
-    const v = this.tmpVec.set(x, 1.2, z).project(this.rig.camera);
+  worldToScreen(x: number, z: number, height = 1.2): { x: number; y: number } {
+    const v = this.tmpVec.set(x, height, z).project(this.rig.camera);
     return {
       x: (v.x * 0.5 + 0.5) * window.innerWidth,
       y: (-v.y * 0.5 + 0.5) * window.innerHeight,
@@ -556,7 +555,7 @@ const uiRoot = document.getElementById('ui') as HTMLElement;
 const game = new Game(canvas, uiRoot);
 (window as unknown as { __ashen: AshenDebug }).__ashen = {
   snapshot: () => game.snapshot(),
-  worldToScreen: (x, z) => game.worldToScreen(x, z),
+  worldToScreen: (x, z, height) => game.worldToScreen(x, z, height),
   hurtPlayer: (amount) => game.hurtPlayer(amount),
   healPlayer: (amount) => game.healPlayer(amount),
   grantXp: (amount) => game.grantXp(amount),

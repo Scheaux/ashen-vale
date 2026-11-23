@@ -19,7 +19,6 @@ import { fleshMaterial, leatherMaterial } from './materials';
  */
 export function createSkittererRig(def: EnemyDef): {
   root: THREE.Group;
-  pickTarget: THREE.Mesh;
   flashMaterials: THREE.MeshStandardMaterial[];
   pose(input: CreaturePoseInput): void;
 } {
@@ -45,7 +44,6 @@ export function createSkittererRig(def: EnemyDef): {
   torso.scale.set(1, 1, 0.85);
   torso.castShadow = true;
   body.add(torso);
-  const pickTarget = torso;
 
   // Head with eyes and mandibles.
   const head = new THREE.Group();
@@ -163,7 +161,7 @@ export function createSkittererRig(def: EnemyDef): {
     }
   }
 
-  return { root, pickTarget, flashMaterials, pose };
+  return { root, flashMaterials, pose };
 }
 
 /** Small hit shudder magnitude for the skitterer. */

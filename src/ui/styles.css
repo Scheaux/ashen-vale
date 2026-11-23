@@ -28,6 +28,10 @@ body {
   cursor: crosshair;
 }
 
+#game[data-enemy-hover] {
+  cursor: pointer;
+}
+
 #ui {
   position: fixed;
   inset: 0;

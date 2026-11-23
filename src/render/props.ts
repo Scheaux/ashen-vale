@@ -5,19 +5,6 @@ import type { PropKind, PropPlacement, ZoneLayout } from '../content/types';
 import { rockGeometry, sweptBranch, sweptTube, sweptTrunk, latheProfile } from './geo';
 import { barkMaterial, stoneMaterial } from './materials';
 
-export interface PropsRenderer {
-  group: THREE.Group;
-  /** Instanced meshes with their kind, for pointer picking. */
-  pickTargets: PropPickTarget[];
-  setHighlight(kind: PropKind, instanceId: number): void;
-  clearHighlight(): void;
-}
-
-export interface PropPickTarget {
-  mesh: THREE.InstancedMesh;
-  kind: PropKind;
-}
-
 function deadTreeGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
 
@@ -126,11 +113,9 @@ function axisScale(min: number, max: number, t: number): number {
   return min + (max - min) * t;
 }
 
-export function createProps(layout: ZoneLayout): PropsRenderer {
+export function createProps(layout: ZoneLayout): THREE.Group {
   const style = styles();
   const group = new THREE.Group();
-  const pickTargets: PropPickTarget[] = [];
-  const meshes = new Map<PropKind, THREE.InstancedMesh>();
 
   const byKind = new Map<PropKind, PropPlacement[]>();
   for (const p of layout.props) {
@@ -168,36 +153,10 @@ export function createProps(layout: ZoneLayout): PropsRenderer {
       );
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(i, matrix);
-      mesh.setColorAt(i, new THREE.Color(1, 1, 1));
     });
     mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-
-    meshes.set(kind, mesh);
-    pickTargets.push({ mesh, kind });
     group.add(mesh);
   }
 
-  let highlighted: { mesh: THREE.InstancedMesh; id: number } | null = null;
-  const white = new THREE.Color(1, 1, 1);
-  const hoverTint = new THREE.Color(2.15, 1.95, 1.45);
-
-  function clearHighlight(): void {
-    if (!highlighted) return;
-    highlighted.mesh.setColorAt(highlighted.id, white);
-    if (highlighted.mesh.instanceColor) highlighted.mesh.instanceColor.needsUpdate = true;
-    highlighted = null;
-  }
-
-  function setHighlight(kind: PropKind, instanceId: number): void {
-    const mesh = meshes.get(kind);
-    if (!mesh) return;
-    if (highlighted && highlighted.mesh === mesh && highlighted.id === instanceId) return;
-    clearHighlight();
-    mesh.setColorAt(instanceId, hoverTint);
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    highlighted = { mesh, id: instanceId };
-  }
-
-  return { group, pickTargets, setHighlight, clearHighlight };
+  return group;
 }

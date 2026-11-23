@@ -22,7 +22,7 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
 | Input | Action |
 | --- | --- |
 | Left click (ground) | Move to point |
-| Left click (enemy) | Pursue and attack |
+| Hover near an enemy, then left click | Highlight, pursue and attack |
 | Right drag | Rotate camera |
 | Scroll | Zoom |
 | I | Open or close inventory |
@@ -35,7 +35,7 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
 - Click-to-move steering, arrival slowdown, slide-along-obstacle collision
 - Isometric camera follow with damped smoothing, zoom and yaw rotation
 - Dark-fantasy procedural scene: moonlit fog, ridged terrain, instanced props,
-  hover highlight on props, click destination marker, drifting embers
+  enemy-only hover highlight, click destination marker, drifting embers
 - Pause / restart run / quit to title
 - **Combat:** click an enemy to pursue and attack — melee cleave (Marauder),
   arrow and ember bolt projectiles (Ranger/Witch); one centralized

@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import { noise2D, smoothstep } from '../core/noise';
 import { detailNormal } from './materials';
 import { createGroundTexture } from './textures';
+import { TerrainSurface } from './terrainSurface';
 
 /**
  * Dark-fantasy ground: flat in the walkable area, rising into ridged hills
  * outside the play bounds so the zone edge reads as a natural wall.
  */
-export function createTerrain(size = 170): THREE.Mesh {
+export function createTerrain(size = 170): { mesh: THREE.Mesh; surface: TerrainSurface } {
   const segments = 128;
   const geo = new THREE.PlaneGeometry(size, size, segments, segments);
   geo.rotateX(-Math.PI / 2);
@@ -53,5 +54,5 @@ export function createTerrain(size = 170): THREE.Mesh {
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
-  return mesh;
+  return { mesh, surface: new TerrainSurface(pos, size, segments) };
 }

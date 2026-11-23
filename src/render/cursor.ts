@@ -7,26 +7,25 @@ function ringGeometry(inner: number, outer: number): THREE.RingGeometry {
 }
 
 /**
- * Ground feedback: a dim ring under the mouse cursor and a bright pulsing
- * marker at the current move destination.
+ * Pointer feedback: a dim ground ring, a warm enemy ring, and a pulsing
+ * move destination marker.
  */
 export class CursorMarker {
   private readonly hoverRing: THREE.Mesh;
+  private readonly hoverMaterial: THREE.MeshBasicMaterial;
   private readonly destRing: THREE.Mesh;
   private readonly destMaterial: THREE.MeshBasicMaterial;
   private destVisible = false;
 
-  constructor(scene: THREE.Scene, color: number) {
-    this.hoverRing = new THREE.Mesh(
-      ringGeometry(0.3, 0.4),
-      new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.32,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
+  constructor(scene: THREE.Scene, private readonly color: number) {
+    this.hoverMaterial = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.hoverRing = new THREE.Mesh(ringGeometry(0.3, 0.4), this.hoverMaterial);
     this.hoverRing.position.y = 0.025;
     this.hoverRing.visible = false;
     scene.add(this.hoverRing);
@@ -44,10 +43,13 @@ export class CursorMarker {
     scene.add(this.destRing);
   }
 
-  setHover(point: THREE.Vector3 | null): void {
+  setHover(point: THREE.Vector3 | null, enemyRadius?: number): void {
     if (point) {
       this.hoverRing.position.x = point.x;
       this.hoverRing.position.z = point.z;
+      this.hoverRing.scale.setScalar(enemyRadius === undefined ? 1 : (enemyRadius + 0.15) / 0.4);
+      this.hoverMaterial.color.setHex(enemyRadius === undefined ? this.color : 0xff785e);
+      this.hoverMaterial.opacity = enemyRadius === undefined ? 0.32 : 0.82;
       this.hoverRing.visible = true;
     } else {
       this.hoverRing.visible = false;

@@ -27,6 +27,7 @@ export function createPlayerView(def: ClassDef): PlayerView {
   let facing = Math.PI;
   let speedRatio = 0;
   let turn = 0;
+  let effort = 0;
   let previous: { x: number; z: number } | null = null;
   let deathTime = 0;
 
@@ -48,6 +49,8 @@ export function createPlayerView(def: ClassDef): PlayerView {
     if (previous) { previous.x = x; previous.z = z; }
     else previous = { x, z };
     const targetSpeed = p.attack ? 0 : clamp(distance / Math.max(0.001, dt * p.speed), 0, 1);
+    const leanIntent = p.attack || relocated ? 0 : clamp((targetSpeed - speedRatio) * 2.2, -1, 1);
+    effort += (leanIntent - effort) * (1 - Math.exp(-9 * dt));
     speedRatio += (targetSpeed - speedRatio) * (1 - Math.exp(-dt * (p.attack ? 29 : 16)));
 
     rig.root.position.set(x, 0, z);
@@ -70,6 +73,7 @@ export function createPlayerView(def: ClassDef): PlayerView {
       speedRatio: dead ? 0 : speedRatio,
       attack: !dead && p.attack ? p.attack.elapsed / skill.duration : null,
       turn,
+      effort,
       hit: dead ? null : hit,
       death: dead ? Math.min(1, deathTime / DEATH_DURATION) : null,
     });

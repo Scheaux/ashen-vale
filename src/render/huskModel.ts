@@ -32,7 +32,6 @@ interface HuskJoints {
 export interface HuskRig {
   root: THREE.Group;
   /** Torso mesh doubles as the pointer-pick target. */
-  pickTarget: THREE.Mesh;
   pose(input: CreaturePoseInput): void;
   flashMaterials: THREE.MeshStandardMaterial[];
   /** Joint angles are exposed for measurement tests. */
@@ -272,5 +271,5 @@ export function createHuskRig(def: EnemyDef): HuskRig {
     }
   }
 
-  return { root, pickTarget: chest, pose, flashMaterials, joints };
+  return { root, pose, flashMaterials, joints };
 }

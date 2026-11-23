@@ -19,7 +19,6 @@ import { clothMaterial, leatherMaterial } from './materials';
  */
 export function createCultistRig(def: EnemyDef): {
   root: THREE.Group;
-  pickTarget: THREE.Mesh;
   flashMaterials: THREE.MeshStandardMaterial[];
   pose(input: CreaturePoseInput): void;
 } {
@@ -48,7 +47,6 @@ export function createCultistRig(def: EnemyDef): {
   chest.position.y = 1.12;
   chest.castShadow = true;
   body.add(chest);
-  const pickTarget = chest;
 
   const belt = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.035, 8, 16), trim);
   belt.position.y = 0.95;
@@ -161,5 +159,5 @@ export function createCultistRig(def: EnemyDef): {
     }
   }
 
-  return { root, pickTarget, flashMaterials, pose };
+  return { root, flashMaterials, pose };
 }

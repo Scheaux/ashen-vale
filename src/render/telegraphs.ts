@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { SimEvent } from '../sim/state';
 import { disposeMeshTree } from './dispose';
+import type { TerrainSurface } from './terrainSurface';
 
 interface TelegraphView {
   mesh: THREE.Mesh;
@@ -10,6 +11,31 @@ interface TelegraphView {
 }
 
 const TELEGRAPH_COLOR = 0xff4a33;
+
+export function warningFootprints(ev: Extract<SimEvent, { kind: 'telegraph' }>) {
+  const sin = Math.sin(ev.facing);
+  const cos = Math.cos(ev.facing);
+  const point = (x: number, z: number) => ({ x: ev.x + x * cos + z * sin, z: ev.z - x * sin + z * cos });
+  if (ev.shape === 'bolt' || ev.shape === 'pounce') {
+    const cap = (front: boolean) => Array.from({ length: 17 }, (_, i) => {
+      const t = i / 16 * Math.PI;
+      return point(Math.cos(t) * ev.radius * (front ? -1 : 1),
+        front ? ev.range + Math.sin(t) * ev.radius : -Math.sin(t) * ev.radius);
+    });
+    return [[...cap(false), ...cap(true)]];
+  }
+
+  const arc = THREE.MathUtils.degToRad(ev.arcDeg);
+  // Keep each sector convex, including any future sweep wider than 180°.
+  const parts = Math.max(1, Math.ceil(arc / Math.PI));
+  return Array.from({ length: parts }, (_, part) => [
+    point(0, 0),
+    ...Array.from({ length: 33 }, (_, i) => {
+      const angle = -arc / 2 + (part + i / 32) * arc / parts;
+      return point(Math.sin(angle) * ev.range, Math.cos(angle) * ev.range);
+    }),
+  ]);
+}
 
 /**
  * Ground telegraphs drawn from authoritative 'telegraph' sim events: a
@@ -21,7 +47,7 @@ export class TelegraphLayer {
   private readonly group = new THREE.Group();
   private readonly views = new Map<string, TelegraphView>();
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, private readonly terrain: TerrainSurface) {
     scene.add(this.group);
   }
 
@@ -36,36 +62,15 @@ export class TelegraphLayer {
       const view = this.views.get(ev.enemyId);
       if (view) disposeMeshTree(view.mesh);
 
-      let geometry: THREE.BufferGeometry;
-      let rotationY: number;
-      if (ev.shape === 'bolt' || ev.shape === 'pounce') {
-        const lane = new THREE.Shape();
-        lane.moveTo(ev.radius, 0);
-        lane.lineTo(ev.radius, ev.range);
-        lane.absarc(0, ev.range, ev.radius, 0, Math.PI, false);
-        lane.lineTo(-ev.radius, 0);
-        lane.absarc(0, 0, ev.radius, Math.PI, Math.PI * 2, false);
-        geometry = new THREE.ShapeGeometry(lane, 16);
-        geometry.rotateX(Math.PI / 2); // strip runs along +Z
-        rotationY = ev.facing;
-      } else {
-        const half = (ev.arcDeg / 2) * (Math.PI / 180);
-        geometry = new THREE.RingGeometry(0, ev.range, 32, 1, -half, half * 2);
-        geometry.rotateX(-Math.PI / 2);
-        // Sector is centered on local +X; align +X with the locked facing.
-        rotationY = ev.facing - Math.PI / 2;
-      }
-
+      const geometry = this.terrain.drape(warningFootprints(ev));
       const material = new THREE.MeshBasicMaterial({
         color: TELEGRAPH_COLOR,
         transparent: true,
-        opacity: 0.16,
+        opacity: 0.2,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(ev.x, 0.045, ev.z);
-      mesh.rotation.y = rotationY;
       this.group.add(mesh);
       this.views.set(ev.enemyId, { mesh, material, fade: 0 });
     }
@@ -77,11 +82,11 @@ export class TelegraphLayer {
       if (enemy && !enemy.dead && (enemy.phase === 'windup' || enemy.phase === 'active')) {
         view.fade = 0;
         // Pulse brighter through the windup so urgency reads.
-        const pulse = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(performance.now() / 90));
+        const pulse = 0.20 + 0.17 * (0.5 + 0.5 * Math.sin(performance.now() / 90));
         view.material.opacity = pulse;
       } else {
         view.fade += dt;
-        view.material.opacity = Math.max(0, 0.3 - view.fade * 1.6);
+        view.material.opacity = Math.max(0, 0.37 - view.fade * 1.85);
         if (view.fade > 0.25) {
           disposeMeshTree(view.mesh);
           this.views.delete(id);
