@@ -20,8 +20,8 @@ localStorage saves · Vitest unit tests + headless-browser QA playthroughs per s
 | 2 | Combat verb | ✅ Done | Kill an enemy |
 | 3 | Enemy AI & telegraphs | ✅ Done | Fair, readable fights |
 | 4 | Rewards & loot | ✅ Done | Kill → loot → equip → stronger |
-| 5 | Skills & flasks | ⬜ Next | Full combat kit |
-| 6 | Passive skill tree | ⬜ Planned | Meaningful build choice |
+| 5 | Skills & flasks | ✅ Done | Full combat kit |
+| 6 | Passive skill tree | ⬜ Next | Meaningful build choice |
 | 7 | Zone objective & boss | ⬜ Planned | Complete the loop |
 | 8 | Save slots | ⬜ Planned | Survive reload; migration tested |
 | 9 | Polish & release | ⬜ Planned | Ship-ready build |
@@ -71,11 +71,22 @@ pickup, atomic equip-swap, unequip, full-bag rejection, repeated dispatch).
 Derived stats (HP/damage/speed/armor) recompute from equipment and feed combat.
 Save schema bumped to v2 with a tested v1→v2 migration.
 
-### Slice 5 — Skills & flasks
-Expand each class to 3 active skills on a QWER hotbar with mana costs, cooldowns and
-distinct VFX; health and mana flasks with refill-on-kill charges; formalize the player
-death → retry flow (death recap, restart from checkpoint); full combat kit readable
-at a glance (cooldown sweeps, mana gating, resource feedback).
+### Slice 5 — Skills & flasks ✅
+Each class plays a four-skill QWER kit: the free basic attack on Q (Cleave,
+Piercing Shot, Ember Bolt) plus three mana-priced active skills — Marauder:
+Sunder (telegraphed ground strike), Whirlwind (nova), Reckless Charge (dash
+that carves through a line); Ranger: Split Shot (arrow fan), Snipe (fast
+heavy shot), Rain of Arrows (large delayed strike); Witch: Ember Nova, Cinder
+Barrage (bolt fan), Meteor Strike. Data-only `SkillDef`s drive six delivery
+kinds (melee arc, projectile, spread, nova, ground, dash) with distinct VFX
+per skill (slash arcs, cast flares, expanding nova rings, shard bursts,
+draped ground-strike telegraph runes). Mana pool regenerates from
+intelligence; casts refuse with feedback when the pool or the cooldown says
+no. Health and mana flasks on 1/2 refill one charge per kill and top up fully
+on the death retry. Death shows a recap (killing blow, damage taken, kills,
+time survived) and rising again keeps progression while restoring the kit.
+The HUD reads at a glance: cooldown sweeps, mana costs, unaffordable dimming,
+flask charge pips.
 
 ### Slice 6 — Passive skill tree
 A ~30-node PoE-flavored tree with clusters (offense/defense/utility), one point per
@@ -104,14 +115,26 @@ notes and rollback readiness.
 ## Content scope (deliberately thin — depth from data, not breadth)
 
 - **Classes (3):** Marauder (melee, strength), Ranger (projectile, dexterity),
-  Witch (projectile, intelligence) — 3 skills each by slice 5.
+  Witch (projectile, intelligence) — 4-skill QWER kits each (basic + 3 actives) since slice 5.
 - **Enemies (3 + elites):** Ashen Husk (melee charger), ranged caster, fast swarm —
   elite modifiers from slice 3.
-- **Loot:** 4 rarity tiers, 6 equipment slots, ~15 affixes (flat/percent stats,
-  resistances, life, damage).
+- **Loot:** 4 rarity tiers, 6 equipment slots, ~17 affixes (attributes, life/mana,
+  attack/spell damage, armour, evasion, energy shield, move speed).
 - **Zone (1):** fixed handcrafted layout with seeded prop/enemy population,
   boss arena at the end.
 - **Passive tree:** ~30 nodes with clusters.
+
+## Combat stats model
+
+Three primary attributes — **strength, dexterity, intelligence** — are the
+class identity (Warrior/STR, Archer/DEX, Witch/INT) and feed both offence and
+defence. Defence is three distinct layers: **armour** (PoE-style diminishing
+mitigation of attack hits), **evasion** (chance to avoid an attack hit
+entirely, capped at 75%) and **energy shield** (a pool that absorbs before
+life and recharges after 2s without damage). Offence splits into **Attack
+Damage** and **Spell Damage**, matched against each skill's `damageClass`;
+spells bypass armour and evasion. Attribute synergies live in one place
+(`SYNERGY` in `sim/state.ts`) shared by state creation and stat derivation.
 
 ## Validation bar (every slice)
 

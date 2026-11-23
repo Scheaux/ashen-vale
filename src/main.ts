@@ -3,6 +3,7 @@ import { EventBus } from './core/events';
 import { GameLoop } from './core/loop';
 import { getClass } from './content/classes';
 import { RARITY_COLORS, type ItemSlot } from './content/items';
+import { skillsFor, type SkillDef } from './content/skills';
 import type { ClassDef, ClassId, ZoneLayout } from './content/types';
 import { generateZoneLayout } from './content/zone';
 import { createPlayerView, type PlayerView } from './render/player';
@@ -13,6 +14,7 @@ import { createEmbers, type EmberField } from './render/effects';
 import { EnemyViews } from './render/enemies';
 import { LootViews } from './render/loot';
 import { ProjectileViews } from './render/projectiles';
+import { SkillVfxLayer } from './render/skillVfx';
 import { TelegraphLayer } from './render/telegraphs';
 import { createProps } from './render/props';
 import { createWorldScene, type WorldScene } from './render/scene';
@@ -21,9 +23,11 @@ import { createGameState, drainEvents, type GameState } from './sim/state';
 import { respawnPlayer, stepRun } from './sim/run';
 import { createSave, serializeSave } from './save/schema';
 import { damagePlayer } from './systems/combat';
+import { useFlask, type FlaskKind } from './systems/flasks';
 import { equipItem, unequipItem } from './systems/inventory';
 import { setMoveTarget } from './systems/movement';
 import { grantXp } from './systems/progression';
+import { evadeChance, getPlayerStats } from './systems/stats';
 import { FloatingTextLayer } from './ui/floatingText';
 import { InventoryPanel } from './ui/inventory';
 import { NameplateLayer } from './ui/nameplates';
@@ -41,6 +45,21 @@ export interface AshenDebug {
     dead: boolean;
     playerHp: number;
     playerMaxHp: number;
+    playerMana: number;
+    playerMaxMana: number;
+    playerEnergyShield: number;
+    playerMaxEnergyShield: number;
+    stats: {
+      strength: number;
+      dexterity: number;
+      intelligence: number;
+      armour: number;
+      evasion: number;
+      energyShield: number;
+      attackDamagePct: number;
+      spellDamagePct: number;
+      evadeChance: number;
+    };
     playerPos: { x: number; z: number };
     attackTargetId: string | null;
     hoverTargetId: string | null;
@@ -56,6 +75,11 @@ export interface AshenDebug {
       elite: string[];
     }>;
     projectiles: number;
+    strikes: number;
+    skills: Array<{ id: string; slot: string; name: string; manaCost: number; cooldown: number }>;
+    cooldowns: Record<string, number>;
+    flasks: { health: number; mana: number; max: number };
+    run: { kills: number; damageTaken: number; evades: number; lastBlow: string | null; seconds: number };
     level: number;
     xp: number;
     xpToNext: number;
@@ -67,12 +91,22 @@ export interface AshenDebug {
     render: { triangles: number; drawCalls: number; geometries: number; textures: number };
   };
   worldToScreen(x: number, z: number, height?: number): { x: number; y: number };
-  /** Review fixture: force damage to reach edge states (death flow, low HP). */
+  /** Review fixture: force damage to reach edge states (death flow, low HP). Spell damage: always lands. */
   hurtPlayer(amount: number): void;
+  /** Review fixture: attack-type damage that runs evasion and armour. */
+  hurtPlayerAttack(amount: number): void;
+  /** Review fixture: override armour/evasion to isolate a defence layer. */
+  setDefences(armour: number, evasion: number): void;
+  /** Review fixture: clear the zone so timing checks run without interference. */
+  clearEnemies(): void;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
   healPlayer(amount: number): void;
   /** Review fixture: grant XP to reach the level-up edge state. */
   grantXp(amount: number): void;
+  /** Review fixture: drain the mana pool to test mana gating. */
+  drainMana(amount: number): void;
+  /** Review fixture: set flask charges to test empty-flask feedback and refill. */
+  setFlaskCharges(kind: FlaskKind, charges: number): void;
   /** Review fixture: serialize the current save (for save-shape checks). */
   exportSave(): string;
 }
@@ -89,6 +123,7 @@ class Game {
   private readonly enemyViews: EnemyViews;
   private readonly projectileViews: ProjectileViews;
   private readonly telegraphs: TelegraphLayer;
+  private readonly skillVfx: SkillVfxLayer;
   private readonly lootViews: LootViews;
   private readonly embers: EmberField;
   private readonly cursor: CursorMarker;
@@ -120,6 +155,8 @@ class Game {
   private tellTelegraphs = 0;
   private tellPlayerDamages = 0;
   private tellDamageBeforeTelegraph = false;
+  /** Refusal-toast throttling so key mashing cannot spam the toast layer. */
+  private lastRefusal = { label: '', at: 0 };
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -135,6 +172,7 @@ class Game {
     this.enemyViews = new EnemyViews(this.scene);
     this.projectileViews = new ProjectileViews(this.scene);
     this.telegraphs = new TelegraphLayer(this.scene, terrain.surface);
+    this.skillVfx = new SkillVfxLayer(this.scene, terrain.surface);
     this.lootViews = new LootViews(this.scene);
     this.embers = createEmbers(this.layout.bounds);
     this.scene.add(this.embers.points);
@@ -152,6 +190,8 @@ class Game {
       onRestart: () => this.startRun(this.classDef.id),
       onQuitToTitle: () => this.quitToTitle(),
       onRespawn: () => this.respawn(),
+      onCastSlot: (slot) => this.castSlot(slot),
+      onUseFlask: (kind) => this.handleUseFlask(kind),
     });
     // Created after Ui: the Ui constructor replaces #ui's innerHTML.
     this.floatingText = new FloatingTextLayer(uiRoot);
@@ -195,7 +235,7 @@ class Game {
 
     this.rig.snapTo(this.layout.spawn.x, this.layout.spawn.z);
     this.ui.setPlayerHp(this.state.player.hp, this.state.player.maxHp);
-    this.ui.showHud(this.classDef, this.layout.name);
+    this.ui.showHud(this.classDef, this.layout.name, skillsFor(id));
     this.setMode('playing');
   }
 
@@ -238,6 +278,7 @@ class Game {
   private clearCombatViews(): void {
     this.projectileViews.clear();
     this.telegraphs.clear();
+    this.skillVfx.clear();
     this.floatingText.clear();
     this.advertisedAttacks.clear();
     this.cursor.setDestination(null);
@@ -261,7 +302,13 @@ class Game {
     this.dead = true;
     this.inventoryPanel.close();
     this.loop.setRunning(false);
-    this.ui.showDeath();
+    const stats = this.state?.runStats;
+    this.ui.showDeath({
+      killer: stats?.lastBlow?.sourceName ?? 'the Ashen Moor',
+      damageTaken: stats?.damageTaken ?? 0,
+      kills: stats?.kills ?? 0,
+      seconds: stats?.seconds ?? 0,
+    });
   }
 
   private setMode(mode: GameMode): void {
@@ -292,6 +339,7 @@ class Game {
       if (events.length > 0) {
         this.enemyViews.handleEvents(events);
         this.telegraphs.handleEvents(events);
+        this.skillVfx.handleEvents(events);
         this.playerView.handleEvents(events);
         this.floatingText.handleEvents(events, this.rig.camera);
         for (const ev of events) {
@@ -306,6 +354,7 @@ class Game {
         for (const ev of events) {
           if (ev.kind === 'death' && ev.targetKind === 'player') this.onPlayerDeath();
           else if (ev.kind === 'levelup') this.ui.showToast(`Level ${ev.level}!`, '#e8c877');
+          else if (ev.kind === 'refuse') this.reportRefusal(ev.reason, ev.label);
           else if (ev.kind === 'pickup') {
             const rarity = ev.rarity as keyof typeof RARITY_COLORS;
             this.ui.showToast(`Picked up ${ev.name}`, RARITY_COLORS[rarity]?.cssColor);
@@ -317,10 +366,18 @@ class Game {
       this.enemyViews.sync(state, dt, alpha, this.rig.camera);
       this.projectileViews.sync(state);
       this.telegraphs.sync(state, dt);
+      this.skillVfx.sync(state, dt);
       this.lootViews.sync(state, elapsed);
       this.nameplates.sync(state, this.rig.camera);
       this.ui.setPlayerHp(state.player.hp, state.player.maxHp);
+      this.ui.setPlayerEs(state.player.energyShield, state.player.maxEnergyShield);
       this.ui.setPlayerXp(state.level, state.xp, state.xpToNext);
+      this.ui.syncCombat({
+        mana: state.player.mana,
+        maxMana: state.player.maxMana,
+        cooldowns: state.player.cooldowns,
+        flasks: state.flasks,
+      });
       if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
       this.rig.follow(state.player.position.x, state.player.position.z, dt);
     }
@@ -426,6 +483,16 @@ class Game {
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     window.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      if (key === '1' || key === '2') {
+        if (this.mode === 'playing' && !this.dead && !e.repeat) this.handleUseFlask(key === '1' ? 'health' : 'mana');
+        return;
+      }
+      const slot = ({ q: 'q', w: 'w', e: 'e', r: 'r' } as const)[key as 'q' | 'w' | 'e' | 'r'];
+      if (slot) {
+        if (this.mode === 'playing' && !this.dead && !e.repeat) this.castSlot(slot);
+        return;
+      }
       if (e.key === 'i' || e.key === 'I' || e.key === 'Tab') {
         if (this.mode !== 'playing' || this.dead || e.repeat) return;
         e.preventDefault();
@@ -451,6 +518,45 @@ class Game {
     this.world.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.rig.setAspect(w / h);
     this.viewport.set(w, h);
+  }
+
+  // ---------- Skills & flasks (slice 5) ----------
+
+  private castSlot(slot: SkillDef['slot']): void {
+    const state = this.state;
+    if (!state || this.mode !== 'playing' || this.dead) return;
+    const skill = skillsFor(this.classDef.id).find((s) => s.slot === slot);
+    if (!skill) return;
+    const aim = this.castAimPoint(state);
+    state.player.castRequest = { skillId: skill.id, x: aim.x, z: aim.z };
+  }
+
+  /** Aim at the pursued or hovered enemy, else the cursor point, else ahead. */
+  private castAimPoint(state: GameState): { x: number; z: number } {
+    const targetId = state.player.attackTargetId ?? this.hoverTargetId;
+    const target = state.enemies.find((e) => e.id === targetId && !e.dead);
+    if (target) return { x: target.position.x, z: target.position.z };
+    const point = this.groundPoint();
+    if (point) return { x: point.x, z: point.z };
+    const p = state.player;
+    return { x: p.position.x + Math.sin(p.facing) * 6, z: p.position.z + Math.cos(p.facing) * 6 };
+  }
+
+  private handleUseFlask(kind: FlaskKind): void {
+    const state = this.state;
+    if (!state || this.mode !== 'playing' || this.dead) return;
+    useFlask(state, kind, state.events);
+  }
+
+  private reportRefusal(reason: 'mana' | 'cooldown' | 'flask-empty', label: string): void {
+    const now = performance.now();
+    if (this.lastRefusal.label === label && now - this.lastRefusal.at < 900) return;
+    this.lastRefusal = { label, at: now };
+    const message =
+      reason === 'mana' ? `${label}: not enough mana`
+        : reason === 'cooldown' ? `${label}: recharging`
+          : `${label}: no charges — slay enemies to refill`;
+    this.ui.showToast(message, reason === 'cooldown' ? '#8f887a' : '#ff8577');
   }
 
   private handleEquip(uid: string): void {
@@ -484,6 +590,24 @@ class Game {
       dead: this.dead,
       playerHp: state?.player.hp ?? 0,
       playerMaxHp: state?.player.maxHp ?? 0,
+      playerMana: state?.player.mana ?? 0,
+      playerMaxMana: state?.player.maxMana ?? 0,
+      playerEnergyShield: state?.player.energyShield ?? 0,
+      playerMaxEnergyShield: state?.player.maxEnergyShield ?? 0,
+      stats: (() => {
+        const derived = state ? getPlayerStats(state) : null;
+        return {
+          strength: Math.round(derived?.strength ?? 0),
+          dexterity: Math.round(derived?.dexterity ?? 0),
+          intelligence: Math.round(derived?.intelligence ?? 0),
+          armour: Math.round(state?.player.armour ?? 0),
+          evasion: Math.round(state?.player.evasion ?? 0),
+          energyShield: state?.player.maxEnergyShield ?? 0,
+          attackDamagePct: Math.round((state?.player.attackDamagePct ?? 0) * 10) / 10,
+          spellDamagePct: Math.round((state?.player.spellDamagePct ?? 0) * 10) / 10,
+          evadeChance: Math.round(evadeChance(state?.player.evasion ?? 0) * 1000) / 1000,
+        };
+      })(),
       playerPos: state ? { x: state.player.position.x, z: state.player.position.z } : { x: 0, z: 0 },
       attackTargetId: state?.player.attackTargetId ?? null,
       hoverTargetId: this.hoverTargetId,
@@ -500,6 +624,29 @@ class Game {
           elite: [...e.elite],
         })) ?? [],
       projectiles: state?.projectiles.length ?? 0,
+      strikes: state?.strikes.length ?? 0,
+      skills: skillsFor(this.classDef.id).map((s) => ({
+        id: s.id,
+        slot: s.slot,
+        name: s.name,
+        manaCost: s.manaCost,
+        cooldown: s.cooldown,
+      })),
+      cooldowns: state
+        ? Object.fromEntries(
+          Object.entries(state.player.cooldowns).map(([id, remaining]) => [id, Math.round((remaining ?? 0) * 1000) / 1000]),
+        )
+        : {},
+      flasks: state
+        ? { health: state.flasks.health.charges, mana: state.flasks.mana.charges, max: state.flasks.health.max }
+        : { health: 0, mana: 0, max: 0 },
+      run: {
+        kills: state?.runStats.kills ?? 0,
+        damageTaken: state?.runStats.damageTaken ?? 0,
+        evades: state?.runStats.evades ?? 0,
+        lastBlow: state?.runStats.lastBlow?.sourceName ?? null,
+        seconds: Math.round((state?.runStats.seconds ?? 0) * 10) / 10,
+      },
       level: state?.level ?? 0,
       xp: state?.xp ?? 0,
       xpToNext: state?.xpToNext ?? 0,
@@ -531,17 +678,45 @@ class Game {
 
   hurtPlayer(amount: number): void {
     if (!this.state) return;
-    damagePlayer(this.state, amount, this.state.events, QA_DAMAGE_ID);
+    damagePlayer(this.state, amount, this.state.events, { attackId: QA_DAMAGE_ID, damageClass: 'spell' });
+  }
+
+  hurtPlayerAttack(amount: number): void {
+    if (!this.state) return;
+    damagePlayer(this.state, amount, this.state.events, { attackId: QA_DAMAGE_ID, damageClass: 'attack' });
+  }
+
+  setDefences(armour: number, evasion: number): void {
+    if (!this.state) return;
+    this.state.player.armour = armour;
+    this.state.player.evasion = evasion;
+  }
+
+  clearEnemies(): void {
+    if (!this.state) return;
+    this.state.enemies.length = 0;
   }
 
   healPlayer(amount: number): void {
     if (!this.state) return;
     this.state.player.hp = Math.min(this.state.player.maxHp, this.state.player.hp + amount);
+    this.state.player.energyShield = this.state.player.maxEnergyShield;
   }
 
   grantXp(amount: number): void {
     if (!this.state) return;
     grantXp(this.state, amount, this.state.events);
+  }
+
+  drainMana(amount: number): void {
+    if (!this.state) return;
+    this.state.player.mana = Math.max(0, this.state.player.mana - amount);
+  }
+
+  setFlaskCharges(kind: FlaskKind, charges: number): void {
+    if (!this.state) return;
+    const flask = this.state.flasks[kind];
+    flask.charges = Math.max(0, Math.min(flask.max, charges));
   }
 
   exportSave(): string {
@@ -557,7 +732,12 @@ const game = new Game(canvas, uiRoot);
   snapshot: () => game.snapshot(),
   worldToScreen: (x, z, height) => game.worldToScreen(x, z, height),
   hurtPlayer: (amount) => game.hurtPlayer(amount),
+  hurtPlayerAttack: (amount) => game.hurtPlayerAttack(amount),
   healPlayer: (amount) => game.healPlayer(amount),
   grantXp: (amount) => game.grantXp(amount),
+  drainMana: (amount) => game.drainMana(amount),
+  setFlaskCharges: (kind, charges) => game.setFlaskCharges(kind, charges),
+  setDefences: (armour, evasion) => game.setDefences(armour, evasion),
+  clearEnemies: () => game.clearEnemies(),
   exportSave: () => game.exportSave(),
 };

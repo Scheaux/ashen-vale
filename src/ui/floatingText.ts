@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { SimEvent } from '../sim/state';
 
-type FloatingKind = 'damage' | 'player-damage';
+type FloatingKind = 'damage' | 'player-damage' | 'player-shield' | 'player-miss' | 'heal' | 'mana';
 
 /**
  * DOM-overlay floating combat text. Damage numbers are spawned from
@@ -23,13 +23,25 @@ export class FloatingTextLayer {
   handleEvents(events: readonly SimEvent[], camera: THREE.Camera): void {
     for (const ev of events) {
       if (ev.kind === 'damage') {
+        const shielded = ev.absorbed !== undefined && ev.absorbed >= ev.amount;
         this.spawn(
           camera,
           ev.x,
           ev.y,
           ev.z,
           String(ev.amount),
-          ev.targetKind === 'player' ? 'player-damage' : 'damage',
+          ev.targetKind === 'player' ? (shielded ? 'player-shield' : 'player-damage') : 'damage',
+        );
+      } else if (ev.kind === 'evade') {
+        this.spawn(camera, ev.x, ev.y, ev.z, 'Evaded', 'player-miss');
+      } else if (ev.kind === 'resource') {
+        this.spawn(
+          camera,
+          ev.x,
+          ev.y,
+          ev.z,
+          `+${ev.amount}`,
+          ev.resource === 'health' ? 'heal' : 'mana',
         );
       }
     }

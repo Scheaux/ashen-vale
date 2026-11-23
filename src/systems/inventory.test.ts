@@ -6,7 +6,7 @@ import { rollItem, type ItemInstance } from '../sim/items';
 import { createGameState, type GameState, type SimEvent } from '../sim/state';
 import { equipItem, ownedItemCount, pickupDrop, unequipItem, BAG_CAP } from './inventory';
 import { grantXp, xpToNext } from './progression';
-import { computeStats, getPlayerStats, scalePlayerDamage, reducePlayerDamage, syncPlayerStats } from './stats';
+import { armourMitigation, computeStats, evadeChance, getPlayerStats, scalePlayerDamage, syncPlayerStats } from './stats';
 
 function emptyLayout(): ZoneLayout {
   return {
@@ -148,11 +148,13 @@ describe('derived stats', () => {
 
     expect(getPlayerStats(state).maxHp).toBeGreaterThan(base.maxHp);
     expect(state.player.maxHp).toBe(Math.round(getPlayerStats(state).maxHp));
-    expect(scalePlayerDamage(state, 100)).toBeCloseTo(100 * (1 + getPlayerStats(state).damagePct / 100), 5);
-    expect(reducePlayerDamage(state, 100)).toBeLessThanOrEqual(100);
+    expect(scalePlayerDamage(state, 100, 'attack')).toBeCloseTo(100 * (1 + getPlayerStats(state).attackDamagePct / 100), 5);
+    expect(scalePlayerDamage(state, 100, 'spell')).toBeCloseTo(100 * (1 + getPlayerStats(state).spellDamagePct / 100), 5);
+    expect(state.player.armour).toBeCloseTo(getPlayerStats(state).armour, 5);
+    expect(state.player.evasion).toBeCloseTo(getPlayerStats(state).evasion, 5);
   });
 
-  it('level growth feeds maxHp and damage is capped by armor', () => {
+  it('level growth feeds maxHp and armour mitigation is capped with diminishing returns', () => {
     const state = makeState();
     const level1 = getPlayerStats(state).maxHp;
     state.level = 5;
@@ -168,9 +170,38 @@ describe('derived stats', () => {
       boots: null,
       amulet: null,
     });
-    expect(armored.damageReductionPct).toBeLessThanOrEqual(60);
+    expect(armouredMitigationCapped(armored.armour)).toBeLessThanOrEqual(0.9);
+    // Diminishing returns: big hits are mitigated less than small ones.
+    expect(armourMitigation(armored.armour, 5)).toBeGreaterThan(armourMitigation(armored.armour, 50));
+    expect(evadeChance(0)).toBe(0);
+    expect(evadeChance(1e6)).toBeLessThanOrEqual(0.75);
+    expect(evadeChance(400)).toBeGreaterThan(evadeChance(100));
+  });
+
+  it('class identity: warrior stacks armour, ranger evasion, witch energy shield', () => {
+    const gear = { weapon: null, helm: null, chest: null, gloves: null, boots: null, amulet: null };
+    const warrior = computeStats(getClass('marauder'), 1, gear);
+    const archer = computeStats(getClass('ranger'), 1, gear);
+    const witch = computeStats(getClass('witch'), 1, gear);
+
+    expect(warrior.armour).toBeGreaterThan(archer.armour);
+    expect(warrior.armour).toBeGreaterThan(witch.armour);
+    expect(archer.evasion).toBeGreaterThan(warrior.evasion);
+    expect(archer.evasion).toBeGreaterThan(witch.evasion);
+    expect(witch.energyShield).toBeGreaterThan(warrior.energyShield);
+    expect(witch.energyShield).toBeGreaterThan(archer.energyShield);
+
+    // Offence split: attack builds out-scale spells and vice versa.
+    expect(warrior.attackDamagePct).toBeGreaterThan(warrior.spellDamagePct);
+    expect(archer.attackDamagePct).toBeGreaterThan(archer.spellDamagePct);
+    expect(witch.spellDamagePct).toBeGreaterThan(witch.attackDamagePct);
   });
 });
+
+/** Helper: what a huge hit still gets reduced to, for cap assertions. */
+function armouredMitigationCapped(armour: number): number {
+  return armourMitigation(armour, 0.001);
+}
 
 describe('progression', () => {
   it('accumulates XP and levels up with events', () => {

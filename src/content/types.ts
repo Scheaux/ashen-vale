@@ -2,7 +2,19 @@
 
 export type ClassId = 'marauder' | 'ranger' | 'witch';
 export type EnemyId = 'ashen-husk' | 'cinder-cultist' | 'mire-skitterer';
-export type SkillId = 'cleave' | 'piercing-shot' | 'ember-bolt';
+export type SkillId =
+  | 'cleave'
+  | 'sunder'
+  | 'whirlwind'
+  | 'reckless-charge'
+  | 'piercing-shot'
+  | 'split-shot'
+  | 'snipe'
+  | 'rain-of-arrows'
+  | 'ember-bolt'
+  | 'ember-nova'
+  | 'cinder-barrage'
+  | 'meteor-strike';
 
 export interface ClassStats {
   strength: number;

@@ -1,9 +1,10 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG prototype in TypeScript + three.js.
-Built in vertical slices; this repo currently covers **Slices 0–4**: scaffold,
-movement, combat, enemy AI with telegraphs, and rewards/loot — plus jointed
-procedural character rigs with full animation sets.
+Built in vertical slices; this repo currently covers **Slices 0–5**: scaffold,
+movement, combat, enemy AI with telegraphs, rewards/loot, and the full combat
+kit — QWER skill hotbars, mana, flasks and the death → checkpoint retry flow —
+plus jointed procedural character rigs with full animation sets.
 See [MVP.md](./MVP.md) for the full slice-by-slice roadmap to the MVP.
 
 ## Run
@@ -23,6 +24,8 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
 | --- | --- |
 | Left click (ground) | Move to point |
 | Hover near an enemy, then left click | Highlight, pursue and attack |
+| Q / W / E / R | Cast hotbar skills (Q = basic attack) |
+| 1 / 2 | Drink the health / mana flask |
 | Right drag | Rotate camera |
 | Scroll | Zoom |
 | I | Open or close inventory |
@@ -56,8 +59,26 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
   with data-driven affix rolls; world drops with beams; auto-pickup;
   inventory/equipment screens with tooltips; derived stats feed combat.
   Transactions are loss-tested (identity conservation)
-- Player health bar, death screen and respawn, which preserves progression and
-  encounter damage while cancelling unfinished attacks and projectiles
+- **Combat stats:** three primary attributes (strength / dexterity /
+  intelligence) each drive offence and defence — STR → life, armour and
+  attack damage; DEX → evasion, move speed and attack damage; INT → mana,
+  energy shield and spell damage. Defence is layered: armour mitigates attack
+  hits (diminishing returns, never a full negate), evasion turns attack hits
+  into misses (capped at 75%), and energy shield absorbs before life and
+  recharges after 2s out of combat. Offence splits into Attack Damage and
+  Spell Damage, matched against each skill's `damageClass` — spells bypass
+  armour and evasion entirely. The character sheet in the inventory shows the
+  full breakdown
+- **Skills & flasks:** a four-skill QWER kit per class (free basic attack +
+  three active skills across melee arcs, projectile fans, novas, telegraphed
+  ground strikes and a dash), mana costs with regen and refuse feedback,
+  per-skill cooldown sweeps, health/mana flasks (1/2) with refill-on-kill
+  charges, and distinct VFX per skill — slash arcs, nova rings, shard bursts,
+  draped strike telegraphs
+- Player health bar, death screen with a death recap (killing blow, damage
+  taken, kills, time survived) and respawn at the checkpoint, which preserves
+  progression and encounter damage while refilling mana and flasks and
+  cancelling unfinished attacks and projectiles
 - Validated character checkpoint schema v2 with a tested v1→v2 migration
   (`src/save/schema.ts`); not a mid-combat replay snapshot or a Continue flow
 
@@ -68,13 +89,15 @@ src/
   core/      game loop (fixed sim tick + interpolated render), seeded RNG, events, math, noise
   content/   data-only definitions: classes, skills, enemies/attacks, items/affixes, zone layout
   sim/       pure deterministic game state + authoritative combat events (no three.js imports)
-  systems/   movement, centralized combat pipeline, enemy AI machine, inventory transactions,
-             stats derivation, progression (XP), loot
+  systems/   movement, centralized combat pipeline (skills, cooldowns, mana, area strikes),
+             enemy AI machine, flasks, inventory transactions, stats derivation
+             (attributes, armour/evasion/energy shield, attack vs spell damage),
+             progression (XP), loot
   render/    three.js scene, terrain, props, character rigs, enemies, projectiles, telegraphs,
-             loot drops, camera, cursor, VFX; anim.ts holds the animation curves,
+             skill VFX, loot drops, camera, cursor; anim.ts holds the animation curves,
              materials.ts procedural normal/roughness maps, geo.ts bevel/lathe/sweep/rock toolkit
-  ui/        DOM-overlay screens (title, class select, HUD, pause, death, inventory),
-             floating combat text, nameplates
+  ui/        DOM-overlay screens (title, class select, HUD with hotbar/flasks, pause, death
+             recap, inventory), floating combat text, nameplates
   save/      versioned save schema + migration (localStorage slots in slice 8)
 ```
 

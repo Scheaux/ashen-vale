@@ -40,13 +40,14 @@ export class ProjectileViews {
     for (const proj of state.projectiles) {
       let view = this.views.get(proj.id);
       if (!view) {
-        const isArrow = proj.skillId === 'piercing-shot';
-        const light = isArrow ? null : new THREE.PointLight(proj.color, 7, 8, 2);
-        const mesh = isArrow ? this.createArrow() : new THREE.Mesh(
-          new THREE.SphereGeometry(0.17, 12, 10),
-          new THREE.MeshBasicMaterial({ color: proj.color }),
-        );
-        if (isArrow && this.direction.set(proj.velocity.x, 0, proj.velocity.z).lengthSq() > 0) {
+        const light = proj.visual === 'arrow' ? null : new THREE.PointLight(proj.color, 7, 8, 2);
+        const mesh = proj.visual === 'arrow' ? this.createArrow()
+          : proj.visual === 'streak' ? this.createStreak(proj.color)
+            : new THREE.Mesh(
+              new THREE.SphereGeometry(0.17, 12, 10),
+              new THREE.MeshBasicMaterial({ color: proj.color }),
+            );
+        if (proj.visual !== 'orb' && this.direction.set(proj.velocity.x, 0, proj.velocity.z).lengthSq() > 0) {
           mesh.quaternion.setFromUnitVectors(this.up, this.direction.normalize());
         }
         this.group.add(mesh);
@@ -71,5 +72,16 @@ export class ProjectileViews {
     feather.position.y = -0.24;
     arrow.add(shaft, tip, feather);
     return arrow;
+  }
+
+  /** A fast luminous streak (snipe): stretched along the direction of travel. */
+  private createStreak(color: number): THREE.Mesh {
+    const streak = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 10, 8),
+      new THREE.MeshBasicMaterial({ color }),
+    );
+    // Built along +Y to share the arrow's orientation convention.
+    streak.scale.set(0.75, 3.4, 0.75);
+    return streak;
   }
 }

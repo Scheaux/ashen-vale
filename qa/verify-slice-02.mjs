@@ -109,14 +109,16 @@ async function main() {
 
   // --- Enemy retaliation: player took damage during the fight ---
   s = await snap();
-  check('enemy fights back (player lost health)', s.playerHp < s.playerMaxHp, `${s.playerHp}/${s.playerMaxHp}`);
+  check('enemy fights back (player lost vitality)',
+    s.playerHp + s.playerEnergyShield < s.playerMaxHp + s.playerMaxEnergyShield,
+    `${s.playerHp}+${s.playerEnergyShield}/${s.playerMaxHp}+${s.playerMaxEnergyShield}`);
   const hpText = await page.locator('[data-hp-text]').textContent();
   check('HUD health readout updates', (hpText ?? '').includes(String(s.playerHp)), hpText ?? '');
 
   // --- Projectile class: ranger arrow kills at range ---
   await page.keyboard.press('Escape'); // pause
   await page.waitForTimeout(250);
-  await page.click('[data-action="quit"]');
+  await page.click('[data-screen="paused"] [data-action="quit"]');
   await page.waitForTimeout(350);
   await page.click('[data-action="new-game"]');
   await page.waitForTimeout(300);

@@ -1,5 +1,5 @@
 import type { Rng } from '../core/rng';
-import { AFFIXES, getAffix, type AffixDef } from '../content/affixes';
+import { AFFIXES, getAffix, isPercentStat, type AffixDef } from '../content/affixes';
 import {
   getItemBase,
   getUnique,
@@ -123,14 +123,8 @@ export function rollItem(rng: Rng, itemLevel: number, forcedRarity?: Rarity): It
 /** Human-readable affix line for tooltips. */
 export function affixLine(affix: ItemAffix): string {
   const def = getAffix(affix.id);
-  const sign = def.stat === 'damagePct' || def.stat === 'moveSpeedPct' || def.stat === 'damageReductionPct' ? '%' : '';
-  const prefix =
-    def.stat === 'strength' || def.stat === 'dexterity' || def.stat === 'intelligence'
-      ? '+'
-      : def.stat === 'maxHp'
-        ? '+'
-        : '+';
-  return `${prefix}${affix.value}${sign} ${def.label.replace(/^(of |'s )?/, '')}`.trim();
+  const sign = isPercentStat(def.stat) ? '%' : '';
+  return `+${affix.value}${sign} ${def.label.replace(/^(of |'s )?/, '')}`.trim();
 }
 
 /** Display name for an equipped/base reference. */

@@ -143,7 +143,7 @@ async function main() {
   // Quit to title.
   await page.keyboard.press('Escape');
   await page.waitForTimeout(250);
-  await page.click('[data-action="quit"]');
+  await page.click('[data-screen="paused"] [data-action="quit"]');
   await page.waitForTimeout(400);
   check('quit returns to title', await page.locator('.game-title').isVisible());
   const quit = await snapshot();
@@ -159,7 +159,7 @@ async function main() {
   await page.click('[data-action="begin"]');
   await page.waitForTimeout(800);
   await page.keyboard.press('Escape');
-  await page.click('[data-action="quit"]');
+  await page.click('[data-screen="paused"] [data-action="quit"]');
   await page.waitForTimeout(400);
   const quitAgain = await snapshot();
   check('another run returns GPU resources to the warmed title baseline', sameResources(quit, quitAgain),

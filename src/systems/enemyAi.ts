@@ -96,7 +96,7 @@ function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, event
   const dz = p.position.z - enemy.position.z;
   const dist = Math.hypot(dx, dz);
 
-  events.push({ kind: 'attack', sourceId: enemy.id, skillId: 'enemy-strike', x: enemy.position.x, z: enemy.position.z });
+  events.push({ kind: 'attack', sourceId: enemy.id, skillId: 'enemy-strike', x: enemy.position.x, z: enemy.position.z, facing: enemy.facing });
 
   if (attack.shape === 'bolt') {
     spawnEnemyBolt(state, enemy, attack);
@@ -110,7 +110,11 @@ function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, event
   const inArc = Math.abs(angleDiff(enemy.windupFacing, Math.atan2(dx, dz))) <= halfArc;
   if (dist <= attack.range + p.radius && inArc) {
     const amount = attack.damage.min + state.rng() * (attack.damage.max - attack.damage.min);
-    damagePlayer(state, amount * enemy.damageMult, events, enemy.attackId ?? undefined);
+    damagePlayer(state, amount * enemy.damageMult, events, {
+      ...(enemy.attackId ? { attackId: enemy.attackId } : {}),
+      sourceName: def.name,
+      damageClass: attack.damageClass ?? 'attack',
+    });
   }
 }
 
@@ -245,7 +249,11 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
           if (!enemy.lungeHit && segmentDistanceSq(p.position.x, p.position.z, x, z, enemy.position.x, enemy.position.z)
             <= (p.radius + enemy.radius) ** 2) {
             enemy.lungeHit = true;
-            damagePlayer(state, rollDamage(state, attack.damage.min, attack.damage.max) * enemy.damageMult, events, enemy.attackId ?? undefined);
+            damagePlayer(state, rollDamage(state, attack.damage.min, attack.damage.max) * enemy.damageMult, events, {
+              ...(enemy.attackId ? { attackId: enemy.attackId } : {}),
+              sourceName: def.name,
+              damageClass: attack.damageClass ?? 'attack',
+            });
           }
         } else {
           enemy.velocity.x = 0;

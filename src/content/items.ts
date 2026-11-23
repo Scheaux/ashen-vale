@@ -43,8 +43,8 @@ export const UNIQUES: readonly UniqueDef[] = [
     lore: 'It remembers the fire that made it.',
     affixes: [
       { id: 'bulwark', value: 28 },
-      { id: 'fortress', value: 6 },
-      { id: 'insight', value: 4 },
+      { id: 'fortress', value: 45 },
+      { id: 'insight', value: 6 },
     ],
   },
   {

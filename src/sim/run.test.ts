@@ -31,8 +31,8 @@ describe('run lifecycle', () => {
     husk.attackId = 'old-husk-windup';
     expect(state.projectiles[0]?.owner).toBe(cultist.id);
     state.player.attackTargetId = husk.id;
-    state.player.attackCooldown = 0.5;
-    damagePlayer(state, 1000, state.events);
+    state.player.cooldowns.cleave = 0.5;
+    damagePlayer(state, 1000, state.events, { damageClass: 'spell' });
     drainEvents(state);
     const deathTick = state.tick;
     stepRun(state, 1 / 60);
@@ -42,7 +42,17 @@ describe('run lifecycle', () => {
     expect(state.projectiles).toHaveLength(0);
     expect(state.xp).toBe(12);
     expect(husk.hp).toBe(husk.maxHp - 5);
-    expect(state.player).toMatchObject({ hp: state.player.maxHp, position: layout.spawn, attackTargetId: null, attackCooldown: 0 });
+    expect(state.player).toMatchObject({
+      hp: state.player.maxHp,
+      position: layout.spawn,
+      attackTargetId: null,
+      cooldowns: {},
+      mana: state.player.maxMana,
+    });
+    expect(state.flasks.health.charges).toBe(state.flasks.health.max);
+    expect(state.flasks.mana.charges).toBe(state.flasks.mana.max);
+    expect(state.strikes).toHaveLength(0);
+    expect(state.runStats).toMatchObject({ kills: 0, damageTaken: 0, lastBlow: null });
     for (const enemy of state.enemies) {
       expect(enemy).toMatchObject({ phase: 'idle', phaseTime: 0, attackId: null, aggro: false, velocity: { x: 0, z: 0 } });
     }

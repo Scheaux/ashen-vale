@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { basicAttackFor } from '../content/skills';
+import { getSkill } from '../content/skills';
 import type { ClassDef } from '../content/types';
 import type { GameState, SimEvent } from '../sim/state';
 import { clamp } from '../core/math';
@@ -21,7 +21,6 @@ const DEATH_DURATION = 1.4;
  * never invents gameplay outcomes.
  */
 export function createPlayerView(def: ClassDef): PlayerView {
-  const skill = basicAttackFor(def.id);
   const rig: HeroRig = createHeroRig(def);
   const clock = new HitClock();
   let facing = Math.PI;
@@ -67,11 +66,12 @@ export function createPlayerView(def: ClassDef): PlayerView {
     const hit = clock.hitProgress;
     const flash = hit === null ? 0 : (1 - hit) ** 3;
     for (const mat of rig.flashMaterials) mat.emissive.setRGB(0.46 * flash, 0.09 * flash, 0.05 * flash);
+    const attackSkill = p.attack ? getSkill(p.attack.skillId) : null;
     rig.pose({
       time: elapsed,
       distance,
       speedRatio: dead ? 0 : speedRatio,
-      attack: !dead && p.attack ? p.attack.elapsed / skill.duration : null,
+      attack: !dead && p.attack && attackSkill ? p.attack.elapsed / attackSkill.duration : null,
       turn,
       effort,
       hit: dead ? null : hit,

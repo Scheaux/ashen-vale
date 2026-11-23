@@ -128,7 +128,8 @@ describe('telegraph commitment & dodge counterplay', () => {
     expect(tell).toBeDefined();
     const hit = events.findIndex((ev) => ev.kind === 'damage' && ev.attackId === tell?.attackId);
     expect(hit).toBeGreaterThan(events.indexOf(tell!));
-    expect(state.player.hp).toBeLessThan(state.player.maxHp);
+    // The energy shield absorbs before life: total vitality is what must drop.
+    expect(state.player.hp + state.player.energyShield).toBeLessThan(state.player.maxHp + state.player.maxEnergyShield);
   });
 
   it('cannot chain attacks: recovery then cooldown gate the next windup', () => {

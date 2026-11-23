@@ -44,7 +44,7 @@ export class InventoryPanel {
       <div class="inventory-panel">
         <div class="inventory-header">
           <h3 class="inventory-title">Inventory</h3>
-          <div class="inventory-stats" data-inv-stats></div>
+          <div class="char-sheet" data-inv-stats></div>
         </div>
         <div class="inventory-body">
           <div class="inventory-equipment">
@@ -83,9 +83,19 @@ export class InventoryPanel {
   sync(state: GameState): void {
     if (!this.visible) return;
     const stats = getPlayerStats(state);
-    this.statsLine.textContent =
-      `LVL ${state.level} · XP ${state.xp}/${state.xpToNext} · HP ${Math.round(stats.maxHp)} · ` +
-      `DMG +${stats.damagePct.toFixed(0)}% · SPD +${stats.moveSpeedPct.toFixed(0)}% · ARM ${stats.damageReductionPct.toFixed(0)}%`;
+    const rows: Array<[string, string]> = [
+      ['Level', `${state.level} · ${state.xp}/${state.xpToNext} XP`],
+      ['Attributes', `STR ${Math.round(stats.strength)} · DEX ${Math.round(stats.dexterity)} · INT ${Math.round(stats.intelligence)}`],
+      ['Defence', `Armour ${Math.round(stats.armour)} · Evasion ${Math.round(stats.evasion)} · Energy Shield ${Math.round(stats.energyShield)}`],
+      ['Offence', `Attack +${stats.attackDamagePct.toFixed(0)}% · Spell +${stats.spellDamagePct.toFixed(0)}%`],
+      ['Vitals', `Life ${Math.round(stats.maxHp)} · Mana ${Math.round(stats.maxMana)} · Move +${stats.moveSpeedPct.toFixed(0)}%`],
+    ];
+    this.statsLine.innerHTML = rows
+      .map(([label]) => `<div class="char-row"><span class="char-label">${label}</span><span class="char-value"></span></div>`)
+      .join('');
+    this.statsLine.querySelectorAll('.char-value').forEach((el, i) => {
+      el.textContent = rows[i][1];
+    });
 
     // Re-render item lists only when inventory contents change — rebuilding
     // them every frame would destroy hovered elements and flicker tooltips.

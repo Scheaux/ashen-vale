@@ -23,6 +23,8 @@ export interface AttackDef {
     ttl: number;
   };
   damage: { min: number; max: number };
+  /** Attack hits can be evaded and mitigated by armour; spells bypass both. */
+  damageClass?: 'attack' | 'spell';
 }
 
 export type EnemyBehavior = 'bruiser' | 'kiter' | 'swarmer';
@@ -95,6 +97,7 @@ export const ENEMIES: readonly EnemyDef[] = [
       cooldown: 1.6,
       projectile: { speed: 13, radius: 0.4, ttl: 2.2 },
       damage: { min: 5, max: 9 },
+      damageClass: 'spell',
     },
     color: 0x4a2c22,
     eyeColor: 0xff7a3d,

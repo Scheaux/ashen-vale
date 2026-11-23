@@ -1,12 +1,14 @@
 import { getEnemy } from '../content/enemies';
 import type { EnemyState, GameState, SimEvent } from '../sim/state';
 import { rollItem } from '../sim/items';
+import { refillFlasksOnKill } from './flasks';
 import { pickupDrop } from './inventory';
 import { grantXp } from './progression';
 
 /**
  * Loot pipeline: deaths award XP and may drop an item; drops are claimed by
- * walking over them (validated pickup transactions).
+ * walking over them (validated pickup transactions). Every kill also refills
+ * one flask charge on each flask (slice 5).
  */
 const DROP_CHANCE = 0.68;
 const PICKUP_RADIUS = 1.5;
@@ -14,6 +16,7 @@ const PICKUP_RADIUS = 1.5;
 /** Called from the central damage pipeline on every enemy death. */
 export function onEnemyDeath(state: GameState, enemy: EnemyState, events: SimEvent[]): void {
   grantXp(state, getEnemy(enemy.defId).xp, events);
+  refillFlasksOnKill(state);
 
   if (state.rng() > DROP_CHANCE) return;
   const itemLevel = Math.max(1, Math.round(state.level * 0.8 + 1 + state.rng() * 2));

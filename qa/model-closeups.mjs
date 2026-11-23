@@ -87,7 +87,7 @@ async function main() {
     // Back to title for the next class.
     await page.keyboard.press('Escape');
     await sleep(250);
-    await page.click('[data-action="quit"]');
+    await page.click('[data-screen="paused"] [data-action="quit"]');
     await sleep(350);
     stats = (await snap()).render;
   }

@@ -28,11 +28,32 @@ export interface PlayerState {
   moveTarget: Vec2 | null;
   /** Enemy being pursued/attacked, or null. */
   attackTargetId: string | null;
-  attackCooldown: number;
-  /** Committed basic attack; normalized pose and contact share this clock. */
-  attack: { elapsed: number; facing: number } | null;
+  /** Per-skill cooldown seconds remaining (slice 5 hotbar). */
+  cooldowns: Partial<Record<SkillId, number>>;
+  /** Hotbar cast request; consumed at the start of the next combat step. */
+  castRequest: { skillId: SkillId; x: number; z: number } | null;
+  /**
+   * Committed attack (basic or hotbar skill). The normalized pose and the
+   * contact frame share this clock; `aim` fixes ground-strike placement and
+   * `hit` keeps dash travel from hitting one enemy twice.
+   */
+  attack: { skillId: SkillId; elapsed: number; facing: number; aim: Vec2; hit: string[]; dashLeft: number } | null;
   hp: number;
   maxHp: number;
+  mana: number;
+  maxMana: number;
+  /** Mana restored per second. */
+  manaRegen: number;
+  /** Energy shield: absorbs damage before hp and recharges out of combat. */
+  energyShield: number;
+  maxEnergyShield: number;
+  /** Seconds without damage before the shield starts recharging. */
+  esRechargeDelay: number;
+  /** Derived combat stats (slice 5+ rework); kept current by syncPlayerStats. */
+  armour: number;
+  evasion: number;
+  attackDamagePct: number;
+  spellDamagePct: number;
   speed: number;
   radius: number;
   classId: ClassDef['id'];
@@ -79,6 +100,8 @@ export interface ProjectileState {
   id: string;
   /** 'player' or the enemy id that fired it. */
   owner: string;
+  /** Display name of the shooter, for the death recap. */
+  sourceName: string;
   attackId?: string;
   skillId: SkillId | 'enemy-bolt';
   position: Vec2;
@@ -89,6 +112,40 @@ export interface ProjectileState {
   radius: number;
   ttl: number;
   color: number;
+  /** Renderer look: arrow mesh, glowing orb, or fast streak. */
+  visual: 'arrow' | 'orb' | 'streak';
+  /** Incoming damage classification: attacks can be evaded; spells cannot. */
+  damageClass: 'attack' | 'spell';
+}
+
+/** Delayed player area strike (ground delivery): telegraphed, then detonates. */
+export interface AreaStrike {
+  id: string;
+  skillId: SkillId;
+  x: number;
+  z: number;
+  radius: number;
+  /** Seconds until the strike lands. */
+  fuse: number;
+  /** Pre-rolled damage applied to every enemy caught in the radius. */
+  damage: number;
+  color: number;
+}
+
+export interface FlaskState {
+  charges: number;
+  max: number;
+}
+
+/** Per-life counters feeding the death recap. */
+export interface RunStats {
+  kills: number;
+  damageTaken: number;
+  /** Attack hits fully evaded (evasion). */
+  evades: number;
+  /** Simulated seconds survived this life. */
+  seconds: number;
+  lastBlow: { sourceName: string; amount: number } | null;
 }
 
 export interface LootDrop {
@@ -108,7 +165,7 @@ export interface InventoryState {
  * consume these; they never infer gameplay outcomes from visual state.
  */
 export type SimEvent =
-  | { kind: 'attack'; sourceId: string; skillId: string; x: number; z: number }
+  | { kind: 'attack'; sourceId: string; skillId: string; x: number; z: number; facing: number }
   | {
       kind: 'telegraph';
        enemyId: string;
@@ -128,13 +185,33 @@ export type SimEvent =
        targetId: string;
        attackId?: string;
       amount: number;
+      /** Energy shield portion of the hit (player only). */
+      absorbed?: number;
       x: number;
       y: number;
       z: number;
     }
+  | { kind: 'evade'; targetId: string; x: number; y: number; z: number }
   | { kind: 'death'; targetKind: 'player' | 'enemy'; targetId: string; x: number; z: number }
   | { kind: 'levelup'; level: number }
-  | { kind: 'pickup'; name: string; rarity: string };
+  | { kind: 'pickup'; name: string; rarity: string }
+  | {
+      kind: 'burst';
+      skillId: SkillId;
+      x: number;
+      z: number;
+      radius: number;
+      color: number;
+    }
+  | {
+      kind: 'resource';
+      resource: 'health' | 'mana';
+      amount: number;
+      x: number;
+      y: number;
+      z: number;
+    }
+  | { kind: 'refuse'; reason: 'mana' | 'cooldown' | 'flask-empty'; label: string };
 
 export interface GameState {
   tick: number;
@@ -142,14 +219,20 @@ export interface GameState {
   player: PlayerState;
   enemies: EnemyState[];
   projectiles: ProjectileState[];
+  /** Pending player area strikes ticking down to their fuse. */
+  strikes: AreaStrike[];
   colliders: CircleCollider[];
   bounds: ZoneBounds;
   inventory: InventoryState;
   loot: LootDrop[];
+  /** Health/mana flasks with refill-on-kill charges. */
+  flasks: { health: FlaskState; mana: FlaskState };
   /** Character progression (slice 4). */
   level: number;
   xp: number;
   xpToNext: number;
+  /** Per-life counters for the death recap. */
+  runStats: RunStats;
   /** Events accumulated since the last drain. */
   events: SimEvent[];
   /** Seeded RNG for gameplay rolls; excluded from serialization. */
@@ -157,8 +240,34 @@ export interface GameState {
 }
 
 export const PLAYER_MAX_HP = 120;
+export const PLAYER_BASE_MANA = 60;
+export const FLASK_MAX_CHARGES = 4;
+
+/**
+ * Attribute synergy multipliers (slice 5+ stat rework): what each point of
+ * strength / dexterity / intelligence is worth. Single source shared by
+ * createGameState and stats derivation so the two can never drift.
+ */
+export const SYNERGY = {
+  strength: { maxHp: 0.5, armour: 2.5, attackDamagePct: 0.4 },
+  dexterity: { evasion: 2.5, moveSpeedPct: 0.08, attackDamagePct: 0.4 },
+  intelligence: { maxMana: 1.5, energyShield: 2.5, spellDamagePct: 0.6 },
+} as const;
+
+/** Level-1 mana pool before equipment; shared with stats derivation. */
+export function baseManaFor(intelligence: number): number {
+  return Math.round(PLAYER_BASE_MANA + intelligence * SYNERGY.intelligence.maxMana);
+}
+
+/** Mana restored per second for a given pool; shared with stats derivation. */
+export function manaRegenFor(maxMana: number): number {
+  return 3 + maxMana * 0.02;
+}
 
 export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ffee): GameState {
+  const maxMana = baseManaFor(def.stats.intelligence);
+  const maxHp = Math.round(PLAYER_MAX_HP + def.stats.strength * SYNERGY.strength.maxHp);
+  const energyShield = Math.round(def.stats.intelligence * SYNERGY.intelligence.energyShield);
   return {
     tick: 0,
     zoneSeed: layout.seed,
@@ -169,10 +278,23 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       facing: Math.PI, // look back into the zone from the spawn edge
       moveTarget: null,
       attackTargetId: null,
-      attackCooldown: 0,
+      cooldowns: {},
+      castRequest: null,
       attack: null,
-      hp: PLAYER_MAX_HP,
-      maxHp: PLAYER_MAX_HP,
+      hp: maxHp,
+      maxHp,
+      mana: maxMana,
+      maxMana,
+      manaRegen: manaRegenFor(maxMana),
+      energyShield,
+      maxEnergyShield: energyShield,
+      esRechargeDelay: 0,
+      armour: def.stats.strength * SYNERGY.strength.armour,
+      evasion: def.stats.dexterity * SYNERGY.dexterity.evasion,
+      attackDamagePct:
+        def.stats.strength * SYNERGY.strength.attackDamagePct +
+        def.stats.dexterity * SYNERGY.dexterity.attackDamagePct,
+      spellDamagePct: def.stats.intelligence * SYNERGY.intelligence.spellDamagePct,
       speed: def.speed,
       radius: 0.55,
       classId: def.id,
@@ -212,6 +334,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       };
     }),
     projectiles: [],
+    strikes: [],
     colliders: layout.colliders.map((c) => ({ ...c })),
     bounds: {
       center: { ...layout.bounds.center },
@@ -222,9 +345,14 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       equipment: { weapon: null, helm: null, chest: null, gloves: null, boots: null, amulet: null },
     },
     loot: [],
+    flasks: {
+      health: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },
+      mana: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },
+    },
     level: 1,
     xp: 0,
     xpToNext: 60,
+    runStats: { kills: 0, damageTaken: 0, evades: 0, seconds: 0, lastBlow: null },
     events: [],
     rng: createRng(seed),
   };

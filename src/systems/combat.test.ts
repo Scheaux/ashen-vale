@@ -62,11 +62,11 @@ describe('damage pipeline', () => {
   it('damagePlayer clamps at zero and emits player death', () => {
     const state = createGameState(getClass('witch'), layoutWith());
     const events: SimEvent[] = [];
-    damagePlayer(state, 500, events);
+    damagePlayer(state, 500, events, { damageClass: 'spell' });
     expect(state.player.hp).toBe(0);
     expect(events.some((e) => e.kind === 'death' && e.targetKind === 'player')).toBe(true);
 
-    damagePlayer(state, 10, events);
+    damagePlayer(state, 10, events, { damageClass: 'spell' });
     expect(events.filter((e) => e.kind === 'damage')).toHaveLength(1);
   });
 });
@@ -173,7 +173,8 @@ describe('enemy brain (slice 2)', () => {
 
     expect(enemy.aggro).toBe(true);
     expect(events.some((e) => e.kind === 'attack' && e.sourceId === enemy.id)).toBe(true);
-    expect(state.player.hp).toBeLessThan(state.player.maxHp);
+    // The energy shield absorbs before life: total vitality is what must drop.
+    expect(state.player.hp + state.player.energyShield).toBeLessThan(state.player.maxHp + state.player.maxEnergyShield);
   });
 
   it('does not notice the player beyond aggro range', () => {
