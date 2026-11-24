@@ -83,6 +83,12 @@ export interface EnemyState {
   radius: number;
   damageMult: number;
   elite: EliteModifier[];
+  /** Camp index for objective tracking (-1: boss, adds, or campless). */
+  camp: number;
+  /** Boss phase index (slice 7); 0 for everything else. */
+  bossPhase: number;
+  /** Locked landing point for slam attacks. */
+  strikeTarget: Vec2;
   phase: EnemyPhase;
   /** Seconds spent in the current phase. */
   phaseTime: number;
@@ -120,6 +126,8 @@ export interface ProjectileState {
   visual: 'arrow' | 'orb' | 'streak';
   /** Incoming damage classification: attacks can be evaded; spells cannot. */
   damageClass: 'attack' | 'spell';
+  /** Seconds alive; contact is ignored during the spawn grace. */
+  age: number;
 }
 
 /** Delayed player area strike (ground delivery): telegraphed, then detonates. */
@@ -159,6 +167,14 @@ export interface LootDrop {
   z: number;
 }
 
+/** Zone objective tracking (slice 7): camps, then the Ashen Warden. */
+export interface ObjectiveState {
+  campsTotal: number;
+  campCleared: boolean[];
+  bossSpawned: boolean;
+  bossDefeated: boolean;
+}
+
 export interface InventoryState {
   bags: ItemInstance[];
   equipment: Record<ItemSlot, ItemInstance | null>;
@@ -179,7 +195,7 @@ export type SimEvent =
       kind: 'telegraph';
        enemyId: string;
        attackId: string;
-      shape: 'melee-arc' | 'bolt' | 'pounce';
+      shape: 'melee-arc' | 'bolt' | 'pounce' | 'slam';
       x: number;
       z: number;
       facing: number;
@@ -220,7 +236,10 @@ export type SimEvent =
       y: number;
       z: number;
     }
-  | { kind: 'refuse'; reason: 'mana' | 'cooldown' | 'flask-empty'; label: string };
+  | { kind: 'refuse'; reason: 'mana' | 'cooldown' | 'flask-empty'; label: string }
+  | { kind: 'objective'; text: string }
+  | { kind: 'boss-phase'; bossId: string; phase: number; label: string }
+  | { kind: 'victory' };
 
 export interface GameState {
   tick: number;
@@ -232,6 +251,12 @@ export interface GameState {
   strikes: AreaStrike[];
   colliders: CircleCollider[];
   bounds: ZoneBounds;
+  /** Boss arena bounds; active during the boss fight (slice 7). */
+  arena: ZoneBounds;
+  /** Where the Ashen Warden waits until the camps are cleared. */
+  bossSpawn: EnemySpawn;
+  /** Zone objectives: clear the camps, then slay the Warden. */
+  objectives: ObjectiveState;
   inventory: InventoryState;
   loot: LootDrop[];
   /** Passive skill tree allocation (slice 6). */
@@ -275,10 +300,50 @@ export function manaRegenFor(maxMana: number): number {
   return 3 + maxMana * 0.02;
 }
 
+/** Build an enemy from a spawn; shared by zone population and boss adds. */
+export function createEnemyState(spawn: EnemySpawn, id: string): EnemyState {
+  const enemyDef = getEnemy(spawn.enemyId);
+  const elite = spawn.elite;
+  let maxHp = enemyDef.maxHp;
+  let speed = enemyDef.speed;
+  let damageMult = 1;
+  if (elite.includes('vital')) maxHp = Math.round(maxHp * 2.2);
+  if (elite.includes('swift')) speed *= 1.25;
+  if (elite.includes('savage')) damageMult *= 1.6;
+  return {
+    id,
+    defId: spawn.enemyId,
+    position: { x: spawn.x, z: spawn.z },
+    previousPosition: { x: spawn.x, z: spawn.z },
+    velocity: { x: 0, z: 0 },
+    facing: 0,
+    hp: maxHp,
+    maxHp,
+    speed,
+    radius: enemyDef.radius,
+    damageMult,
+    elite,
+    camp: spawn.camp ?? -1,
+    bossPhase: 0,
+    strikeTarget: { x: spawn.x, z: spawn.z },
+    phase: 'idle' as const,
+    phaseTime: 0,
+    attackCooldown: 0,
+    windupFacing: 0,
+    attackId: null,
+    lungeRemaining: 0,
+    lungeHit: false,
+    aggro: false,
+    dead: false,
+    deadTime: 0,
+  };
+}
+
 export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ffee): GameState {
   const maxMana = baseManaFor(def.stats.intelligence);
   const maxHp = Math.round(PLAYER_MAX_HP + def.stats.strength * SYNERGY.strength.maxHp);
   const energyShield = Math.round(def.stats.intelligence * SYNERGY.intelligence.energyShield);
+  const camps = new Set(layout.enemySpawns.map((s) => s.camp ?? -1).filter((c) => c >= 0));
   return {
     tick: 0,
     zoneSeed: layout.seed,
@@ -312,46 +377,24 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       radius: 0.55,
       classId: def.id,
     },
-    enemies: layout.enemySpawns.map((spawn, i) => {
-      const enemyDef = getEnemy(spawn.enemyId);
-      const elite = spawn.elite;
-      let maxHp = enemyDef.maxHp;
-      let speed = enemyDef.speed;
-      let damageMult = 1;
-      if (elite.includes('vital')) maxHp = Math.round(maxHp * 2.2);
-      if (elite.includes('swift')) speed *= 1.25;
-      if (elite.includes('savage')) damageMult *= 1.6;
-      return {
-        id: `enemy-${i}`,
-        defId: spawn.enemyId,
-        position: { x: spawn.x, z: spawn.z },
-        previousPosition: { x: spawn.x, z: spawn.z },
-        velocity: { x: 0, z: 0 },
-        facing: 0,
-        hp: maxHp,
-        maxHp,
-        speed,
-        radius: enemyDef.radius,
-        damageMult,
-        elite,
-        phase: 'idle' as const,
-        phaseTime: 0,
-        attackCooldown: 0,
-        windupFacing: 0,
-        attackId: null,
-        lungeRemaining: 0,
-        lungeHit: false,
-        aggro: false,
-        dead: false,
-        deadTime: 0,
-      };
-    }),
+    enemies: layout.enemySpawns.map((spawn, i) => createEnemyState(spawn, `enemy-${i}`)),
     projectiles: [],
     strikes: [],
     colliders: layout.colliders.map((c) => ({ ...c })),
     bounds: {
       center: { ...layout.bounds.center },
       radius: layout.bounds.radius,
+    },
+    arena: {
+      center: { ...layout.arena.center },
+      radius: layout.arena.radius,
+    },
+    bossSpawn: { ...layout.bossSpawn },
+    objectives: {
+      campsTotal: camps.size,
+      campCleared: Array.from({ length: camps.size }, () => false),
+      bossSpawned: false,
+      bossDefeated: false,
     },
     inventory: {
       bags: [],

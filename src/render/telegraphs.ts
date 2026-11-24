@@ -25,6 +25,15 @@ export function warningFootprints(ev: Extract<SimEvent, { kind: 'telegraph' }>) 
     return [[...cap(false), ...cap(true)]];
   }
 
+  if (ev.shape === 'slam') {
+    // Ground slam: a disc at the locked landing point.
+    const disc = Array.from({ length: 25 }, (_, i) => {
+      const t = (i / 24) * Math.PI * 2;
+      return point(Math.cos(t) * ev.radius, Math.sin(t) * ev.radius);
+    });
+    return [disc];
+  }
+
   const arc = THREE.MathUtils.degToRad(ev.arcDeg);
   // Keep each sector convex, including any future sweep wider than 180°.
   const parts = Math.max(1, Math.ceil(arc / Math.PI));

@@ -30,6 +30,7 @@ const BODY_HEIGHT: Record<EnemyState['defId'], number> = {
   'ashen-husk': 1.62,
   'cinder-cultist': 1.85,
   'mire-skitterer': 1.02,
+  'ashen-warden': 2.9,
 };
 
 /**

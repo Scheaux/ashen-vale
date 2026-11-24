@@ -3,6 +3,7 @@ import { getClass } from '../content/classes';
 import { basicAttackFor, getSkill, skillsFor } from '../content/skills';
 import type { CircleCollider, ZoneLayout } from '../content/types';
 import { createGameState, drainEvents, type GameState, type SimEvent } from '../sim/state';
+import { stepRun } from '../sim/run';
 import { damageEnemy, damagePlayer, stepPlayerCombat, stepStrikes, canCast } from './combat';
 
 function layoutWith(enemies: Array<{ x: number; z: number }> = [], colliders: CircleCollider[] = []): ZoneLayout {
@@ -13,6 +14,8 @@ function layoutWith(enemies: Array<{ x: number; z: number }> = [], colliders: Ci
     spawn: { x: 0, z: 18 },
     colliders,
     props: [],
+    arena: { center: { x: 0, z: -30 }, radius: 8 },
+    bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [] },
     enemySpawns: enemies.map((e) => ({ enemyId: 'ashen-husk' as const, x: e.x, z: e.z, elite: [] })),
   };
 }
@@ -190,6 +193,21 @@ describe('skill deliveries', () => {
       expect(hits).toHaveLength(1);
       expect(enemy.hp).toBeLessThan(enemy.maxHp);
     }
+  });
+
+  it('a fan loosed at point-blank range survives its birth tick', () => {
+    const state = createGameState(getClass('ranger'), layoutWith([{ x: 0, z: 18.5 }]));
+    state.player.castRequest = { skillId: 'split-shot', x: 0, z: 18.5 };
+
+    let peak = 0;
+    for (let i = 0; i < 60; i++) {
+      stepRun(state, 1 / 60);
+      peak = Math.max(peak, state.projectiles.length);
+    }
+    // The whole fan must be observable before contact resolves...
+    expect(peak).toBe(3);
+    // ...and it still lands on the enemy standing on top of the ranger.
+    expect(state.enemies[0].hp).toBeLessThan(state.enemies[0].maxHp);
   });
 
   it('ground strikes aim at the requested point, not the player position', () => {

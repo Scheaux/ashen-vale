@@ -45,6 +45,8 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
   const rng = createRng(seed);
   const bounds = { center: { x: 0, z: 0 }, radius: 42 };
   const spawn = { x: 0, z: 18 };
+  // The boss arena anchors the far end of the zone, opposite the player spawn.
+  const arena = { center: { x: 0, z: -31 }, radius: 8 };
   const props: PropPlacement[] = [];
   const colliders: CircleCollider[] = [];
   const enemySpawns: EnemySpawn[] = [];
@@ -60,6 +62,7 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
     const z = Math.sin(angle) * dist;
 
     if (Math.hypot(x - spawn.x, z - spawn.z) < CLEAR_RADIUS_AROUND_SPAWN) continue;
+    if (Math.hypot(x - arena.center.x, z - arena.center.z) < arena.radius + 1) continue;
 
     const kind = pickKind(rng);
     const scale = range(rng, 0.75, 1.9);
@@ -87,9 +90,30 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
     colliders.push({ id: `prop-${props.length}`, x, z, radius });
   }
 
-  // Enemy camps: seeded positions well clear of the player spawn and props.
-  // Archetypes mix by weight; ~1 in 6 spawns is an elite with 1-2 modifiers
-  // and a small retinue.
+  // Arena pillar ring: a ruined colonnade marking the boss arena edge.
+  const ARENA_PILLARS = 11;
+  for (let i = 0; i < ARENA_PILLARS; i++) {
+    const angle = (i / ARENA_PILLARS) * Math.PI * 2 + range(rng, -0.08, 0.08);
+    const x = arena.center.x + Math.cos(angle) * (arena.radius + 1.8);
+    const z = arena.center.z + Math.sin(angle) * (arena.radius + 1.8);
+    if (!clearOfPropsRaw(props, x, z, 1.2, colliderRadiusFor)) continue;
+    const scale = range(rng, 1.15, 1.7);
+    const radius = colliderRadiusFor('pillar', scale);
+    props.push({
+      kind: 'pillar',
+      x,
+      z,
+      rotation: angle + Math.PI / 2,
+      scale,
+      tilt: chance(rng, 0.35) ? range(rng, 0.03, 0.1) : 0,
+    });
+    colliders.push({ id: `arena-pillar-${i}`, x, z, radius });
+  }
+
+  // Enemy camps (slice 7 objectives): three seeded camps between the player
+  // spawn and the arena. Archetypes mix by weight; ~1 in 6 spawns is an elite
+  // with 1-2 modifiers and a small retinue, all inside the same camp.
+  const CAMP_COUNT = 3;
   const archetypeWeights: Array<{ id: EnemyId; weight: number }> = [
     { id: 'ashen-husk', weight: 0.45 },
     { id: 'cinder-cultist', weight: 0.3 },
@@ -106,55 +130,80 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
     return 'ashen-husk';
   };
 
-  const clearOfProps = (x: number, z: number, margin: number): boolean => {
-    for (const other of props) {
-      const otherRadius = colliderRadiusFor(other.kind, other.scale);
-      if (Math.hypot(x - other.x, z - other.z) < otherRadius + margin) return false;
-    }
-    return true;
+  const clearOfProps = (x: number, z: number, margin: number): boolean =>
+    clearOfPropsRaw(props, x, z, margin, colliderRadiusFor);
+
+  const placeable = (x: number, z: number): boolean => {
+    if (Math.hypot(x - spawn.x, z - spawn.z) < 15) return false;
+    if (Math.hypot(x - arena.center.x, z - arena.center.z) < arena.radius + 6) return false;
+    if (Math.hypot(x - bounds.center.x, z - bounds.center.z) > bounds.radius - 2) return false;
+    return clearOfProps(x, z, 1.4);
   };
 
-  let enemyAttempts = 0;
-  while (enemySpawns.length < 12 && enemyAttempts < 900) {
-    enemyAttempts++;
-    const angle = rng() * Math.PI * 2;
-    const dist = 16 + rng() * (bounds.radius - 20);
-    const x = Math.cos(angle) * dist;
-    const z = Math.sin(angle) * dist;
-    if (Math.hypot(x - spawn.x, z - spawn.z) < 15) continue;
-    if (!clearOfProps(x, z, 1.4)) continue;
+  const spawnClear = (x: number, z: number): boolean =>
+    !enemySpawns.some((other) => Math.hypot(x - other.x, z - other.z) < 2.4);
 
-    let blocked = false;
-    for (const other of enemySpawns) {
-      if (Math.hypot(x - other.x, z - other.z) < 2.4) {
-        blocked = true;
+  for (let camp = 0; camp < CAMP_COUNT; camp++) {
+    // Camp centre: seeded, spread around the moor, clear of spawn and arena.
+    let cx = 0;
+    let cz = 0;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const angle = (camp / CAMP_COUNT) * Math.PI * 2 - Math.PI / 2 + (rng() - 0.5) * 0.9;
+      const dist = 15 + rng() * 12;
+      const x = Math.cos(angle) * dist;
+      const z = Math.sin(angle) * dist;
+      if (!placeable(x, z)) continue;
+      cx = x;
+      cz = z;
+      break;
+    }
+
+    const count = 3 + (chance(rng, 0.5) ? 1 : 0);
+    for (let member = 0; member < count; member++) {
+      // Members cluster around the camp centre.
+      let x = cx;
+      let z = cz;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const mAngle = rng() * Math.PI * 2;
+        const mDist = range(rng, 1.8, 4.4);
+        const px = cx + Math.cos(mAngle) * mDist;
+        const pz = cz + Math.sin(mAngle) * mDist;
+        if (!placeable(px, pz) || !spawnClear(px, pz)) continue;
+        x = px;
+        z = pz;
         break;
       }
-    }
-    if (blocked) continue;
 
-    let elite: EliteModifier[] = [];
-    if (chance(rng, 0.16)) {
-      elite = [pick(rng, elitePool)];
-      if (chance(rng, 0.4)) {
-        const second = pick(rng, elitePool.filter((m) => m !== elite[0]));
-        elite.push(second);
+      let elite: EliteModifier[] = [];
+      if (member === 0 && chance(rng, 0.6)) {
+        elite = [pick(rng, elitePool)];
+        if (chance(rng, 0.4)) {
+          const second = pick(rng, elitePool.filter((m) => m !== elite[0]));
+          elite.push(second);
+        }
       }
-    }
-    enemySpawns.push({ enemyId: pickArchetype(), x, z, elite });
+      enemySpawns.push({ enemyId: pickArchetype(), x, z, elite, camp });
 
-    // Elite retinue: 2-3 nearby minions.
-    if (elite.length > 0) {
-      const minions = 2 + (chance(rng, 0.5) ? 1 : 0);
-      for (let m = 0; m < minions; m++) {
-        const mAngle = rng() * Math.PI * 2;
-        const mDist = range(rng, 2.2, 3.6);
-        enemySpawns.push({
-          enemyId: pickArchetype(),
-          x: x + Math.cos(mAngle) * mDist,
-          z: z + Math.sin(mAngle) * mDist,
-          elite: [],
-        });
+      // Elite retinue: 2-3 nearby minions, same camp.
+      if (elite.length > 0) {
+        const minions = 2 + (chance(rng, 0.5) ? 1 : 0);
+        for (let m = 0; m < minions; m++) {
+          for (let attempt = 0; attempt < 12; attempt++) {
+            const mAngle = rng() * Math.PI * 2;
+            const mDist = range(rng, 2.2, 3.6);
+            const mx = x + Math.cos(mAngle) * mDist;
+            const mz = z + Math.sin(mAngle) * mDist;
+            if (!placeable(mx, mz) || !spawnClear(mx, mz)) continue;
+            enemySpawns.push({
+              enemyId: pickArchetype(),
+              x: mx,
+              z: mz,
+              elite: [],
+              camp,
+            });
+            break;
+          }
+        }
       }
     }
   }
@@ -167,5 +216,21 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
     colliders,
     props,
     enemySpawns,
+    arena,
+    bossSpawn: { enemyId: 'ashen-warden', x: arena.center.x, z: arena.center.z, elite: [], camp: -1 },
   };
+}
+
+function clearOfPropsRaw(
+  props: PropPlacement[],
+  x: number,
+  z: number,
+  margin: number,
+  radiusFor: (kind: PropKind, scale: number) => number,
+): boolean {
+  for (const other of props) {
+    const otherRadius = radiusFor(other.kind, other.scale);
+    if (Math.hypot(x - other.x, z - other.z) < otherRadius + margin) return false;
+  }
+  return true;
 }

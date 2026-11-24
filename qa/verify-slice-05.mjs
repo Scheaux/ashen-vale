@@ -264,7 +264,9 @@ async function main() {
   await sleep(300);
   await startRun('ranger');
 
-  target = await engage();
+  // --- Split Shot: the fan must be visible in flight ---
+  await page.evaluate(() => window.__ashen.clearEnemies()); // clear sky for the fan
+  const splitMana = (await snap()).playerMana;
   await page.keyboard.press('w'); // Split Shot
   let peakProjectiles = 0;
   for (let i = 0; i < 25; i++) {
@@ -273,6 +275,7 @@ async function main() {
     await sleep(40);
   }
   check('Split Shot looses a fan of three arrows', peakProjectiles >= 3, `peak ${peakProjectiles} projectiles`);
+  check('Split Shot pays its mana', s.playerMana < splitMana);
   await page.screenshot({ path: `${SHOTS}34-split-shot.png` });
 
   const rangerMana = (await snap()).playerMana;

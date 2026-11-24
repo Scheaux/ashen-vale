@@ -127,8 +127,19 @@ async function main() {
   s = await snap();
   const cultist = s.enemies.find((e) => e.type === 'cinder-cultist' && !e.dead);
   if (cultist) {
-    await clickWorld(cultist.x, cultist.z);
-    await sleep(3500);
+    await clickWorld(cultist.x, cultist.z); // aggro it
+    await sleep(800);
+    // Retreat into open ground: a kiter holds its distance band while
+    // engaged instead of gluing to melee. Camp clutter can corner it when
+    // the player charges in, so measure during the chase.
+    s = await snap();
+    const cur0 = s.enemies.find((e) => e.id === cultist.id);
+    if (cur0 && !cur0.dead) {
+      const awayX = s.playerPos.x + (s.playerPos.x - cur0.x) * 2;
+      const awayZ = s.playerPos.z + (s.playerPos.z - cur0.z) * 2;
+      await clickWorld(awayX, awayZ);
+      await sleep(2500);
+    }
     const after = await snap();
     const cur = after.enemies.find((e) => e.id === cultist.id);
     if (cur && !cur.dead) {

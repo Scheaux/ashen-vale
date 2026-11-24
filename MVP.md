@@ -22,8 +22,8 @@ localStorage saves · Vitest unit tests + headless-browser QA playthroughs per s
 | 4 | Rewards & loot | ✅ Done | Kill → loot → equip → stronger |
 | 5 | Skills & flasks | ✅ Done | Full combat kit |
 | 6 | Passive skill tree | ✅ Done | Meaningful build choice |
-| 7 | Zone objective & boss | ⬜ Next | Complete the loop |
-| 8 | Save slots | ⬜ Planned | Survive reload; migration tested |
+| 7 | Zone objective & boss | ✅ Done | Complete the loop |
+| 8 | Save slots | ⬜ Next | Survive reload; migration tested |
 | 9 | Polish & release | ⬜ Planned | Ship-ready build |
 
 ---
@@ -101,10 +101,19 @@ and in combat numbers. The tree screen (P) renders the graph with lit
 connectors, cluster-coloured nodes, hover tooltips and allocate/refund
 clicks; unspent points nag from the HUD.
 
-### Slice 7 — Zone objective & boss
-Zone objective tracking ("clear the camps", "slay the Ashen Warden") with HUD tracker;
-boss encounter with 2–3 phases, distinct telegraphs, arena boundary and minion adds;
-victory and defeat screens that close the loop back to title/continue.
+### Slice 7 — Zone objective & boss ✅
+The moor now has a spine: three seeded camps (the HUD tracker reads "Clear
+the camps (n/3)") guard the way to a pillar-ringed boss arena at the far end.
+When the last camp falls, **the Ashen Warden** wakes — a 720-hp boss with
+three hp-gated phases, each with its own telegraphed pattern and pace:
+measured sweeps (arc), telegraphed ground slams at where you stand (disc),
+and enraged charges (pounce lane), with speed/damage multipliers per phase
+and minion adds called on each transition. The arena boundary holds hero and
+boss alike while the fight is live and reopens on victory. The victory screen
+(run summary: kills, damage, time, level) closes the loop back to play or
+title; the defeat screen's retry/title flow stands. Zone population is now
+camp-grouped (with elite retinues inside their camp), and a birth-tick
+projectile grace keeps point-blank fans visible and honest.
 
 ### Slice 8 — Save slots
 localStorage save slots (3+) with save/load UI from the title and pause menus;
@@ -130,7 +139,7 @@ notes and rollback readiness.
   language — flat `+X to Stat` and `X% increased Stat` forms across life/mana,
   armour, evasion, energy shield, attack/spell damage, movement and attributes.
 - **Zone (1):** fixed handcrafted layout with seeded prop/enemy population,
-  boss arena at the end.
+  three camps guarding a pillar-ringed boss arena at the far end.
 - **Passive tree:** ~30 nodes with clusters.
 
 ## Combat stats model

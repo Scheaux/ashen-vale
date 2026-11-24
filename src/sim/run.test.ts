@@ -12,6 +12,8 @@ const layout: ZoneLayout = {
   spawn: { x: 0, z: 18 },
   colliders: [],
   props: [],
+  arena: { center: { x: 0, z: -30 }, radius: 8 },
+  bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [] },
   enemySpawns: [
     { enemyId: 'cinder-cultist', x: 0, z: 8, elite: [] },
     { enemyId: 'ashen-husk', x: 1.5, z: 18, elite: [] },

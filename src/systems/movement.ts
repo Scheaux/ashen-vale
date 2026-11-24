@@ -15,7 +15,7 @@ const STOP_SPEED = 0.02;
 
 /** Set the move destination, clamped inside the walkable bounds. */
 export function setMoveTarget(state: GameState, target: Vec2): void {
-  const { center, radius } = state.bounds;
+  const { center, radius } = activeBounds(state);
   const dx = target.x - center.x;
   const dz = target.z - center.z;
   const dist = Math.hypot(dx, dz);
@@ -27,6 +27,15 @@ export function setMoveTarget(state: GameState, target: Vec2): void {
     z = center.z + (dz / dist) * maxDist;
   }
   state.player.moveTarget = { x, z };
+}
+
+/**
+ * Bounds the fight happens in: the arena while the Warden fight is live
+ * (slice 7 arena boundary), the whole zone otherwise.
+ */
+export function activeBounds(state: GameState): ZoneBounds {
+  const o = state.objectives;
+  return o.bossSpawned && !o.bossDefeated ? state.arena : state.bounds;
 }
 
 export function cancelMove(state: GameState): void {
@@ -135,7 +144,7 @@ export function stepMovement(state: GameState, dt: number): void {
   p.position.z += p.velocity.z * dt;
 
   resolveCircleCollisions(p.position, p.velocity, p.radius, state.colliders);
-  clampCircleToBounds(p.position, p.velocity, p.radius, state.bounds);
+  clampCircleToBounds(p.position, p.velocity, p.radius, activeBounds(state));
 
   const speedNow = Math.hypot(p.velocity.x, p.velocity.z);
   if (speedNow > 0.1) {

@@ -1,7 +1,7 @@
 /** Shared content contracts: authored data stays separate from runtime state. */
 
 export type ClassId = 'marauder' | 'ranger' | 'witch';
-export type EnemyId = 'ashen-husk' | 'cinder-cultist' | 'mire-skitterer';
+export type EnemyId = 'ashen-husk' | 'cinder-cultist' | 'mire-skitterer' | 'ashen-warden';
 export type SkillId =
   | 'cleave'
   | 'sunder'
@@ -70,6 +70,8 @@ export interface EnemySpawn {
   z: number;
   /** Empty for normal enemies; 1-2 modifiers for elites. */
   elite: EliteModifier[];
+  /** Camp index for objective tracking (-1 or absent: not part of a camp). */
+  camp?: number;
 }
 
 export interface ZoneLayout {
@@ -80,4 +82,8 @@ export interface ZoneLayout {
   colliders: CircleCollider[];
   props: PropPlacement[];
   enemySpawns: EnemySpawn[];
+  /** Boss arena at the far end of the zone (slice 7). */
+  arena: ZoneBounds;
+  /** Where the Ashen Warden waits until the camps are cleared. */
+  bossSpawn: EnemySpawn;
 }

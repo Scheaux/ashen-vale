@@ -20,6 +20,8 @@ function layoutWith(enemies: Array<{ x: number; z: number }> = [], colliders: Ci
     spawn: { x: 0, z: 18 },
     colliders,
     props: [],
+    arena: { center: { x: 0, z: -30 }, radius: 8 },
+    bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [] },
     enemySpawns: enemies.map((e) => ({ enemyId: 'ashen-husk' as const, x: e.x, z: e.z, elite: [] })),
   };
 }

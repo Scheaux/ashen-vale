@@ -15,6 +15,7 @@ export interface UiCallbacks {
   onRestart(): void;
   onQuitToTitle(): void;
   onRespawn(): void;
+  onContinue(): void;
   onCastSlot(slot: SkillDef['slot']): void;
   onUseFlask(kind: FlaskKind): void;
 }
@@ -27,12 +28,27 @@ export interface CombatHud {
   flasks: Record<FlaskKind, { charges: number; max: number }>;
 }
 
+/** Zone objective readout (slice 7). */
+export interface ObjectiveHud {
+  campsCleared: number;
+  campsTotal: number;
+  bossSpawned: boolean;
+  bossDefeated: boolean;
+}
+
 export interface DeathRecap {
   killer: string;
   damageTaken: number;
   kills: number;
   /** Seconds survived this life. */
   seconds: number;
+}
+
+export interface VictoryRecap {
+  kills: number;
+  damageTaken: number;
+  seconds: number;
+  level: number;
 }
 
 interface SlotView {
@@ -54,6 +70,7 @@ export class Ui {
   private readonly classScreen: HTMLElement;
   private readonly pauseScreen: HTMLElement;
   private readonly deathScreen: HTMLElement;
+  private readonly victoryScreen: HTMLElement;
   private readonly hud: HTMLElement;
   private readonly selectedCard = new Map<ClassId, HTMLElement>();
   private selected: ClassId = CLASSES[0].id;
@@ -71,6 +88,8 @@ export class Ui {
   private readonly pointsBadge: HTMLElement;
   private readonly toastLayer: HTMLElement;
   private readonly hotbar: HTMLElement;
+  private readonly objectivesEl: HTMLElement;
+  private readonly objectiveList: HTMLElement;
   private readonly flaskEls = new Map<FlaskKind, HTMLElement>();
   private readonly slots = new Map<SkillId, SlotView>();
   private lastFlaskCharges: Record<FlaskKind, number> = { health: -1, mana: -1 };
@@ -83,6 +102,7 @@ export class Ui {
     this.classScreen = root.querySelector('[data-screen="class-select"]') as HTMLElement;
     this.pauseScreen = root.querySelector('[data-screen="paused"]') as HTMLElement;
     this.deathScreen = root.querySelector('[data-screen="death"]') as HTMLElement;
+    this.victoryScreen = root.querySelector('[data-screen="victory"]') as HTMLElement;
     this.hud = root.querySelector('[data-hud]') as HTMLElement;
     this.hudClass = root.querySelector('[data-hud-class]') as HTMLElement;
     this.hudZone = root.querySelector('[data-hud-zone]') as HTMLElement;
@@ -98,6 +118,8 @@ export class Ui {
     this.pointsBadge = root.querySelector('[data-hud-points]') as HTMLElement;
     this.toastLayer = root.querySelector('[data-toasts]') as HTMLElement;
     this.hotbar = root.querySelector('[data-hotbar]') as HTMLElement;
+    this.objectivesEl = root.querySelector('[data-objectives]') as HTMLElement;
+    this.objectiveList = root.querySelector('[data-objective-list]') as HTMLElement;
 
     root.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
       btn.addEventListener('click', () => this.onAction(btn.dataset.action ?? ''));
@@ -222,6 +244,40 @@ export class Ui {
     this.deathScreen.classList.add('hidden');
   }
 
+  /** Zone objective tracker (slice 7). */
+  setObjectives(o: ObjectiveHud): void {
+    this.objectivesEl.classList.toggle('hidden', o.campsTotal <= 0);
+    const campDone = o.campsTotal > 0 && o.campsCleared >= o.campsTotal;
+    const lines = [
+      { done: campDone, text: `Clear the camps (${o.campsCleared}/${o.campsTotal})` },
+      {
+        done: o.bossDefeated,
+        text: o.bossSpawned || o.bossDefeated ? 'Slay the Ashen Warden' : 'Slay the Ashen Warden (awaits behind the camps)',
+      },
+    ];
+    this.objectiveList.innerHTML = lines
+      .map((l) => `<div class="objectives__item${l.done ? ' objectives__item--done' : ''}"></div>`)
+      .join('');
+    this.objectiveList.querySelectorAll('.objectives__item').forEach((el, i) => {
+      el.textContent = `${lines[i].done ? '✓' : '·'} ${lines[i].text}`;
+    });
+  }
+
+  showVictory(recap: VictoryRecap): void {
+    const minutes = Math.floor(recap.seconds / 60);
+    const seconds = Math.round(recap.seconds % 60);
+    (this.victoryScreen.querySelector('[data-victory-kills]') as HTMLElement).textContent = String(recap.kills);
+    (this.victoryScreen.querySelector('[data-victory-damage]') as HTMLElement).textContent = String(recap.damageTaken);
+    (this.victoryScreen.querySelector('[data-victory-time]') as HTMLElement).textContent =
+      `${minutes}:${String(seconds).padStart(2, '0')}`;
+    (this.victoryScreen.querySelector('[data-victory-level]') as HTMLElement).textContent = String(recap.level);
+    this.victoryScreen.classList.remove('hidden');
+  }
+
+  hideVictory(): void {
+    this.victoryScreen.classList.add('hidden');
+  }
+
   private buildHotbar(skills: SkillDef[]): void {
     this.slots.clear();
     this.hotbar.innerHTML = skills.map((skill) => `
@@ -283,6 +339,9 @@ export class Ui {
         break;
       case 'respawn':
         this.callbacks.onRespawn();
+        break;
+      case 'continue':
+        this.callbacks.onContinue();
         break;
     }
   }
@@ -361,6 +420,10 @@ export class Ui {
             </button>
           </div>
         </div>
+        <div class="objectives hidden" data-objectives>
+          <div class="objectives__title">Objectives</div>
+          <div class="objectives__list" data-objective-list></div>
+        </div>
         <div class="hud__hints">Left click: move · Click a husk: attack · Q W E R: skills · 1 2: flasks · P: passives · I: inventory · Esc: pause</div>
         <div class="hud__badge">Skills &amp; flasks · v0.5</div>
       </div>
@@ -382,6 +445,24 @@ export class Ui {
           <div class="pause-actions">
             <button class="btn btn--primary" data-action="respawn">Rise Again at the Checkpoint</button>
             <button class="btn" data-action="quit">Abandon to Title</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen screen--victory hidden" data-screen="victory">
+        <div class="screen__vignette"></div>
+        <div class="screen__content">
+          <p class="eyebrow">The moor falls silent</p>
+          <h2 class="screen-title screen-title--victory">The Ashen Warden has fallen</h2>
+          <div class="recap">
+            <div class="recap__row"><span class="recap__label">Enemies slain</span><span class="recap__value" data-victory-kills>0</span></div>
+            <div class="recap__row"><span class="recap__label">Damage taken</span><span class="recap__value" data-victory-damage>0</span></div>
+            <div class="recap__row"><span class="recap__label">Time survived</span><span class="recap__value" data-victory-time>0:00</span></div>
+            <div class="recap__row"><span class="recap__label">Level reached</span><span class="recap__value" data-victory-level>1</span></div>
+          </div>
+          <div class="pause-actions">
+            <button class="btn btn--primary" data-action="continue">Continue</button>
+            <button class="btn" data-action="quit">Return to Title</button>
           </div>
         </div>
       </div>

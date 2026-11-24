@@ -1,8 +1,8 @@
 import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
-import { getEnemy, type EnemyDef } from '../content/enemies';
-import type { EnemyState, GameState, SimEvent } from '../sim/state';
+import { getEnemy, type AttackDef, type BossPhaseDef, type EnemyDef } from '../content/enemies';
+import { createEnemyState, type EnemyState, type GameState, type SimEvent } from '../sim/state';
 import { damagePlayer, rollDamage, spawnEnemyBolt } from './combat';
-import { clampCircleToBounds, resolveCircleCollisions } from './movement';
+import { activeBounds, clampCircleToBounds, resolveCircleCollisions } from './movement';
 
 /**
  * Enemy AI: an explicit state machine with constrained intents.
@@ -40,15 +40,64 @@ function enterPhase(enemy: EnemyState, phase: EnemyState['phase']): void {
   enemy.phaseTime = 0;
 }
 
-/** Clip the advertised straight pounce lane to the first solid or zone edge. */
+/** The pattern the enemy fights with: the active boss phase's, or the default. */
+function activeAttack(enemy: EnemyState, def: EnemyDef): AttackDef {
+  if (!def.boss) return def.attack;
+  return def.boss.phases[enemy.bossPhase]?.attack ?? def.attack;
+}
+
+function currentBossPhase(def: EnemyDef, enemy: EnemyState): BossPhaseDef | null {
+  return def.boss?.phases[enemy.bossPhase] ?? null;
+}
+
+function phaseDamageMult(def: EnemyDef, enemy: EnemyState): number {
+  return currentBossPhase(def, enemy)?.damageMult ?? 1;
+}
+
+function phaseSpeedMult(def: EnemyDef, enemy: EnemyState): number {
+  return currentBossPhase(def, enemy)?.speedMult ?? 1;
+}
+
+/** Summon a boss phase's minion adds around the boss, already in the fight. */
+function spawnBossAdds(state: GameState, enemy: EnemyState, phase: BossPhaseDef): void {
+  for (let i = 0; i < phase.adds.length; i++) {
+    const angle = state.rng() * Math.PI * 2;
+    const dist = 2.5 + state.rng() * 2;
+    const add = createEnemyState(
+      { enemyId: phase.adds[i], x: enemy.position.x + Math.cos(angle) * dist, z: enemy.position.z + Math.sin(angle) * dist, elite: [], camp: -1 },
+      `add-${enemy.id}-${state.tick}-${i}`,
+    );
+    add.aggro = true;
+    add.phase = 'chase';
+    state.enemies.push(add);
+  }
+}
+
+/** Bosses advance phases as their hp falls; entry fires adds and a toast. */
+function advanceBossPhase(state: GameState, enemy: EnemyState, def: EnemyDef, events: SimEvent[]): void {
+  if (!def.boss) return;
+  const phases = def.boss.phases;
+  while (enemy.bossPhase + 1 < phases.length && enemy.hp / enemy.maxHp <= phases[enemy.bossPhase + 1].hpFraction) {
+    enemy.bossPhase++;
+    const phase = phases[enemy.bossPhase];
+    enemy.attackCooldown = Math.max(enemy.attackCooldown, 1.2); // a beat before the new pattern
+    enemy.attackId = null;
+    enterPhase(enemy, 'chase');
+    spawnBossAdds(state, enemy, phase);
+    events.push({ kind: 'boss-phase', bossId: enemy.id, phase: enemy.bossPhase, label: phase.label });
+  }
+}
+
+/** Clip the advertised straight pounce lane to the first solid or fight edge. */
 function pounceDistance(state: GameState, enemy: EnemyState, range: number): number {
   const vx = Math.sin(enemy.windupFacing);
   const vz = Math.cos(enemy.windupFacing);
   const { x, z } = enemy.position;
-  const dx = x - state.bounds.center.x;
-  const dz = z - state.bounds.center.z;
+  const bounds = activeBounds(state);
+  const dx = x - bounds.center.x;
+  const dz = z - bounds.center.z;
   const dot = dx * vx + dz * vz;
-  const boundary = state.bounds.radius - enemy.radius;
+  const boundary = bounds.radius - enemy.radius;
   let reach = Math.min(range, Math.max(0, -dot + Math.sqrt(Math.max(0, dot * dot + boundary ** 2 - dx * dx - dz * dz))));
   for (const collider of state.colliders) {
     const cx = collider.x - x;
@@ -74,24 +123,24 @@ export function resetEnemyCombat(enemy: EnemyState): void {
   enemy.previousPosition.z = enemy.position.z;
 }
 
-function canStartAttack(enemy: EnemyState, def: EnemyDef, dist: number): boolean {
+function canStartAttack(enemy: EnemyState, def: EnemyDef, attack: AttackDef, dist: number): boolean {
   if (enemy.attackCooldown > 0) return false;
   switch (def.behavior) {
     case 'bruiser':
-      return dist <= def.attack.range * 0.85;
+      return dist <= attack.range * 0.85;
     case 'kiter': {
       const band = def.preferredRange ?? 10;
       return dist <= band + 2.5;
     }
     case 'swarmer':
-      return dist <= def.attack.range;
+      return dist <= attack.range;
   }
 }
 
 /** Resolve the strike once, at active-window entry, against the locked shape. */
 function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, events: SimEvent[]): void {
   const p = state.player;
-  const attack = def.attack;
+  const attack = activeAttack(enemy, def);
   const dx = p.position.x - enemy.position.x;
   const dz = p.position.z - enemy.position.z;
   const dist = Math.hypot(dx, dz);
@@ -105,16 +154,27 @@ function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, event
 
   if (attack.shape === 'pounce') return; // resolved along the dash, not at takeoff
 
+  const hit = (raw: number) => damagePlayer(state, raw * enemy.damageMult * phaseDamageMult(def, enemy), events, {
+    ...(enemy.attackId ? { attackId: enemy.attackId } : {}),
+    sourceName: def.name,
+    damageClass: attack.damageClass ?? 'attack',
+  });
+
+  if (attack.shape === 'slam') {
+    // Ground slam: everything standing in the locked landing circle.
+    const sx = p.position.x - enemy.strikeTarget.x;
+    const sz = p.position.z - enemy.strikeTarget.z;
+    if (Math.hypot(sx, sz) <= attack.range + p.radius) {
+      hit(rollDamage(state, attack.damage.min, attack.damage.max));
+    }
+    return;
+  }
+
   // Melee arc only hits what is inside the locked sweep.
   const halfArc = ((attack.arcDeg ?? 360) / 2) * (Math.PI / 180);
   const inArc = Math.abs(angleDiff(enemy.windupFacing, Math.atan2(dx, dz))) <= halfArc;
   if (dist <= attack.range + p.radius && inArc) {
-    const amount = attack.damage.min + state.rng() * (attack.damage.max - attack.damage.min);
-    damagePlayer(state, amount * enemy.damageMult, events, {
-      ...(enemy.attackId ? { attackId: enemy.attackId } : {}),
-      sourceName: def.name,
-      damageClass: attack.damageClass ?? 'attack',
-    });
+    hit(attack.damage.min + state.rng() * (attack.damage.max - attack.damage.min));
   }
 }
 
@@ -123,7 +183,8 @@ function stepChase(state: GameState, enemy: EnemyState, def: EnemyDef, dt: numbe
   const dx = p.position.x - enemy.position.x;
   const dz = p.position.z - enemy.position.z;
   const dist = Math.hypot(dx, dz);
-  const speed = enemy.speed * swiftAura(state, enemy);
+  const attack = activeAttack(enemy, def);
+  const speed = enemy.speed * swiftAura(state, enemy) * phaseSpeedMult(def, enemy);
 
   let moveX = 0;
   let moveZ = 0;
@@ -138,7 +199,7 @@ function stepChase(state: GameState, enemy: EnemyState, def: EnemyDef, dt: numbe
       moveZ = -dz / dist;
     }
   } else {
-    if (dist > def.attack.range * 0.75 && dist > 0.001) {
+    if (dist > attack.range * 0.75 && dist > 0.001) {
       moveX = dx / dist;
       moveZ = dz / dist;
     }
@@ -149,7 +210,7 @@ function stepChase(state: GameState, enemy: EnemyState, def: EnemyDef, dt: numbe
   enemy.position.x += enemy.velocity.x * dt;
   enemy.position.z += enemy.velocity.z * dt;
   resolveCircleCollisions(enemy.position, enemy.velocity, enemy.radius, state.colliders);
-  clampCircleToBounds(enemy.position, enemy.velocity, enemy.radius, state.bounds);
+  clampCircleToBounds(enemy.position, enemy.velocity, enemy.radius, activeBounds(state));
 
   // Face the player while closing (chase only; windup locks facing).
   enemy.facing = angleLerp(enemy.facing, Math.atan2(dx, dz), Math.min(1, 8 * dt));
@@ -175,7 +236,8 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
     if (enemy.attackCooldown > 0) enemy.attackCooldown -= dt;
 
     const def = getEnemy(enemy.defId);
-    const attack = def.attack;
+    if (def.boss) advanceBossPhase(state, enemy, def, events);
+    const attack = activeAttack(enemy, def);
     const dx = p.position.x - enemy.position.x;
     const dz = p.position.z - enemy.position.z;
     const dist = Math.hypot(dx, dz);
@@ -192,10 +254,11 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
       }
 
       case 'chase': {
-        if (canStartAttack(enemy, def, dist)) {
+        if (canStartAttack(enemy, def, attack, dist)) {
           // The player can read and leave the locked danger area.
           enemy.windupFacing = Math.atan2(dx, dz);
           enemy.attackId = `${enemy.id}:${state.tick}`;
+          if (attack.shape === 'slam') enemy.strikeTarget = { x: p.position.x, z: p.position.z };
           enemy.lungeRemaining = attack.shape === 'pounce' ? pounceDistance(state, enemy, attack.range) : 0;
           enemy.lungeHit = false;
           enemy.velocity.x = 0;
@@ -207,15 +270,19 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
             enemyId: enemy.id,
             attackId: enemy.attackId,
             shape: attack.shape,
-            x: enemy.position.x,
-            z: enemy.position.z,
+            x: attack.shape === 'slam' ? enemy.strikeTarget.x : enemy.position.x,
+            z: attack.shape === 'slam' ? enemy.strikeTarget.z : enemy.position.z,
             facing: enemy.windupFacing,
             range: attack.shape === 'pounce'
               ? enemy.lungeRemaining
-              : attack.shape === 'bolt' && attack.projectile
-                ? Math.min(attack.range, attack.projectile.speed * attack.projectile.ttl)
-                : attack.range + p.radius,
-            radius: p.radius + (attack.shape === 'pounce' ? enemy.radius : attack.projectile?.radius ?? 0),
+              : attack.shape === 'slam'
+                ? attack.range
+                : attack.shape === 'bolt' && attack.projectile
+                  ? Math.min(attack.range, attack.projectile.speed * attack.projectile.ttl)
+                  : attack.range + p.radius,
+            radius: attack.shape === 'slam'
+              ? attack.range
+              : p.radius + (attack.shape === 'pounce' ? enemy.radius : attack.projectile?.radius ?? 0),
             arcDeg: attack.arcDeg ?? 360,
             duration: attack.windup,
           });
@@ -249,7 +316,7 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
           if (!enemy.lungeHit && segmentDistanceSq(p.position.x, p.position.z, x, z, enemy.position.x, enemy.position.z)
             <= (p.radius + enemy.radius) ** 2) {
             enemy.lungeHit = true;
-            damagePlayer(state, rollDamage(state, attack.damage.min, attack.damage.max) * enemy.damageMult, events, {
+            damagePlayer(state, rollDamage(state, attack.damage.min, attack.damage.max) * enemy.damageMult * phaseDamageMult(def, enemy), events, {
               ...(enemy.attackId ? { attackId: enemy.attackId } : {}),
               sourceName: def.name,
               damageClass: attack.damageClass ?? 'attack',

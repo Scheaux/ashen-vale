@@ -98,12 +98,13 @@ async function main() {
   // --- Loot pipeline: kills produce items (dropped in the world or auto-picked) ---
   s = await snap();
   const itemsBefore = s.bagCount + s.equippedCount + s.drops;
+  const dropsBaseline = s.drops;
   let sawWorldDrop = false;
   for (let i = 0; i < 5; i++) {
     await killNearest();
     await sleep(300);
     s = await snap();
-    if (s.drops > 0) {
+    if (s.drops > dropsBaseline) {
       sawWorldDrop = true;
       await page.screenshot({ path: `${SHOTS}23-loot-drop.png` });
       break;
@@ -115,13 +116,21 @@ async function main() {
   check('kills produce loot (drops and/or pickups)', itemsAfter > itemsBefore, `${itemsBefore} -> ${itemsAfter} items`);
   if (sawWorldDrop) check('drop visible in the world', true, '23-loot-drop.png');
 
-  // --- Pickup: walk onto remaining drops and collect them ---
+  // --- Pickup: walk onto drops; a pack standing over one can eat the click,
+  // so fall back to standing on it (proximity is the collection mechanic). ---
   const dropsBefore = s.drops;
   for (const d of s.dropPositions.slice(0, 3)) {
     await clickWorld(d.x, d.z);
     await sleep(1600);
   }
   s = await snap();
+  if (s.drops >= dropsBefore && s.bagCount === 0) {
+    for (const d of s.dropPositions.slice(0, 3)) {
+      await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [d.x, d.z]);
+      await sleep(300);
+    }
+    s = await snap();
+  }
   check(
     'walking over drops collects them',
     s.drops < dropsBefore || s.bagCount > 0,

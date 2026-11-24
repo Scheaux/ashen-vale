@@ -22,7 +22,7 @@ import { createTerrain } from './render/terrain';
 import { createGameState, drainEvents, type GameState } from './sim/state';
 import { respawnPlayer, stepRun } from './sim/run';
 import { createSave, serializeSave } from './save/schema';
-import { damagePlayer } from './systems/combat';
+import { damageEnemy, damagePlayer } from './systems/combat';
 import { useFlask, type FlaskKind } from './systems/flasks';
 import { equipItem, unequipItem } from './systems/inventory';
 import { setMoveTarget } from './systems/movement';
@@ -84,9 +84,12 @@ export interface AshenDebug {
       dead: boolean;
       phase: string;
       elite: string[];
+      bossPhase: number;
     }>;
     projectiles: number;
     strikes: number;
+    arena: { x: number; z: number; radius: number };
+    objectives: { campsCleared: number; campsTotal: number; bossSpawned: boolean; bossDefeated: boolean };
     skills: Array<{ id: string; slot: string; name: string; manaCost: number; cooldown: number }>;
     cooldowns: Record<string, number>;
     flasks: { health: number; mana: number; max: number };
@@ -111,6 +114,14 @@ export interface AshenDebug {
   setDefences(armour: number, evasion: number): void;
   /** Review fixture: clear the zone so timing checks run without interference. */
   clearEnemies(): void;
+  /** Review fixture: kill every camp enemy to unlock the boss quickly. */
+  clearCamps(): void;
+  /** Review fixture: damage a specific enemy through the real pipeline. */
+  hurtEnemy(id: string, amount: number): void;
+  /** Review fixture: move the hero (arena checks, positioning). */
+  teleportPlayer(x: number, z: number): void;
+  /** Review fixture: nearest scenery points to the hero (picking checks). */
+  sceneryPoints(): Array<{ x: number; z: number }>;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
   healPlayer(amount: number): void;
   /** Review fixture: grant XP to reach the level-up edge state. */
@@ -203,6 +214,7 @@ class Game {
       onRestart: () => this.startRun(this.classDef.id),
       onQuitToTitle: () => this.quitToTitle(),
       onRespawn: () => this.respawn(),
+      onContinue: () => this.continueAfterVictory(),
       onCastSlot: (slot) => this.castSlot(slot),
       onUseFlask: (kind) => this.handleUseFlask(kind),
     });
@@ -290,6 +302,7 @@ class Game {
     this.tellPlayerDamages = 0;
     this.tellDamageBeforeTelegraph = false;
     this.ui.hideDeath();
+    this.ui.hideVictory();
     this.ui.clearToasts();
   }
 
@@ -327,6 +340,26 @@ class Game {
       kills: stats?.kills ?? 0,
       seconds: stats?.seconds ?? 0,
     });
+  }
+
+  // ---------- Zone objectives & boss (slice 7) ----------
+
+  private onVictory(): void {
+    const state = this.state;
+    if (!state) return;
+    this.loop.setRunning(false);
+    this.ui.showVictory({
+      kills: state.runStats.kills,
+      damageTaken: state.runStats.damageTaken,
+      seconds: state.runStats.seconds,
+      level: state.level,
+    });
+  }
+
+  private continueAfterVictory(): void {
+    if (!this.state) return;
+    this.ui.hideVictory();
+    if (this.mode === 'playing' && !this.dead) this.loop.setRunning(true);
   }
 
   private setMode(mode: GameMode): void {
@@ -373,6 +406,9 @@ class Game {
           if (ev.kind === 'death' && ev.targetKind === 'player') this.onPlayerDeath();
           else if (ev.kind === 'levelup') this.ui.showToast(`Level ${ev.level}!`, '#e8c877');
           else if (ev.kind === 'refuse') this.reportRefusal(ev.reason, ev.label);
+          else if (ev.kind === 'objective') this.ui.showToast(ev.text, '#e8c877');
+          else if (ev.kind === 'boss-phase') this.ui.showToast(ev.label, '#ff8577');
+          else if (ev.kind === 'victory') this.onVictory();
           else if (ev.kind === 'pickup') {
             const rarity = ev.rarity as keyof typeof RARITY_COLORS;
             this.ui.showToast(`Picked up ${ev.name}`, RARITY_COLORS[rarity]?.cssColor);
@@ -399,6 +435,12 @@ class Game {
       if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
       if (this.passivePanel.visible) this.passivePanel.sync(state);
       this.ui.setPassivePoints(passivePointsAvailable(state));
+      this.ui.setObjectives({
+        campsCleared: state.objectives.campCleared.filter(Boolean).length,
+        campsTotal: state.objectives.campsTotal,
+        bossSpawned: state.objectives.bossSpawned,
+        bossDefeated: state.objectives.bossDefeated,
+      });
       this.rig.follow(state.player.position.x, state.player.position.z, dt);
     }
     this.updateHover();
@@ -675,7 +717,19 @@ class Game {
           dead: e.dead,
           phase: e.phase,
           elite: [...e.elite],
+          bossPhase: e.bossPhase,
         })) ?? [],
+      arena: state
+        ? { x: state.arena.center.x, z: state.arena.center.z, radius: state.arena.radius }
+        : { x: 0, z: 0, radius: 0 },
+      objectives: state
+        ? {
+          campsCleared: state.objectives.campCleared.filter(Boolean).length,
+          campsTotal: state.objectives.campsTotal,
+          bossSpawned: state.objectives.bossSpawned,
+          bossDefeated: state.objectives.bossDefeated,
+        }
+        : { campsCleared: 0, campsTotal: 0, bossSpawned: false, bossDefeated: false },
       projectiles: state?.projectiles.length ?? 0,
       strikes: state?.strikes.length ?? 0,
       skills: skillsFor(this.classDef.id).map((s) => ({
@@ -754,6 +808,48 @@ class Game {
   clearEnemies(): void {
     if (!this.state) return;
     this.state.enemies.length = 0;
+    // A quiet moor must not read as "camps cleared" and wake the Warden.
+    this.state.objectives.campsTotal = 0;
+    this.state.objectives.campCleared = [];
+  }
+
+  clearCamps(): void {
+    const state = this.state;
+    if (!state) return;
+    for (const enemy of state.enemies) {
+      if (enemy.camp >= 0 && !enemy.dead) {
+        enemy.hp = 0;
+        enemy.dead = true;
+        enemy.deadTime = 0;
+      }
+    }
+  }
+
+  hurtEnemy(id: string, amount: number): void {
+    const state = this.state;
+    if (!state) return;
+    const enemy = state.enemies.find((e) => e.id === id && !e.dead);
+    if (enemy) damageEnemy(state, enemy, amount, state.events);
+  }
+
+  teleportPlayer(x: number, z: number): void {
+    const state = this.state;
+    if (!state) return;
+    state.player.position.x = x;
+    state.player.position.z = z;
+    state.player.previousPosition.x = x;
+    state.player.previousPosition.z = z;
+    state.player.moveTarget = null;
+  }
+
+  sceneryPoints(): Array<{ x: number; z: number }> {
+    const state = this.state;
+    if (!state) return [];
+    const p = state.player.position;
+    return [...this.layout.props]
+      .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))
+      .slice(0, 8)
+      .map((prop) => ({ x: prop.x, z: prop.z }));
   }
 
   healPlayer(amount: number): void {
@@ -798,5 +894,9 @@ const game = new Game(canvas, uiRoot);
   setFlaskCharges: (kind, charges) => game.setFlaskCharges(kind, charges),
   setDefences: (armour, evasion) => game.setDefences(armour, evasion),
   clearEnemies: () => game.clearEnemies(),
+  clearCamps: () => game.clearCamps(),
+  hurtEnemy: (id, amount) => game.hurtEnemy(id, amount),
+  teleportPlayer: (x, z) => game.teleportPlayer(x, z),
+  sceneryPoints: () => game.sceneryPoints(),
   exportSave: () => game.exportSave(),
 };

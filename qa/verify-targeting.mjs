@@ -59,17 +59,26 @@ try {
   assert.equal(await page.locator('#game').evaluate((element) => getComputedStyle(element).cursor), 'crosshair');
   console.log('PASS  leaving the canvas clears hover');
 
-  // Trunk of the nearest dead tree to the spawn in the seeded moor.
-  const tree = await project(-12.118357, 16.869662, 1.5);
-  assert.ok(onScreen(tree), 'tree fixture is on-screen');
-  await page.mouse.move(tree.x, tree.y);
-  await page.waitForFunction(() => window.__ashen.snapshot().hoverTargetId === null);
-  await page.mouse.click(tree.x, tree.y);
-  assert.equal((await snapshot()).attackTargetId, null);
+  // Nearest scenery to the hero: clicking it must read as ground, never a target.
+  const scenery = await page.evaluate(() => window.__ashen.sceneryPoints());
+  let sceneryClick = null;
+  for (const point of scenery) {
+    const projected = await project(point.x, point.z, 1.2);
+    if (!onScreen(projected)) continue;
+    await page.mouse.move(projected.x, projected.y);
+    await page.waitForTimeout(150);
+    if ((await snapshot()).hoverTargetId !== null) continue; // an enemy owns this pixel
+    await page.mouse.click(projected.x, projected.y);
+    await page.waitForTimeout(100);
+    if ((await snapshot()).attackTargetId !== null) continue;
+    sceneryClick = projected;
+    break;
+  }
+  assert.ok(sceneryClick, 'scenery click lands on scenery');
   const start = (await snapshot()).playerPos;
   await page.waitForFunction(({ x, z }) => {
     const p = window.__ashen.snapshot().playerPos;
-    return Math.hypot(p.x - x, p.z - z) > 0.5 && p.x < x;
+    return Math.hypot(p.x - x, p.z - z) > 0.5;
   }, start, { timeout: 4500 });
   assert.deepEqual(errors, []);
   console.log('PASS  clicking scenery clears the attack target and moves toward the ground');

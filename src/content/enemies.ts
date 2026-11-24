@@ -1,7 +1,7 @@
 import type { EnemyId, EliteModifier } from './types';
 
 /** Attack shapes the AI telegraphs before the active window. */
-export type AttackShape = 'melee-arc' | 'bolt' | 'pounce';
+export type AttackShape = 'melee-arc' | 'bolt' | 'pounce' | 'slam';
 
 export interface AttackDef {
   shape: AttackShape;
@@ -29,6 +29,24 @@ export interface AttackDef {
 
 export type EnemyBehavior = 'bruiser' | 'kiter' | 'swarmer';
 
+/** One boss phase (slice 7): its own pattern, pace and summoned adds. */
+export interface BossPhaseDef {
+  /** Enter the phase when the hp fraction falls to this level. */
+  hpFraction: number;
+  /** Announced on entry. */
+  label: string;
+  speedMult: number;
+  damageMult: number;
+  /** The pattern the boss fights with in this phase. */
+  attack: AttackDef;
+  /** Minion ids summoned on entering the phase. */
+  adds: EnemyId[];
+}
+
+export interface BossDef {
+  phases: BossPhaseDef[];
+}
+
 export interface EnemyDef {
   id: EnemyId;
   name: string;
@@ -40,6 +58,8 @@ export interface EnemyDef {
   aggroRange: number;
   behavior: EnemyBehavior;
   attack: AttackDef;
+  /** Bosses cycle through phases as their hp falls (slice 7). */
+  boss?: BossDef;
   /** Kiter: distance band to hold outside of attacks. */
   preferredRange?: number;
   /** Body color (three.js hex). */
@@ -124,6 +144,85 @@ export const ENEMIES: readonly EnemyDef[] = [
     color: 0x2e3a2c,
     eyeColor: 0x9fe870,
     xp: 9,
+  },
+  {
+    id: 'ashen-warden',
+    name: 'The Ashen Warden',
+    maxHp: 720,
+    speed: 3.8,
+    radius: 1.15,
+    aggroRange: 26,
+    behavior: 'bruiser',
+    attack: {
+      shape: 'melee-arc',
+      range: 3.6,
+      windup: 0.9,
+      active: 0.22,
+      recovery: 0.6,
+      cooldown: 1.6,
+      arcDeg: 130,
+      damage: { min: 12, max: 18 },
+    },
+    boss: {
+      phases: [
+        {
+          // Phase 1: measured sweeps — the warm-up read.
+          hpFraction: 1,
+          label: 'The Ashen Warden wakes',
+          speedMult: 1,
+          damageMult: 1,
+          attack: {
+            shape: 'melee-arc',
+            range: 3.6,
+            windup: 0.9,
+            active: 0.22,
+            recovery: 0.6,
+            cooldown: 1.6,
+            arcDeg: 130,
+            damage: { min: 12, max: 18 },
+          },
+          adds: [],
+        },
+        {
+          // Phase 2: telegraphed ground slams where you stand, and aid arrives.
+          hpFraction: 0.66,
+          label: 'The Warden calls for aid',
+          speedMult: 1.12,
+          damageMult: 1.15,
+          attack: {
+            shape: 'slam',
+            range: 3.8,
+            windup: 1.1,
+            active: 0.25,
+            recovery: 0.7,
+            cooldown: 2.2,
+            damage: { min: 16, max: 24 },
+          },
+          adds: ['mire-skitterer', 'mire-skitterer', 'ashen-husk'],
+        },
+        {
+          // Phase 3: enraged charges — fast, committed, punishing.
+          hpFraction: 0.33,
+          label: 'The Warden is enraged',
+          speedMult: 1.32,
+          damageMult: 1.35,
+          attack: {
+            shape: 'pounce',
+            range: 9,
+            windup: 0.7,
+            active: 0.3,
+            recovery: 0.55,
+            cooldown: 1.5,
+            arcDeg: 80,
+            damage: { min: 18, max: 26 },
+          },
+          adds: ['mire-skitterer', 'mire-skitterer'],
+        },
+      ],
+    },
+    color: 0x55262c,
+    eyeColor: 0xff4a33,
+    xp: 220,
   },
 ] as const;
 

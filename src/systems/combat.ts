@@ -366,6 +366,7 @@ function spawnProjectile(state: GameState, skill: SkillDef, facing: number): voi
     color: skill.color,
     visual: spec.visual,
     damageClass: skill.damageClass,
+    age: 0,
   });
 }
 
@@ -392,6 +393,7 @@ export function spawnEnemyBolt(
     color: getEnemy(enemy.defId).eyeColor,
     visual: 'orb',
     damageClass: attack.damageClass ?? 'attack',
+    age: 0,
   });
 }
 
@@ -408,25 +410,32 @@ export function stepProjectiles(state: GameState, dt: number, events: SimEvent[]
     proj.ttl -= dt;
 
     let consumed = false;
-    if (proj.owner === 'player') {
-      for (const enemy of state.enemies) {
-        if (enemy.dead) continue;
-        const dist = Math.hypot(enemy.position.x - proj.position.x, enemy.position.z - proj.position.z);
-        if (dist > proj.radius + enemy.radius) continue;
-        damageEnemy(state, enemy, proj.damage, events);
-        consumed = true;
-        break;
-      }
-    } else {
-      const p = state.player;
-      if (p.hp > 0 && segmentDistanceSq(p.position.x, p.position.z, x, z, proj.position.x, proj.position.z)
-        <= (proj.radius + p.radius) ** 2) {
-        damagePlayer(state, proj.damage, events, {
-          ...(proj.attackId ? { attackId: proj.attackId } : {}),
-          sourceName: proj.sourceName,
-          damageClass: proj.damageClass,
-        });
-        consumed = true;
+    // Birth-tick grace: a fan loosed at point-blank must survive the tick it
+    // was born in (it has not been drawn yet), but contact resolves on the
+    // very next tick — no dead zone at the muzzle.
+    const born = proj.age === 0;
+    proj.age += dt;
+    if (!born) {
+      if (proj.owner === 'player') {
+        for (const enemy of state.enemies) {
+          if (enemy.dead) continue;
+          const dist = Math.hypot(enemy.position.x - proj.position.x, enemy.position.z - proj.position.z);
+          if (dist > proj.radius + enemy.radius) continue;
+          damageEnemy(state, enemy, proj.damage, events);
+          consumed = true;
+          break;
+        }
+      } else {
+        const p = state.player;
+        if (p.hp > 0 && segmentDistanceSq(p.position.x, p.position.z, x, z, proj.position.x, proj.position.z)
+          <= (proj.radius + p.radius) ** 2) {
+          damagePlayer(state, proj.damage, events, {
+            ...(proj.attackId ? { attackId: proj.attackId } : {}),
+            sourceName: proj.sourceName,
+            damageClass: proj.damageClass,
+          });
+          consumed = true;
+        }
       }
     }
     if (!consumed && proj.ttl > 0) remaining.push(proj);

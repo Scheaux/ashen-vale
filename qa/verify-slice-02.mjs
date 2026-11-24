@@ -85,7 +85,7 @@ async function main() {
   let killed = false;
   let lastHp = Infinity;
 
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     s = await snap();
     const target = s.enemies.find((e) => e.id === targetId);
     if (!target || target.dead) {
@@ -97,12 +97,24 @@ async function main() {
     lastHp = target.hp;
 
     await clickWorld(target.x, target.z);
-    await sleep(650);
+    await sleep(300);
     if ((await page.locator('.floating-text').count()) > 0) sawDamageNumbers = true;
+    // Observe mid-gap: two swings land 0.85s apart and can kill inside one
+    // long poll window (the screenshot below stretches it).
+    s = await snap();
+    const mid = s.enemies.find((e) => e.id === targetId);
+    if (mid && mid.hp < mid.maxHp) sawHpDrop = true;
+    if (mid && mid.hp > lastHp) check('enemy hp never regenerates', false, `tick ${i}b`);
+    lastHp = mid ? mid.hp : lastHp;
+    if (mid && mid.dead) {
+      killed = true;
+      break;
+    }
+    await sleep(350);
     if (i === 3) await page.screenshot({ path: `${SHOTS}10-combat.png` });
   }
 
-  check('clicking an enemy deals damage to it', sawHpDrop);
+  check('clicking an enemy deals damage to it', sawHpDrop || killed, `hpDrop ${sawHpDrop}, killed ${killed}`);
   check('floating damage numbers appear', sawDamageNumbers);
   check('enemy dies and leaves play', killed);
   await page.screenshot({ path: `${SHOTS}11-enemy-down.png` });
@@ -112,8 +124,16 @@ async function main() {
   check('enemy fights back (player lost vitality)',
     s.playerHp + s.playerEnergyShield < s.playerMaxHp + s.playerMaxEnergyShield,
     `${s.playerHp}+${s.playerEnergyShield}/${s.playerMaxHp}+${s.playerMaxEnergyShield}`);
+
+  // Pause first: the camp keeps swinging, and a frozen sim makes the HUD
+  // comparison exact instead of racy.
+  await page.keyboard.press('Escape');
+  await sleep(150);
+  s = await snap();
   const hpText = await page.locator('[data-hp-text]').textContent();
   check('HUD health readout updates', (hpText ?? '').includes(String(s.playerHp)), hpText ?? '');
+  await page.keyboard.press('Escape'); // resume
+  await sleep(150);
 
   // --- Projectile class: ranger arrow kills at range ---
   await page.keyboard.press('Escape'); // pause

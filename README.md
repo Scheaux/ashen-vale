@@ -1,11 +1,12 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG prototype in TypeScript + three.js.
-Built in vertical slices; this repo currently covers **Slices 0–6**: scaffold,
+Built in vertical slices; this repo currently covers **Slices 0–7**: scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
-(QWER skill hotbars, mana, flasks and the death → checkpoint retry flow) and a
-passive skill tree — plus jointed procedural character rigs with full
-animation sets.
+(QWER skill hotbars, mana, flasks and the death → checkpoint retry flow), a
+passive skill tree, and the zone objective loop — clear the camps, then end
+the Ashen Warden in its arena — plus jointed procedural character rigs with
+full animation sets.
 See [MVP.md](./MVP.md) for the full slice-by-slice roadmap to the MVP.
 
 ## Run
@@ -85,6 +86,11 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
   allocation and no-orphan refunds; passive bonuses feed the shared stat
   derivation (attribute nodes compound through synergies) and the tree
   screen on P shows tooltips, lit connectors and the points budget
+- **Zone objectives & boss:** three camps tracked on the HUD ("Clear the
+  camps (n/3)") gate the Ashen Warden — a three-phase boss (sweeps → ground
+  slams at where you stand → enraged charges) with phase multipliers, minion
+  adds and its own telegraph shapes, locked in a pillar-ringed arena while
+  the fight is live; the victory screen closes the loop back to play or title
 - Player health bar, death screen with a death recap (killing blow, damage
   taken, kills, time survived) and respawn at the checkpoint, which preserves
   progression and encounter damage while refilling mana and flasks and

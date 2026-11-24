@@ -1129,6 +1129,55 @@ body {
   box-shadow: 0 0 18px -2px var(--cluster-color);
 }
 
+/* ---------- Zone objectives (slice 7) ---------- */
+
+.objectives {
+  position: absolute;
+  top: 3.4rem;
+  right: 1.55rem;
+  min-width: 16rem;
+  padding: 0.55rem 0.95rem 0.65rem;
+  background: rgba(10, 13, 22, 0.72);
+  border: 1px solid rgba(200, 162, 74, 0.22);
+  border-left: 3px solid var(--gold);
+  text-align: left;
+}
+
+.objectives__title {
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--gold);
+  opacity: 0.85;
+}
+
+.objectives__list {
+  margin-top: 0.35rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.objectives__item {
+  font-family: var(--serif);
+  font-size: 0.82rem;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+.objectives__item--done {
+  color: var(--gold-bright);
+  opacity: 1;
+  text-decoration: line-through;
+  text-decoration-color: rgba(200, 162, 74, 0.5);
+}
+
+/* ---------- Victory screen (slice 7) ---------- */
+
+.screen-title--victory {
+  color: var(--gold-bright);
+  text-shadow: 0 0 32px rgba(200, 162, 74, 0.35);
+}
+
 /* ---------- HUD passive points badge ---------- */
 
 .hud__pts {

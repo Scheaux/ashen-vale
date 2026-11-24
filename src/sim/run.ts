@@ -3,6 +3,7 @@ import { resetEnemyCombat, stepEnemies } from '../systems/enemyAi';
 import { refillFlasks } from '../systems/flasks';
 import { stepPickups } from '../systems/loot';
 import { stepMovement } from '../systems/movement';
+import { stepObjectives } from '../systems/objectives';
 import type { GameState, Vec2 } from './state';
 
 /** The authoritative order for a gameplay tick, shared with regression tests. */
@@ -15,6 +16,7 @@ export function stepRun(state: GameState, dt: number): void {
   stepEnemies(state, dt, events);
   if (state.player.hp <= 0) return;
   stepProjectiles(state, dt, events);
+  stepObjectives(state, events);
   if (state.player.hp > 0) stepPickups(state, events);
 }
 
