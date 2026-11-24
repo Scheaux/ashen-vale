@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { TerrainSurface } from '../render/terrainSurface';
 import type { SimEvent } from '../sim/state';
 
 type FloatingKind = 'damage' | 'player-damage' | 'player-shield' | 'player-miss' | 'heal' | 'mana';
@@ -15,7 +16,7 @@ const HEAVY_DAMAGE = 22;
 export class FloatingTextLayer {
   private readonly root: HTMLDivElement;
 
-  constructor(parent: HTMLElement) {
+  constructor(parent: HTMLElement, private readonly terrain: TerrainSurface) {
     this.root = document.createElement('div');
     this.root.className = 'floating-text-layer';
     parent.appendChild(this.root);
@@ -65,7 +66,7 @@ export class FloatingTextLayer {
     kind: FloatingKind,
     heavy = false,
   ): void {
-    const v = new THREE.Vector3(x, y, z).project(camera);
+    const v = new THREE.Vector3(x, this.terrain.heightAt(x, z) + y, z).project(camera);
     if (v.z > 1) return; // behind the camera
 
     while (this.root.childElementCount >= MAX_LIVE_TEXT) {

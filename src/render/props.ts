@@ -4,6 +4,7 @@ import { noise2D } from '../core/noise';
 import type { PropKind, PropPlacement, ZoneLayout } from '../content/types';
 import { rockGeometry, sweptBranch, sweptTube, sweptTrunk, latheProfile } from './geo';
 import { barkMaterial, stoneMaterial } from './materials';
+import type { TerrainSurface } from './terrainSurface';
 
 function deadTreeGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
@@ -113,7 +114,7 @@ function axisScale(min: number, max: number, t: number): number {
   return min + (max - min) * t;
 }
 
-export function createProps(layout: ZoneLayout): THREE.Group {
+export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): THREE.Group {
   const style = styles();
   const group = new THREE.Group();
 
@@ -143,7 +144,7 @@ export function createProps(layout: ZoneLayout): THREE.Group {
       const a = Math.abs(t1);
       const b = Math.abs(t2);
 
-      position.set(p.x, -0.08, p.z);
+      position.set(p.x, (terrain?.heightAt(p.x, p.z) ?? 0) - 0.08, p.z);
       euler.set(p.tilt * 0.8, p.rotation, p.tilt);
       quaternion.setFromEuler(euler);
       scale.set(

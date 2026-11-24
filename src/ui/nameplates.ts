@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ELITE_MODIFIERS, getEnemy } from '../content/enemies';
+import type { TerrainSurface } from '../render/terrainSurface';
 import type { GameState } from '../sim/state';
 
 interface Plate {
@@ -14,7 +15,7 @@ export class NameplateLayer {
   private readonly root: HTMLDivElement;
   private readonly plates = new Map<string, Plate>();
 
-  constructor(parent: HTMLElement) {
+  constructor(parent: HTMLElement, private readonly terrain: TerrainSurface) {
     this.root = document.createElement('div');
     this.root.className = 'nameplate-layer';
     parent.appendChild(this.root);
@@ -44,7 +45,11 @@ export class NameplateLayer {
         this.plates.set(enemy.id, plate);
       }
 
-      const v = new THREE.Vector3(enemy.position.x, 2.55, enemy.position.z).project(camera);
+      const v = new THREE.Vector3(
+        enemy.position.x,
+        this.terrain.heightAt(enemy.position.x, enemy.position.z) + 2.55,
+        enemy.position.z,
+      ).project(camera);
       if (v.z > 1) {
         plate.el.style.display = 'none';
         continue;

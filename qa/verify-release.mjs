@@ -103,7 +103,10 @@ async function main() {
   await startRun(page, 'marauder');
   let s = await snap();
   check('a new run enters play', s.mode === 'playing');
-  check('the HUD reports v1.0', (await page.locator('[data-hud-badge]').innerText()).toLowerCase().includes('v1.0'));
+  check('a new run starts with one active skill', s.skills.filter((skill) => skill.id !== null).length === 1 &&
+    s.skills.find((skill) => skill.slot === 'q')?.id !== null, JSON.stringify(s.skills));
+  check('the hotbar shows RMB + QWERF', (await page.locator('.slot').count()) === 6 &&
+    (await page.locator('.slot--empty').count()) === 5);
   check('the first slot autosaves the run', (await saves()).activeSlot === 0);
   await page.screenshot({ path: `${SHOTS}81-release-combat.png` });
 
@@ -164,6 +167,16 @@ async function main() {
   s = await snap();
   check('the release build levels and allocates passives', s.level >= 5 && s.passives.allocated.includes('o1'),
     `level ${s.level}, passives ${s.passives.allocated.join(',')}`);
+  check('levels grant skill points', s.skillPoints.available >= 6 && s.skillPoints.total === s.level - 1,
+    JSON.stringify(s.skillPoints));
+
+  await page.keyboard.press('Escape');
+  await sleep(250);
+  check('the pause menu names the version and autosave slot',
+    (await page.locator('[data-pause-save]').innerText()).toLowerCase().includes('v1.2') &&
+    (await page.locator('[data-pause-save]').innerText()).toLowerCase().includes('slot 1'));
+  await page.keyboard.press('Escape');
+  await sleep(250);
 
   // Camps -> boss -> phases -> victory.
   await page.evaluate(() => window.__ashen.clearCamps());

@@ -6,8 +6,9 @@ import * as THREE from 'three';
  */
 export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
-  yaw = Math.PI * 0.22;
-  pitch = 0.78;
+  /** Fixed 45° isometric view: no yaw rotation. */
+  readonly yaw = Math.PI / 4;
+  readonly pitch = 0.78;
   distance = 18;
 
   private readonly target = new THREE.Vector3(0, 0, 18);
@@ -40,32 +41,26 @@ export class CameraRig {
   }
 
   /** Damped follow of the player position (called every frame). */
-  follow(x: number, z: number, dt: number): void {
+  follow(x: number, z: number, groundY: number, dt: number): void {
     this.clock += dt;
     this.shakeTime = Math.max(0, this.shakeTime - dt);
     if (this.shakeTime <= 0) this.shakeAmplitude = 0;
-    this.desired.set(x, 0, z);
+    this.desired.set(x, groundY, z);
     this.target.lerp(this.desired, 1 - Math.exp(-8 * dt));
     this.updateCamera();
   }
 
-  snapTo(x: number, z: number): void {
-    this.target.set(x, 0, z);
+  snapTo(x: number, z: number, groundY = 0): void {
+    this.target.set(x, groundY, z);
     this.desired.copy(this.target);
     this.shakeTime = 0;
     this.shakeAmplitude = 0;
     this.updateCamera();
   }
 
-  /** Positive delta zooms out (wheel scrolling down). */
+  /** Positive delta zooms out; the range stays close for readability. */
   zoom(deltaY: number): void {
-    this.distance = THREE.MathUtils.clamp(this.distance * (1 + deltaY * 0.0012), 9, 32);
-    this.updateCamera();
-  }
-
-  /** Right-drag horizontal pan rotates the camera around the player. */
-  rotate(deltaX: number): void {
-    this.yaw -= deltaX * 0.005;
+    this.distance = THREE.MathUtils.clamp(this.distance * (1 + deltaY * 0.0012), 12, 21);
     this.updateCamera();
   }
 
@@ -76,7 +71,7 @@ export class CameraRig {
 
   private updateCamera(): void {
     const horiz = Math.cos(this.pitch) * this.distance;
-    const y = Math.sin(this.pitch) * this.distance;
+    const y = this.target.y + Math.sin(this.pitch) * this.distance;
     let sx = 0;
     let sy = 0;
     let sz = 0;
@@ -92,7 +87,7 @@ export class CameraRig {
       y + sy,
       this.target.z + Math.cos(this.yaw) * horiz + sz,
     );
-    this.camera.lookAt(this.target.x + sx * 0.35, 1.1 + sy * 0.2, this.target.z + sz * 0.35);
+    this.camera.lookAt(this.target.x + sx * 0.35, this.target.y + 1.1 + sy * 0.2, this.target.z + sz * 0.35);
     this.camera.updateMatrixWorld();
   }
 }

@@ -97,8 +97,14 @@ async function main() {
     lastHp = target.hp;
 
     await clickWorld(target.x, target.z);
-    await sleep(300);
-    if ((await page.locator('.floating-text').count()) > 0) sawDamageNumbers = true;
+    for (let poll = 0; poll < 10; poll++) {
+      if ((await page.locator('.floating-text').count()) > 0) {
+        sawDamageNumbers = true;
+        break;
+      }
+      await sleep(80);
+    }
+    await sleep(120);
     // Observe mid-gap: two swings land 0.85s apart and can kill inside one
     // long poll window (the screenshot below stretches it).
     s = await snap();

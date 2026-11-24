@@ -53,7 +53,6 @@ async function main() {
 
   const snap = () => page.evaluate(() => window.__ashen.snapshot());
   const saves = () => page.evaluate(() => window.__ashen.saves());
-  const badgeText = () => page.locator('[data-hud-badge]').innerText();
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await sleep(800);
@@ -79,7 +78,6 @@ async function main() {
     `active ${s.activeSlot}, slot 1 ${s.slots[0].status}`);
   check('the checkpoint records the class and level', s.slots[0].classId === 'marauder' && s.slots[0].level === 1,
     `${s.slots[0].classId} lv ${s.slots[0].level}`);
-  check('the HUD advertises the autosave slot', (await badgeText()).toLowerCase().includes('autosave slot 1'), await badgeText());
 
   // --- Level-up and a passive allocation are captured at the next milestone ---
   await page.evaluate(() => window.__ashen.grantXp(5000));
@@ -143,6 +141,8 @@ async function main() {
   check('Escape opens the pause menu with save/load actions',
     await page.locator('[data-action="save-slots"]').isVisible() &&
     await page.locator('[data-action="load-slots"]').isVisible());
+  check('the pause menu names the active autosave slot',
+    (await page.locator('[data-pause-save]').innerText()).toLowerCase().includes('autosave slot 1'));
   await page.click('[data-action="save-slots"]');
   await sleep(250);
   check('Save Game opens the slot screen in save mode',

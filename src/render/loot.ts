@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RARITY_COLORS, type Rarity } from '../content/items';
 import type { GameState } from '../sim/state';
 import { disposeMeshTree } from './dispose';
+import type { TerrainSurface } from './terrainSurface';
 
 interface LootView {
   crystal: THREE.Mesh;
@@ -25,7 +26,7 @@ export class LootViews {
   readonly group = new THREE.Group();
   private readonly views = new Map<string, LootView>();
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, private readonly terrain: TerrainSurface) {
     scene.add(this.group);
   }
 
@@ -55,7 +56,8 @@ export class LootViews {
           new THREE.OctahedronGeometry(0.22),
           new THREE.MeshBasicMaterial({ color: color.hex }),
         );
-        crystal.position.set(drop.x, 0.4, drop.z);
+        const groundY = this.terrain.heightAt(drop.x, drop.z);
+        crystal.position.set(drop.x, groundY + 0.4, drop.z);
 
         const beamMaterial = new THREE.MeshBasicMaterial({
           color: color.hex,
@@ -66,7 +68,7 @@ export class LootViews {
           side: THREE.DoubleSide,
         });
         const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.22, 2.4, 10, 1, true), beamMaterial);
-        beam.position.set(drop.x, 1.2, drop.z);
+        beam.position.set(drop.x, groundY + 1.2, drop.z);
 
         this.group.add(crystal, beam);
         view = { crystal, beam, beamMaterial, phase: drop.x * 3.1 + drop.z * 1.7 };
@@ -74,7 +76,8 @@ export class LootViews {
       }
 
       view.crystal.rotation.y = elapsed * 1.4 + view.phase;
-      view.crystal.position.y = 0.42 + Math.sin(elapsed * 2 + view.phase) * 0.08;
+      view.crystal.position.y =
+        this.terrain.heightAt(drop.x, drop.z) + 0.42 + Math.sin(elapsed * 2 + view.phase) * 0.08;
       view.beamMaterial.opacity =
         BEAM_OPACITY[drop.item.rarity] *
         (0.8 + 0.2 * Math.sin(elapsed * 2.4 + view.phase));

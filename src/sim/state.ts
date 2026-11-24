@@ -7,7 +7,9 @@ import type {
   ZoneBounds,
   ZoneLayout,
 } from '../content/types';
+import { LOADOUT_SLOTS } from '../content/types';
 import { getEnemy } from '../content/enemies';
+import { startingSkillFor } from '../content/skills';
 import type { ItemSlot } from '../content/items';
 import { PASSIVE_ROOT } from '../content/passives';
 import { createRng, type Rng } from '../core/rng';
@@ -185,6 +187,14 @@ export interface PassivesState {
   allocated: string[];
 }
 
+/** Skill ranks and the six-slot loadout (post-release skill system). */
+export interface SkillState {
+  /** Active-skill rank; missing/0 means locked. Rank 1 is unlocked. */
+  ranks: Partial<Record<SkillId, number>>;
+  /** RMB, Q, W, E, R, F order; null means an empty slot. */
+  loadout: Array<SkillId | null>;
+}
+
 /**
  * Authoritative combat events emitted by the simulation. Rendering and UI
  * consume these; they never infer gameplay outcomes from visual state.
@@ -236,7 +246,7 @@ export type SimEvent =
       y: number;
       z: number;
     }
-  | { kind: 'refuse'; reason: 'mana' | 'cooldown' | 'flask-empty'; label: string }
+  | { kind: 'refuse'; reason: 'mana' | 'cooldown' | 'flask-empty' | 'locked'; label: string }
   | { kind: 'objective'; text: string }
   | { kind: 'boss-phase'; bossId: string; phase: number; label: string }
   | { kind: 'victory' };
@@ -261,6 +271,8 @@ export interface GameState {
   loot: LootDrop[];
   /** Passive skill tree allocation (slice 6). */
   passives: PassivesState;
+  /** Active-skill ranks and the RMB/Q/W/E/R/F loadout. */
+  skills: SkillState;
   /** Health/mana flasks with refill-on-kill charges. */
   flasks: { health: FlaskState; mana: FlaskState };
   /** Character progression (slice 4). */
@@ -344,6 +356,9 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
   const maxHp = Math.round(PLAYER_MAX_HP + def.stats.strength * SYNERGY.strength.maxHp);
   const energyShield = Math.round(def.stats.intelligence * SYNERGY.intelligence.energyShield);
   const camps = new Set(layout.enemySpawns.map((s) => s.camp ?? -1).filter((c) => c >= 0));
+  const startingSkill = startingSkillFor(def.id);
+  const loadout: Array<SkillId | null> = LOADOUT_SLOTS.map(() => null);
+  loadout[LOADOUT_SLOTS.indexOf('q')] = startingSkill.id;
   return {
     tick: 0,
     zoneSeed: layout.seed,
@@ -402,6 +417,10 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
     },
     loot: [],
     passives: { allocated: [PASSIVE_ROOT] },
+    skills: {
+      ranks: { [startingSkill.id]: 1 },
+      loadout,
+    },
     flasks: {
       health: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },
       mana: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },

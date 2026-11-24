@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { getEnemy, ELITE_MODIFIERS } from '../content/enemies';
+import { ENEMIES, getEnemy, ELITE_MODIFIERS } from '../content/enemies';
 import type { EnemyState, GameState, SimEvent } from '../sim/state';
 import { phaseAttackProgress, type CreaturePoseInput } from './anim';
 import { createCultistRig } from './cultistModel';
@@ -206,6 +206,10 @@ export class EnemyViews {
     this.blob.frustumCulled = false;
     this.blob.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.group.add(this.blob);
+
+    // Build all silhouettes once so the first distant archetype never hitches
+    // and the GPU resource count is stable across run/quit cycles.
+    for (const def of ENEMIES) this.farGeometryFor(def.id);
   }
 
   pick(state: GameState, camera: THREE.Camera, width: number, height: number, x: number, y: number):
@@ -380,8 +384,9 @@ export class EnemyViews {
     // several body lengths behind its actual contact point.
     const x = THREE.MathUtils.lerp(enemy.previousPosition.x, enemy.position.x, alpha);
     const z = THREE.MathUtils.lerp(enemy.previousPosition.z, enemy.position.z, alpha);
-    view.model.root.position.set(x, 0, z);
-    view.far.position.set(x, 0, z);
+    const groundY = this.terrain.heightAt(x, z);
+    view.model.root.position.set(x, groundY, z);
+    view.far.position.set(x, groundY, z);
 
     // Facing: locked during windup/active (the counterplay reads off it),
     // smoothed during chase.
@@ -405,7 +410,7 @@ export class EnemyViews {
     if (!detailed) {
       if (view.far.visible) {
         const stride = Math.min(1, Math.hypot(enemy.velocity.x, enemy.velocity.z) / Math.max(0.01, enemy.speed));
-        view.far.position.y = Math.abs(Math.sin(enemy.phaseTime * 7)) * 0.045 * stride;
+        view.far.position.y = groundY + Math.abs(Math.sin(enemy.phaseTime * 7)) * 0.045 * stride;
       }
       return;
     }
@@ -452,7 +457,11 @@ export class EnemyViews {
       );
       if (distance > BAR_RANGE) continue;
 
-      this.barPos.set(enemy.position.x, BODY_HEIGHT[enemy.defId] + 0.35, enemy.position.z);
+      this.barPos.set(
+        enemy.position.x,
+        this.terrain.heightAt(enemy.position.x, enemy.position.z) + BODY_HEIGHT[enemy.defId] + 0.35,
+        enemy.position.z,
+      );
       this.barScale.set(1.3, 0.15, 1);
       this.barMatrix.compose(this.barPos, this.barQuat, this.barScale);
       this.barBg.setMatrixAt(count, this.barMatrix);

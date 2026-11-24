@@ -1,6 +1,7 @@
 import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
 import { getEnemy, type AttackDef } from '../content/enemies';
 import { basicAttackFor, getSkill, type SkillDef } from '../content/skills';
+import { skillCooldownMultiplier, skillDamageMultiplier, skillRank } from './loadout';
 import type { SkillId } from '../content/types';
 import type { AreaStrike, EnemyState, GameState, PlayerState, SimEvent, Vec2 } from '../sim/state';
 import { onEnemyDeath } from './loot';
@@ -134,11 +135,20 @@ function tickPlayerResources(state: GameState, dt: number): void {
 }
 
 /** Can this skill be paid for and started right now? */
-export function canCast(state: GameState, skill: SkillDef): 'ok' | 'mana' | 'cooldown' {
+export function canCast(state: GameState, skill: SkillDef): 'ok' | 'mana' | 'cooldown' | 'locked' {
   const p = state.player;
+  if (skill.role === 'active' && (skillRank(state, skill.id) <= 0 || !state.skills.loadout.includes(skill.id))) {
+    return 'locked';
+  }
   if ((p.cooldowns[skill.id] ?? 0) > 0) return 'cooldown';
   if (p.mana < skill.manaCost) return 'mana';
   return 'ok';
+}
+
+/** Rolled skill damage including the player's rank multiplier. */
+function playerSkillDamage(state: GameState, skill: SkillDef): number {
+  const roll = rollDamage(state, skill.damage.min, skill.damage.max) * skillDamageMultiplier(state, skill.id);
+  return scalePlayerDamage(state, roll, skill.damageClass);
 }
 
 /**
@@ -152,7 +162,7 @@ export function stepPlayerCombat(state: GameState, dt: number, events: SimEvent[
   if (p.hp <= 0) return;
 
   // A committed active-skill cast cannot be cancelled; the basic swing yields.
-  const locked = p.attack !== null && getSkill(p.attack.skillId).slot !== 'q';
+  const locked = p.attack !== null && getSkill(p.attack.skillId).role !== 'basic';
   const request = p.castRequest;
   if (request && !locked) {
     p.castRequest = null;
@@ -220,7 +230,7 @@ function startCast(state: GameState, skill: SkillDef, aim: Vec2, events: SimEven
     hit: [],
     dashLeft: skill.dash?.distance ?? 0,
   };
-  p.cooldowns[skill.id] = skill.cooldown;
+  p.cooldowns[skill.id] = skill.cooldown * skillCooldownMultiplier(state, skill.id);
   p.mana = Math.max(0, p.mana - skill.manaCost);
   events.push({ kind: 'attack', sourceId: 'player', skillId: skill.id, x: p.position.x, z: p.position.z, facing });
 }
@@ -274,7 +284,7 @@ function stepDashTravel(
     const dist = Math.hypot(enemy.position.x - p.position.x, enemy.position.z - p.position.z);
     if (dist > reach + enemy.radius) continue;
     attack.hit.push(enemy.id);
-    damageEnemy(state, enemy, scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max), skill.damageClass), events);
+    damageEnemy(state, enemy, playerSkillDamage(state, skill), events);
   }
 }
 
@@ -295,7 +305,7 @@ function resolvePlayerAttack(
         const d = Math.hypot(ex, ez);
         if (d > skill.range + enemy.radius) continue;
         if (d > 0.001 && Math.abs(angleDiff(attack.facing, Math.atan2(ex, ez))) > halfArc) continue;
-        damageEnemy(state, enemy, scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max), skill.damageClass), events);
+        damageEnemy(state, enemy, playerSkillDamage(state, skill), events);
       }
       break;
     }
@@ -316,7 +326,7 @@ function resolvePlayerAttack(
         if (enemy.dead) continue;
         const dist = Math.hypot(enemy.position.x - p.position.x, enemy.position.z - p.position.z);
         if (dist > (skill.radius ?? 0) + enemy.radius) continue;
-        damageEnemy(state, enemy, scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max), skill.damageClass), events);
+        damageEnemy(state, enemy, playerSkillDamage(state, skill), events);
       }
       events.push({
         kind: 'burst',
@@ -336,7 +346,7 @@ function resolvePlayerAttack(
         z: attack.aim.z,
         radius: skill.radius ?? 3,
         fuse: skill.fuse ?? 0.5,
-        damage: scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max), skill.damageClass),
+        damage: playerSkillDamage(state, skill),
         color: skill.color,
       };
       state.strikes.push(strike);
@@ -360,7 +370,7 @@ function spawnProjectile(state: GameState, skill: SkillDef, facing: number): voi
     position: { x: p.position.x, z: p.position.z },
     y: 1.25,
     velocity: { x: Math.sin(facing) * spec.speed, z: Math.cos(facing) * spec.speed },
-    damage: scalePlayerDamage(state, rollDamage(state, skill.damage.min, skill.damage.max), skill.damageClass),
+    damage: playerSkillDamage(state, skill),
     radius: spec.radius,
     ttl: spec.ttl,
     color: skill.color,

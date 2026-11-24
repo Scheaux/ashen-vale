@@ -3,8 +3,8 @@ import { EventBus } from './core/events';
 import { GameLoop } from './core/loop';
 import { getClass } from './content/classes';
 import { RARITY_COLORS, type ItemSlot } from './content/items';
-import { skillsFor, type SkillDef } from './content/skills';
-import type { ClassDef, ClassId, ZoneLayout } from './content/types';
+import { getSkill } from './content/skills';
+import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId, type ZoneLayout } from './content/types';
 import { generateZoneLayout } from './content/zone';
 import { createPlayerView, type PlayerView } from './render/player';
 import { CameraRig } from './render/camera';
@@ -19,6 +19,7 @@ import { TelegraphLayer } from './render/telegraphs';
 import { createProps } from './render/props';
 import { createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
+import type { TerrainSurface } from './render/terrainSurface';
 import { createGameState, drainEvents, type GameState } from './sim/state';
 import { respawnPlayer, stepRun } from './sim/run';
 import { createCheckpointSave, serializeSave } from './save/schema';
@@ -46,6 +47,20 @@ import {
   passiveRefusalMessage,
   refundPassive,
 } from './systems/passives';
+import {
+  clearSkillSlot,
+  effectiveSkillCooldown,
+  effectiveSkillDamage,
+  equipSkill,
+  loadoutRefusalMessage,
+  skillInSlot,
+  skillPointsAvailable,
+  skillPointsSpent,
+  skillPointsTotal,
+  skillRank,
+  unlockSkill,
+  upgradeSkill,
+} from './systems/loadout';
 import { grantXp } from './systems/progression';
 import { evadeChance, getPlayerStats } from './systems/stats';
 import { FloatingTextLayer } from './ui/floatingText';
@@ -53,7 +68,8 @@ import { InventoryPanel } from './ui/inventory';
 import { NameplateLayer } from './ui/nameplates';
 import { PassiveTreePanel } from './ui/passives';
 import { SaveSlotsPanel, type SavePanelMode } from './ui/saveSlots';
-import { Ui, type GameMode } from './ui/ui';
+import { SkillPanel } from './ui/skills';
+import { Ui, type GameMode, type LoadoutEntry } from './ui/ui';
 
 type GameEvents = {
   'input:move-target': { x: number; z: number };
@@ -101,9 +117,23 @@ export interface AshenDebug {
     }>;
     projectiles: number;
     strikes: number;
+    camera: { yaw: number; pitch: number; distance: number };
+    markers: {
+      hover: { x: number; y: number; z: number } | null;
+      destination: { x: number; y: number; z: number } | null;
+    };
+    playerRenderY: number;
     arena: { x: number; z: number; radius: number };
     objectives: { campsCleared: number; campsTotal: number; bossSpawned: boolean; bossDefeated: boolean };
-    skills: Array<{ id: string; slot: string; name: string; manaCost: number; cooldown: number }>;
+    skills: Array<{
+      slot: LoadoutSlot;
+      id: SkillId | null;
+      name: string | null;
+      manaCost: number;
+      cooldown: number;
+      rank: number;
+    }>;
+    skillPoints: { total: number; spent: number; available: number };
     cooldowns: Record<string, number>;
     flasks: { health: number; mana: number; max: number };
     run: { kills: number; damageTaken: number; evades: number; lastBlow: string | null; seconds: number };
@@ -146,6 +176,8 @@ export interface AshenDebug {
   hurtEnemy(id: string, amount: number): void;
   /** Review fixture: move the hero (arena checks, positioning). */
   teleportPlayer(x: number, z: number): void;
+  /** Review fixture: terrain height at a world point. */
+  terrainHeightAt(x: number, z: number): number;
   /** Review fixture: nearest scenery points to the hero (picking checks). */
   sceneryPoints(): Array<{ x: number; z: number }>;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
@@ -160,6 +192,9 @@ export interface AshenDebug {
   setShadows(enabled: boolean): void;
   /** Review fixture: play the damage vignette without waiting for a hit. */
   flashDamage(kind: 'health' | 'shield', strength: number): void;
+  /** Review fixture: unlock/equip skills through the real loadout rules. */
+  unlockSkill(id: SkillId): boolean;
+  equipSkill(slot: LoadoutSlot, id: SkillId): boolean;
   /** Review fixture: serialize the current save (for save-shape checks). */
   exportSave(): string;
   /** Review fixture: save-slot inventory and the run's bound autosave slot. */
@@ -202,6 +237,7 @@ class Game {
   private readonly nameplates: NameplateLayer;
   private readonly inventoryPanel: InventoryPanel;
   private readonly passivePanel: PassiveTreePanel;
+  private readonly skillPanel: SkillPanel;
   private readonly savePanel: SaveSlotsPanel;
   private readonly ui: Ui;
   private readonly loop: GameLoop;
@@ -210,7 +246,7 @@ class Game {
   private readonly persistentSaves: boolean;
 
   private readonly raycaster = new THREE.Raycaster();
-  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly terrainSurface: TerrainSurface;
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly tmpVec = new THREE.Vector3();
   private readonly viewport = new THREE.Vector2();
@@ -224,7 +260,6 @@ class Game {
   private mode: GameMode = 'title';
   /** Slot autosaves write to for the current run; null when all slots are full. */
   private activeSlot: number | null = null;
-  private rotating = false;
   private destinationActive = false;
   private dead = false;
   /** Adaptive resolution: step the pixel ratio between 1 and the device cap. */
@@ -256,20 +291,25 @@ class Game {
     this.storage = browserStorage ?? createMemoryStorage();
 
     const terrain = createTerrain();
+    this.terrainSurface = terrain.surface;
     this.scene.add(terrain.mesh);
-    this.scene.add(createProps(this.layout));
+    this.scene.add(createProps(this.layout, terrain.surface));
     this.enemyViews = new EnemyViews(this.scene, terrain.surface);
-    this.projectileViews = new ProjectileViews(this.scene);
+    this.projectileViews = new ProjectileViews(this.scene, terrain.surface);
     this.telegraphs = new TelegraphLayer(this.scene, terrain.surface);
     this.skillVfx = new SkillVfxLayer(this.scene, terrain.surface);
-    this.lootViews = new LootViews(this.scene);
+    this.lootViews = new LootViews(this.scene, terrain.surface);
     this.embers = createEmbers(this.layout.bounds);
     this.scene.add(this.embers.points);
-    this.cursor = new CursorMarker(this.scene, 0xe8c877);
+    this.cursor = new CursorMarker(this.scene, 0xe8c877, terrain.surface);
 
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
     this.rig.setReducedMotion(this.reducedMotion);
-    this.rig.snapTo(this.layout.spawn.x, this.layout.spawn.z);
+    this.rig.snapTo(
+      this.layout.spawn.x,
+      this.layout.spawn.z,
+      terrain.surface.heightAt(this.layout.spawn.x, this.layout.spawn.z),
+    );
 
     this.ui = new Ui(uiRoot, {
       onNewGame: () => this.setMode('class-select'),
@@ -283,12 +323,13 @@ class Game {
       onContinue: () => this.continueAfterVictory(),
       onContinueRun: () => this.continueRun(),
       onOpenSlots: (mode) => this.openSlots(mode),
-      onCastSlot: (slot) => this.castSlot(slot),
+      onOpenSkillPicker: (slot) => this.openSkillPicker(slot),
+      onOpenSkills: () => this.openSkills(),
       onUseFlask: (kind) => this.handleUseFlask(kind),
     });
     // Created after Ui: the Ui constructor replaces #ui's innerHTML.
-    this.floatingText = new FloatingTextLayer(uiRoot);
-    this.nameplates = new NameplateLayer(uiRoot);
+    this.floatingText = new FloatingTextLayer(uiRoot, terrain.surface);
+    this.nameplates = new NameplateLayer(uiRoot, terrain.surface);
     this.inventoryPanel = new InventoryPanel(uiRoot, {
       onEquip: (uid) => this.handleEquip(uid),
       onUnequip: (slot) => this.handleUnequip(slot),
@@ -296,6 +337,12 @@ class Game {
     this.passivePanel = new PassiveTreePanel(uiRoot, {
       onAllocate: (id) => this.handlePassiveAllocate(id),
       onRefund: (id) => this.handlePassiveRefund(id),
+    });
+    this.skillPanel = new SkillPanel(uiRoot, {
+      onAssign: (slot, id) => this.handleAssignSkill(slot, id),
+      onUnlock: (id) => this.handleUnlockSkill(id),
+      onUpgrade: (id) => this.handleUpgradeSkill(id),
+      onClose: () => this.skillPanel.close(),
     });
     this.savePanel = new SaveSlotsPanel(uiRoot, {
       onChoose: (slot) => this.chooseSlot(slot),
@@ -362,13 +409,18 @@ class Game {
     const state = this.state;
     if (!state) return;
     this.classDef = getClass(state.player.classId);
-    this.playerView = createPlayerView(this.classDef);
+    this.playerView = createPlayerView(this.classDef, this.terrainSurface);
     this.scene.add(this.playerView.group);
-    this.rig.snapTo(state.player.position.x, state.player.position.z);
+    this.rig.snapTo(
+      state.player.position.x,
+      state.player.position.z,
+      this.terrainSurface.heightAt(state.player.position.x, state.player.position.z),
+    );
     this.ui.setPlayerHp(state.player.hp, state.player.maxHp);
     this.ui.setPlayerEs(state.player.energyShield, state.player.maxEnergyShield);
     this.ui.setPlayerXp(state.level, state.xp, state.xpToNext);
-    this.ui.showHud(this.classDef, this.layout.name, skillsFor(state.player.classId));
+    this.ui.showHud(this.classDef, this.layout.name, this.loadoutEntries(state));
+    this.ui.setPoints(passivePointsAvailable(state), skillPointsAvailable(state));
     this.setMode('playing');
   }
 
@@ -403,6 +455,7 @@ class Game {
     this.nameplates.clear();
     this.inventoryPanel.close();
     this.passivePanel.close();
+    this.skillPanel.close();
     this.savePanel.close();
     this.dead = false;
     this.tellTelegraphs = 0;
@@ -432,13 +485,15 @@ class Game {
     this.ui.hideDeath();
     const p = state.player;
     this.ui.setPlayerHp(p.hp, p.maxHp);
-    this.rig.snapTo(p.position.x, p.position.z);
+    this.rig.snapTo(p.position.x, p.position.z, this.terrainSurface.heightAt(p.position.x, p.position.z));
     this.loop.setRunning(true);
   }
 
   private onPlayerDeath(): void {
     this.dead = true;
     this.inventoryPanel.close();
+    this.passivePanel.close();
+    this.skillPanel.close();
     this.loop.setRunning(false);
     const stats = this.state?.runStats;
     this.ui.showDeath({
@@ -636,7 +691,8 @@ class Game {
             this.ui.flashDamage(shieldOnly ? 'shield' : 'health', 0.3 + Math.min(0.7, fraction * 4));
             this.rig.shake(shieldOnly ? 0.06 : Math.min(0.32, 0.1 + fraction), shieldOnly ? 0.14 : 0.24);
           } else if (ev.kind === 'levelup') {
-            this.ui.showToast(`Level ${ev.level}!`, '#e8c877');
+            this.ui.showToast(`Level ${ev.level}! · 1 skill point`, '#e8c877');
+            if (this.skillPanel.visible) this.skillPanel.sync(state);
             this.saveCheckpoint();
           } else if (ev.kind === 'refuse') this.reportRefusal(ev.reason, ev.label);
           else if (ev.kind === 'objective') {
@@ -673,14 +729,19 @@ class Game {
       });
       if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
       if (this.passivePanel.visible) this.passivePanel.sync(state);
-      this.ui.setPassivePoints(passivePointsAvailable(state));
+      this.ui.setPoints(passivePointsAvailable(state), skillPointsAvailable(state));
       this.ui.setObjectives({
         campsCleared: state.objectives.campCleared.filter(Boolean).length,
         campsTotal: state.objectives.campsTotal,
         bossSpawned: state.objectives.bossSpawned,
         bossDefeated: state.objectives.bossDefeated,
       });
-      this.rig.follow(state.player.position.x, state.player.position.z, dt);
+      this.rig.follow(
+        state.player.position.x,
+        state.player.position.z,
+        this.terrainSurface.heightAt(state.player.position.x, state.player.position.z),
+        dt,
+      );
     }
     this.updateHover();
     this.embers.update(dt);
@@ -712,9 +773,28 @@ class Game {
 
   // ---------- Picking ----------
 
+  /**
+   * Intersect the pointer ray with the heightfield. Four plane-refinement
+   * passes are enough for the gentle moor and keep hover picking O(1).
+   */
   private groundPoint(): THREE.Vector3 | null {
     this.raycaster.setFromCamera(this.pointer, this.rig.camera);
-    return this.raycaster.ray.intersectPlane(this.groundPlane, this.tmpVec) ? this.tmpVec : null;
+    const ray = this.raycaster.ray;
+    if (Math.abs(ray.direction.y) < 1e-5) return null;
+    let height = 0;
+    for (let i = 0; i < 4; i++) {
+      const t = (height - ray.origin.y) / ray.direction.y;
+      if (t < 0) return null;
+      this.tmpVec.copy(ray.origin).addScaledVector(ray.direction, t);
+      const sampled = this.terrainSurface.heightAt(this.tmpVec.x, this.tmpVec.z);
+      if (Math.abs(sampled - this.tmpVec.y) < 0.005) {
+        height = sampled;
+        break;
+      }
+      height = sampled;
+    }
+    this.tmpVec.y = this.terrainSurface.heightAt(this.tmpVec.x, this.tmpVec.z);
+    return this.tmpVec;
   }
 
   private pickEnemy() {
@@ -725,7 +805,7 @@ class Game {
   }
 
   private updateHover(): void {
-    if (this.mode !== 'playing' || this.dead || !this.pointerInside || this.rotating) {
+    if (this.mode !== 'playing' || this.dead || !this.pointerInside) {
       this.cursor.setHover(null);
       this.setHoverTarget(null);
       return;
@@ -763,20 +843,20 @@ class Game {
 
     this.canvas.addEventListener('pointermove', (e) => {
       this.setPointer(e);
-      if (this.rotating) this.rig.rotate(e.movementX);
     });
 
     this.canvas.addEventListener('pointerenter', (e) => this.setPointer(e));
     this.canvas.addEventListener('pointerleave', () => { this.pointerInside = false; });
-    this.canvas.addEventListener('pointercancel', () => { this.pointerInside = this.rotating = false; });
+    this.canvas.addEventListener('pointercancel', () => { this.pointerInside = false; });
 
     this.canvas.addEventListener('pointerdown', (e) => {
       this.setPointer(e);
       if (e.button === 2) {
-        this.rotating = true;
+        // Right click is a skill slot (the picker keeps slots editable).
+        if (this.mode === 'playing' && !this.dead) this.castSlot('rmb');
         return;
       }
-      if (e.button !== 0 || this.mode !== 'playing' || this.dead || this.rotating || !this.state) return;
+      if (e.button !== 0 || this.mode !== 'playing' || this.dead || !this.state) return;
 
       // Click an enemy to attack it; click the ground to move.
       const enemyHit = this.pickEnemy();
@@ -788,10 +868,6 @@ class Game {
       }
       const point = this.groundPoint();
       if (point) this.bus.emit('input:move-target', { x: point.x, z: point.z });
-    });
-
-    window.addEventListener('pointerup', (e) => {
-      if (e.button === 2) this.rotating = false;
     });
 
     this.canvas.addEventListener(
@@ -811,7 +887,7 @@ class Game {
         if (this.mode === 'playing' && !this.dead && !e.repeat) this.handleUseFlask(key === '1' ? 'health' : 'mana');
         return;
       }
-      const slot = ({ q: 'q', w: 'w', e: 'e', r: 'r' } as const)[key as 'q' | 'w' | 'e' | 'r'];
+      const slot = ({ q: 'q', w: 'w', e: 'e', r: 'r', f: 'f' } as const)[key as 'q' | 'w' | 'e' | 'r' | 'f'];
       if (slot) {
         if (this.mode === 'playing' && !this.dead && !e.repeat) this.castSlot(slot);
         return;
@@ -819,6 +895,7 @@ class Game {
       if (e.key === 'i' || e.key === 'I' || e.key === 'Tab') {
         if (this.mode !== 'playing' || this.dead || e.repeat) return;
         e.preventDefault();
+        this.skillPanel.close();
         this.inventoryPanel.toggle();
         if (this.inventoryPanel.visible && this.state) this.inventoryPanel.sync(this.state);
         return;
@@ -826,13 +903,25 @@ class Game {
       if (key === 'p' || key === 'P') {
         if (this.mode !== 'playing' || this.dead || e.repeat) return;
         e.preventDefault();
+        this.skillPanel.close();
         this.passivePanel.toggle();
         if (this.passivePanel.visible && this.state) this.passivePanel.sync(this.state);
+        return;
+      }
+      if (key === 'k' || key === 'K') {
+        if (this.mode !== 'playing' || this.dead || e.repeat || !this.state) return;
+        e.preventDefault();
+        if (this.skillPanel.visible) this.skillPanel.close();
+        else this.openSkills();
         return;
       }
       if (e.key !== 'Escape') return;
       if (this.savePanel.visible) {
         this.savePanel.close();
+        return;
+      }
+      if (this.skillPanel.visible) {
+        this.skillPanel.close();
         return;
       }
       if (this.passivePanel.visible) {
@@ -860,15 +949,107 @@ class Game {
     this.viewport.set(w, h);
   }
 
-  // ---------- Skills & flasks (slice 5) ----------
+  // ---------- Skills, loadout & flasks ----------
 
-  private castSlot(slot: SkillDef['slot']): void {
+  private loadoutEntries(state: GameState): LoadoutEntry[] {
+    return LOADOUT_SLOTS.map((slot) => {
+      const id = skillInSlot(state, slot);
+      if (!id) return { slot, skill: null, rank: 0, minDamage: 0, maxDamage: 0, cooldown: 0 };
+      const skill = getSkill(id);
+      const damage = effectiveSkillDamage(state, id);
+      return {
+        slot,
+        skill,
+        rank: skillRank(state, id),
+        minDamage: damage.min,
+        maxDamage: damage.max,
+        cooldown: effectiveSkillCooldown(state, id),
+      };
+    });
+  }
+
+  private refreshSkillUi(): void {
+    const state = this.state;
+    if (!state) return;
+    this.ui.setLoadout(this.loadoutEntries(state));
+    this.ui.setPoints(passivePointsAvailable(state), skillPointsAvailable(state));
+    if (this.skillPanel.visible) this.skillPanel.sync(state);
+  }
+
+  private castSlot(slot: LoadoutSlot): void {
     const state = this.state;
     if (!state || this.mode !== 'playing' || this.dead) return;
-    const skill = skillsFor(this.classDef.id).find((s) => s.slot === slot);
-    if (!skill) return;
+    const id = skillInSlot(state, slot);
+    if (!id) {
+      this.ui.showToast(`${slot === 'rmb' ? 'RMB' : slot.toUpperCase()}: no skill assigned — click the slot`, '#8f887a');
+      return;
+    }
+    if (skillRank(state, id) <= 0) {
+      this.ui.showToast(`${getSkill(id).name} is locked — press K to unlock it`, '#ff8577');
+      return;
+    }
     const aim = this.castAimPoint(state);
-    state.player.castRequest = { skillId: skill.id, x: aim.x, z: aim.z };
+    state.player.castRequest = { skillId: id, x: aim.x, z: aim.z };
+  }
+
+  private openSkillPicker(slot: LoadoutSlot): void {
+    const state = this.state;
+    if (!state || this.dead) return;
+    this.inventoryPanel.close();
+    this.passivePanel.close();
+    this.skillPanel.open(slot, state);
+  }
+
+  private openSkills(): void {
+    const state = this.state;
+    if (!state) return;
+    const empty = LOADOUT_SLOTS.find((slot) => skillInSlot(state, slot) === null);
+    this.inventoryPanel.close();
+    this.passivePanel.close();
+    this.skillPanel.open(empty ?? 'q', state);
+  }
+
+  private handleAssignSkill(slot: LoadoutSlot, id: SkillId | null): void {
+    const state = this.state;
+    if (!state) return;
+    if (id === null) {
+      clearSkillSlot(state, slot);
+    } else {
+      const result = equipSkill(state, slot, id);
+      if (!result.ok) {
+        this.ui.showToast(loadoutRefusalMessage(result), '#ff8577');
+        this.skillPanel.sync(state);
+        return;
+      }
+    }
+    this.refreshSkillUi();
+    this.saveCheckpoint();
+  }
+
+  private handleUnlockSkill(id: SkillId): void {
+    const state = this.state;
+    if (!state) return;
+    const result = unlockSkill(state, id);
+    if (!result.ok) {
+      this.ui.showToast(loadoutRefusalMessage(result), '#ff8577');
+    } else {
+      this.ui.showToast(`${getSkill(id).name} unlocked — equip it from the picker`, '#e8c877');
+      this.saveCheckpoint();
+    }
+    this.refreshSkillUi();
+  }
+
+  private handleUpgradeSkill(id: SkillId): void {
+    const state = this.state;
+    if (!state) return;
+    const result = upgradeSkill(state, id);
+    if (!result.ok) {
+      this.ui.showToast(loadoutRefusalMessage(result), '#ff8577');
+    } else {
+      this.ui.showToast(`${getSkill(id).name} reached rank ${skillRank(state, id)}`, '#e8c877');
+      this.saveCheckpoint();
+    }
+    this.refreshSkillUi();
   }
 
   /** Aim at the pursued or hovered enemy, else the cursor point, else ahead. */
@@ -888,14 +1069,15 @@ class Game {
     useFlask(state, kind, state.events);
   }
 
-  private reportRefusal(reason: 'mana' | 'cooldown' | 'flask-empty', label: string): void {
+  private reportRefusal(reason: 'mana' | 'cooldown' | 'flask-empty' | 'locked', label: string): void {
     const now = performance.now();
     if (this.lastRefusal.label === label && now - this.lastRefusal.at < 900) return;
     this.lastRefusal = { label, at: now };
     const message =
       reason === 'mana' ? `${label}: not enough mana`
         : reason === 'cooldown' ? `${label}: recharging`
-          : `${label}: no charges — slay enemies to refill`;
+          : reason === 'locked' ? `${label}: not equipped`
+            : `${label}: no charges — slay enemies to refill`;
     this.ui.showToast(message, reason === 'cooldown' ? '#8f887a' : '#ff8577');
   }
 
@@ -1003,13 +1185,22 @@ class Game {
         : { campsCleared: 0, campsTotal: 0, bossSpawned: false, bossDefeated: false },
       projectiles: state?.projectiles.length ?? 0,
       strikes: state?.strikes.length ?? 0,
-      skills: skillsFor(this.classDef.id).map((s) => ({
-        id: s.id,
-        slot: s.slot,
-        name: s.name,
-        manaCost: s.manaCost,
-        cooldown: s.cooldown,
-      })),
+      camera: { yaw: this.rig.yaw, pitch: this.rig.pitch, distance: this.rig.distance },
+      markers: this.cursor.probe(),
+      playerRenderY: this.playerView?.group.position.y ?? 0,
+      skills: state
+        ? this.loadoutEntries(state).map((entry) => ({
+          slot: entry.slot,
+          id: entry.skill?.id ?? null,
+          name: entry.skill?.name ?? null,
+          manaCost: entry.skill?.manaCost ?? 0,
+          cooldown: entry.cooldown,
+          rank: entry.rank,
+        }))
+        : [],
+      skillPoints: state
+        ? { total: skillPointsTotal(state), spent: skillPointsSpent(state), available: skillPointsAvailable(state) }
+        : { total: 0, spent: 0, available: 0 },
       cooldowns: state
         ? Object.fromEntries(
           Object.entries(state.player.cooldowns).map(([id, remaining]) => [id, Math.round((remaining ?? 0) * 1000) / 1000]),
@@ -1121,6 +1312,10 @@ class Game {
     state.player.moveTarget = null;
   }
 
+  terrainHeightAt(x: number, z: number): number {
+    return this.terrainSurface.heightAt(x, z);
+  }
+
   sceneryPoints(): Array<{ x: number; z: number }> {
     const state = this.state;
     if (!state) return [];
@@ -1159,6 +1354,20 @@ class Game {
 
   flashDamage(kind: 'health' | 'shield', strength: number): void {
     this.ui.flashDamage(kind, strength);
+  }
+
+  unlockSkill(id: SkillId): boolean {
+    if (!this.state) return false;
+    const result = unlockSkill(this.state, id);
+    if (result.ok) this.refreshSkillUi();
+    return result.ok;
+  }
+
+  equipSkill(slot: LoadoutSlot, id: SkillId): boolean {
+    if (!this.state) return false;
+    const result = equipSkill(this.state, slot, id);
+    if (result.ok) this.refreshSkillUi();
+    return result.ok;
   }
 
   exportSave(): string {
@@ -1201,11 +1410,14 @@ const game = new Game(canvas, uiRoot);
   setFlaskCharges: (kind, charges) => game.setFlaskCharges(kind, charges),
   setShadows: (enabled) => game.setShadows(enabled),
   flashDamage: (kind, strength) => game.flashDamage(kind, strength),
+  unlockSkill: (id) => game.unlockSkill(id),
+  equipSkill: (slot, id) => game.equipSkill(slot, id),
   setDefences: (armour, evasion) => game.setDefences(armour, evasion),
   clearEnemies: () => game.clearEnemies(),
   clearCamps: () => game.clearCamps(),
   hurtEnemy: (id, amount) => game.hurtEnemy(id, amount),
   teleportPlayer: (x, z) => game.teleportPlayer(x, z),
+  terrainHeightAt: (x, z) => game.terrainHeightAt(x, z),
   sceneryPoints: () => game.sceneryPoints(),
   exportSave: () => game.exportSave(),
   saves: () => game.saves(),

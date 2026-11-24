@@ -1,6 +1,10 @@
 # Ashen Vale — Post-Release Polish & Expansion Plan
 
 Baseline: **v1.0.0** (`b3091c1`, tag `v1.0.0`).
+Status: **v1.2.0 ships the v1.1 + v1.2 scope together** (grounding, fixed
+camera, HUD declutter, skill points and the six-slot loadout). It passed 209
+unit tests and 249 browser checks. The next planned slice is v1.3 combat depth.
+
 This plan starts with correctness and UX debt found in the shipped build, then
 expands the game in vertical slices. Every release keeps the same gates:
 deterministic tests, production build, full browser QA, screenshots, no console
@@ -46,9 +50,9 @@ work; **L**ow = polish.
 | U1 | Destination marker can vanish after a quick re-click | M | `render/cursor.ts`: `setDestination(point)` does not reset `destFade`, so an old fade keeps lowering opacity and can hide the new marker | Reset `destFade = 0` on a new destination; only run the fade branch while `!destVisible` |
 | U2 | Camera rotation conflicts with the PoE-like fixed isometric camera | H | `main.ts` right-drag calls `rig.rotate`; `ui.ts` title hint says “Right drag to rotate”; `qa/verify-slice-01.mjs` tests rotation | Remove right-drag rotation and the `rotating` state; lock the camera yaw; keep zoom for now; update hints and QA |
 | U3 | Persistent bottom guide clutters the play area | H | `ui/ui.ts` `.hud__hints` with move/attack/QWER/flask/passive/inventory/pause text | Remove the strip; add a compact **Controls** section to the pause menu and a one-time first-run toast |
-| S1 | Every class starts with all four skills; level-ups do not unlock kit depth | H | `content/skills.ts` `skillsFor` returns all QWER skills; `createGameState` has no loadout | Add `unlockLevel`/`role` to skills and a 4-slot loadout; start with one active skill |
+| S1 | Every class starts with all four skills; level-ups do not unlock kit depth | H | `content/skills.ts` `skillsFor` returned all QWER skills; `createGameState` had no loadout | Added `unlockLevel`/`role`, skill points and the six-slot loadout; start with one active skill (shipped 1.2.0) |
 | S2 | Q is both the basic attack and a hotbar skill, duplicating left-click | H | `stepPlayerCombat` auto-repeats `basicAttackFor`; `skillsFor` includes Q; UI labels it “free” | Keep the basic attack on left-click only; the hotbar is for active skills |
-| S3 | Clicking a hotbar slot casts the skill; there is no way to change skills | H | `ui.ts` `buildHotbar` attaches `onCastSlot` to every slot button | Clicking a slot opens a skill picker; QWER on the keyboard casts; empty slots are selectable |
+| S3 | Clicking a hotbar slot casts the skill; there is no way to change skills | H | `ui.ts` `buildHotbar` attached `onCastSlot` to every slot button | Clicking opens a skill picker; RMB/QWERF cast; empty slots are selectable (shipped 1.2.0) |
 | S4 | No skill library, empty-slot state, lock state or unlock feedback | H | No UI/model for a skill library | Add a DOM skill picker with locked/unlocked states, descriptions, mana/cooldown and a clear option |
 | S5 | Saves do not persist a loadout | H | `save/schema.ts` v3 stores passives/objectives/flasks only | Schema v4 adds a validated loadout; v3→v4 migration builds a sensible default from class/level |
 | C1 | Props and arena pillars can hide the player or boss | M | Boss-fight screenshots show a pillar covering the hero; no occlusion handling | Add a camera-to-player occlusion fade for props (instanced shader or per-instance depth-aware fade); test in the arena |
@@ -103,9 +107,10 @@ Acceptance:
 ### 3.3 Skills: progression, one starting active, click-to-swap
 
 **Decision:** the left-click basic attack stays but leaves the hotbar. The
-hotbar has four loadout slots (Q/W/E/R); a fresh character starts with **one
-active skill** and unlocks the rest with levels. Clicking a slot opens a picker;
-keyboard QWER casts.
+hotbar has **six loadout slots (`RMB, Q, W, E, R, F`)**; a fresh character
+starts with **one active skill** and unlocks the rest with levels. Clicking a
+slot opens a picker; RMB/QWERF casts. Unlocking and upgrading cost skill points;
+newly unlocked skills stay in the library until assigned (no auto-equip).
 
 Proposed content model:
 
@@ -120,23 +125,24 @@ interface SkillDef {
 }
 
 interface PlayerState {
-  loadout: Array<SkillId | null>; // length 4, Q/W/E/R
+  skills: {
+    ranks: Partial<Record<SkillId, number>>; // 0/absent = locked, 1..5
+    loadout: Array<SkillId | null>; // length 6, RMB/Q/W/E/R/F
+  };
 }
 ```
 
-Recommended starting skill and unlock schedule:
+Implemented starting skill and unlock schedule:
 
-| Class | Left-click basic | Starts with (Q) | Level 2/3 | Level 4/5 | Level 6+ |
-| --- | --- | --- | --- | --- | --- |
-| Marauder | Cleave | Sunder | Whirlwind | Reckless Charge | 4th active (expansion) |
-| Ranger | Piercing Shot | Split Shot | Snipe | Rain of Arrows | 4th active (expansion) |
-| Witch | Ember Bolt | Ember Nova | Cinder Barrage | Meteor Strike | 4th active (expansion) |
+| Class | Left-click basic | Starts with (Q) | Level 2 | Level 4 |
+| --- | --- | --- | --- | --- |
+| Marauder | Cleave | Sunder | Whirlwind | Reckless Charge |
+| Ranger | Piercing Shot | Split Shot | Snipe | Rain of Arrows |
+| Witch | Ember Bolt | Ember Nova | Cinder Barrage | Meteor Strike |
 
-Exact thresholds are a balance decision; the plan is one active at level 1 and
-three by the time the camps are being cleared. Newly unlocked skills auto-equip
-into the first empty slot (and show a toast); the player can click any slot to
-change it. If every slot is full, the new skill appears in the library with an
-“Unlocked” badge.
+Newly unlocked skills stay in the library (no auto-equip) and show an
+“Unlocked” state; the player opens a slot and assigns them. If every slot is
+full, the new skill remains available in the library for a future swap.
 
 Loadout rules:
 - One skill per slot, no duplicates.
@@ -148,7 +154,7 @@ Loadout rules:
   for their class and level.
 
 UI:
-- Hotbar always shows four slots, with empty slots visibly empty (`+`/“Assign”).
+- Hotbar always shows six slots, with empty slots visibly empty (`+`/“Assign”).
 - Hover tooltips show name, damage, mana, cooldown and description.
 - Clicking a slot opens a panel listing every class skill: unlocked ones are
   selectable, locked ones show “Unlocks at level N”.
@@ -159,11 +165,13 @@ UI:
   slot.
 
 Acceptance:
-- Fresh character has exactly one active skill in Q and three empty slots.
+- Fresh character has exactly one active skill in Q and five empty slots.
 - Left-click attacks still repeat the class basic attack for free.
 - No locked skill can be equipped or cast through any path.
 - Clicking a slot never casts the skill.
-- QWER casts the equipped skills and refuses visibly for empty/mana/cooldown.
+- RMB/QWERF cast the equipped skills and refuse visibly for empty/mana/cooldown.
+- Unlock and upgrade ranks cost skill points; skills stay in the library until
+  the player assigns them.
 - Save/reload preserves the loadout; a v3 save loads with a sensible default.
 - Unit tests cover unlock levels, loadout validation, casting, and migration;
   browser QA covers the picker and reload.
@@ -204,7 +212,7 @@ Acceptance:
 
 ---
 
-## 4. v1.1 — Grounding, camera and HUD hotfix
+## 4. v1.1 — Grounding, camera and HUD hotfix ✅ (shipped in v1.2.0)
 
 **Goal:** remove the visible inconsistencies without adding content or changing
 the save schema.
@@ -236,7 +244,7 @@ Effort: **S–M** (one focused slice).
 
 ---
 
-## 5. v1.2 — Skill progression and loadout
+## 5. v1.2 — Skill progression and loadout ✅ (shipped in v1.2.0)
 
 **Goal:** make skill choice a progression system and the hotbar an editable
 loadout, without changing the core combat math.
@@ -244,13 +252,13 @@ loadout, without changing the core combat math.
 Scope:
 1. Add `role` and `unlockLevel` to every skill; remove fixed hotbar slots from
    content.
-2. Add `PlayerState.loadout` and the loadout transaction helpers.
-3. Start with one active skill; auto-equip unlocks into empty slots; toast
-   unlocked skills.
-4. Build the skill picker; change hotbar slot clicks to open it; keyboard QWER
-   casts.
+2. Add `PlayerState.skills.ranks`, the six-slot `loadout` and the skill-point
+   transaction helpers.
+3. Start with one active skill; **do not auto-equip** unlocks; toast them and
+   leave them in the library.
+4. Build the skill library/picker; hotbar slot clicks open it; RMB/QWERF cast.
 5. Keep the basic attack on left-click and remove it from the hotbar.
-6. Save schema v4 with a tested v3→v4 migration and loadout validation.
+6. Save schema v4 with tested v1/v2/v3→v4 migrations and rank/loadout validation.
 7. Update the HUD tooltips, empty-slot visuals, cooldown mapping, snapshot/debug
    fixtures and all skill QA.
 8. Balance pass on starting mana/cooldowns so one active + basic attack feels
@@ -260,10 +268,10 @@ Out of scope: new skills, support gems, skill trees per skill, respec costs,
 weapon swaps.
 
 Acceptance gates:
-- Fresh character: one active skill, three empty slots, left-click basic works.
-- Level unlocks and auto-equip are deterministic; the picker refuses locked
-  skills and duplicates.
-- Clicking slots never casts; QWER casts the equipped set.
+- Fresh character: one active skill, five empty slots, left-click basic works.
+- Level/skill-point unlocks are deterministic; newly unlocked skills stay in
+  the library; the picker refuses locked skills and duplicates.
+- Clicking slots never casts; RMB/QWERF casts the equipped set.
 - Save/reload and v3 migration preserve a legal loadout.
 - Browser QA: start → level → picker → equip → cast → boss → save → reload.
 
@@ -279,7 +287,8 @@ Effort: **M** (one larger slice).
 Sizes are relative slices, not calendar estimates.
 
 ### v1.3 — Combat depth (M)
-- Add a **fourth active skill** per class and fill the R slot.
+- Add a **fourth active skill** per class; the six-slot library/loadout is
+  already in place, so this adds build choice rather than bar capacity.
 - Add one **skill modifier** layer (e.g. runes/supports that change count,
   area, cooldown or damage type) with a small, readable pool.
 - Give elites and the Warden one new mechanic each (e.g. a curse, a ground
@@ -333,30 +342,47 @@ Sizes are relative slices, not calendar estimates.
 
 ---
 
-## 8. Open decisions
+## 8. Confirmed decisions
 
-1. **Starting skills and unlock levels:** is the proposed table (Sunder/Split
-   Shot/Ember Nova at level 1; third active by level 4–5) the right pace?
-2. **Auto-equip policy:** auto-equip a newly unlocked skill into the first empty
-   slot, or leave it in the library for the player to assign?
-3. **Zoom:** keep scroll zoom with a fixed camera yaw, or lock zoom too for a
-   strict PoE-style view?
-4. **Right click:** leave it inert (context menu suppressed) or bind a second
-   action later?
-5. **Slots:** keep four (Q/W/E/R) with a 4th skill in v1.3, or ship three active
-   slots in v1.2?
-6. **HUD clutter:** should the autosave badge disappear after saving, or move
-   entirely into the pause menu?
-7. **Fixed yaw:** use a true 45° isometric angle, or preserve the current 0.22π
-   framing?
-8. **Terrain elevation:** is a second zone with real elevation in scope for
-   v1.5, or should the world stay mostly flat?
+1. **Unlock pace:** signature active at level 1, second active at level 2,
+   third active available at level 4.
+2. **Skill points:** unlocking and upgrading skills costs skill points. Newly
+   unlocked skills stay in the library; the player equips them through the
+   skill picker. No auto-equip.
+3. **Zoom:** scroll zoom stays, but the range is narrowed (close-in allowed,
+   far zoom removed).
+4. **Bindings:** left click is move/basic attack; right click plus Q/W/E/R/F are
+   six skill slots (PoE-style), shown as RMB Q W E R F in the hotbar.
+5. **Autosave status:** remove the permanent HUD badge; keep the transient
+   checkpoint flash and show the active slot in the pause menu.
+6. **Camera yaw:** fixed 45° isometric view.
+7. **Terrain:** the second zone may use real elevation; the grounding contract
+   from v1.1 is a prerequisite, not a later nice-to-have.
+
+### Skill-point economy to implement
+
+- Each level after 1 grants **1 skill point** (level 9 → 8 points).
+- The signature skill is granted free at rank 1.
+- Unlocking another active skill costs 1 point; reaching rank 2–5 costs 1 point
+  per rank. Max rank 5.
+- Rank scaling: **+15% damage** per rank above 1; **−4% cooldown** per rank
+  above 1 (rank 5 → 1.6× damage, 0.84× cooldown).
+- Skill points are derived (`level - 1 - spent`), not stored as a mutable
+  balance; save v4 stores ranks and loadout, and migration derives a sensible
+  state from the old level.
+- The basic attack is free, always available and is not part of the skill
+  library or loadout.
+
+### Slot order
+
+`RMB, Q, W, E, R, F` — six active-skill slots. The starting signature skill is
+placed in Q. Clicking any slot opens the skill picker with that slot selected.
 
 ---
 
-## 9. Suggested next action
+## 9. Execution order
 
-Start with **v1.1 only** (grounding, camera, HUD, destination fade). It is a
-small, low-risk slice that fixes everything reported here except the skill
-system, and it creates the render contract that the expansion needs. Then ship
-**v1.2** (skill progression/loadout) before adding new content.
+v1.1 (grounding, fixed 45° camera, narrowed zoom, HUD declutter, destination
+fade) and v1.2 (skill points, unlock/upgrade, six-slot RMB/QWERF loadout,
+click-to-swap picker, save v4) shipped together as **v1.2.0**. The next slice is
+**v1.3 combat depth**; new content begins only after that.

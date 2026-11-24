@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { TerrainSurface } from './terrainSurface';
 
 function ringGeometry(inner: number, outer: number): THREE.RingGeometry {
   const geo = new THREE.RingGeometry(inner, outer, 48);
@@ -8,7 +9,8 @@ function ringGeometry(inner: number, outer: number): THREE.RingGeometry {
 
 /**
  * Pointer feedback: a dim ground ring, a warm enemy ring, and a pulsing
- * move destination marker.
+ * move destination marker. Every ring samples the terrain height so it never
+ * sinks under a rise.
  */
 export class CursorMarker {
   private readonly hoverRing: THREE.Mesh;
@@ -17,7 +19,11 @@ export class CursorMarker {
   private readonly destMaterial: THREE.MeshBasicMaterial;
   private destVisible = false;
 
-  constructor(scene: THREE.Scene, private readonly color: number) {
+  constructor(
+    scene: THREE.Scene,
+    private readonly color: number,
+    private readonly terrain: TerrainSurface,
+  ) {
     this.hoverMaterial = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -45,8 +51,11 @@ export class CursorMarker {
 
   setHover(point: THREE.Vector3 | null, enemyRadius?: number): void {
     if (point) {
-      this.hoverRing.position.x = point.x;
-      this.hoverRing.position.z = point.z;
+      this.hoverRing.position.set(
+        point.x,
+        this.terrain.heightAt(point.x, point.z) + 0.025,
+        point.z,
+      );
       this.hoverRing.scale.setScalar(enemyRadius === undefined ? 1 : (enemyRadius + 0.15) / 0.4);
       this.hoverMaterial.color.setHex(enemyRadius === undefined ? this.color : 0xff785e);
       this.hoverMaterial.opacity = enemyRadius === undefined ? 0.32 : 0.82;
@@ -58,10 +67,16 @@ export class CursorMarker {
 
   setDestination(point: THREE.Vector3 | null): void {
     if (point) {
-      this.destRing.position.x = point.x;
-      this.destRing.position.z = point.z;
+      // A fresh destination must cancel any fade left by the previous arrival.
+      this.destFade = 0;
+      this.destRing.position.set(
+        point.x,
+        this.terrain.heightAt(point.x, point.z) + 0.035,
+        point.z,
+      );
       this.destRing.visible = true;
       this.destVisible = true;
+      this.destMaterial.opacity = 0.85;
     } else if (this.destVisible) {
       // Arrival: quick fade-out handled by update().
       this.destVisible = false;
@@ -71,10 +86,28 @@ export class CursorMarker {
 
   private destFade = 0;
 
+  /** QA/debug snapshot of the ground-anchored markers. */
+  probe(): {
+    hover: { x: number; y: number; z: number } | null;
+    destination: { x: number; y: number; z: number } | null;
+  } {
+    return {
+      hover: this.hoverRing.visible
+        ? { x: this.hoverRing.position.x, y: this.hoverRing.position.y, z: this.hoverRing.position.z }
+        : null,
+      destination: this.destVisible
+        ? { x: this.destRing.position.x, y: this.destRing.position.y, z: this.destRing.position.z }
+        : null,
+    };
+  }
+
   update(elapsed: number, dt: number): void {
     const pulse = 1 + Math.sin(elapsed * 5) * 0.07;
     this.destRing.scale.setScalar(pulse);
-    this.destMaterial.opacity = this.destVisible ? 0.85 : this.destMaterial.opacity;
+    if (this.destVisible) {
+      this.destMaterial.opacity = 0.85;
+      return;
+    }
     if (this.destFade > 0) {
       this.destFade = Math.max(0, this.destFade - dt * 3);
       this.destMaterial.opacity = 0.85 * this.destFade;

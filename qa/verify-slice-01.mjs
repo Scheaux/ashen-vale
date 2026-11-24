@@ -104,22 +104,35 @@ async function main() {
   await page.waitForTimeout(1800);
   await page.screenshot({ path: `${SHOTS}05-second-move.png` });
 
-  // --- Camera: wheel zoom + right-drag rotate ---
+  // --- Camera: close zoom, fixed 45° yaw, no right-drag rotation ---
+  const cameraBefore = (await snapshot()).camera;
   await page.mouse.move(cx, cy);
   await page.mouse.wheel(0, -240);
   await page.waitForTimeout(300);
+  const cameraZoom = (await snapshot()).camera;
+  const zoomShot = await page.screenshot();
+  check('scroll zoom stays inside the close range',
+    cameraZoom.distance < cameraBefore.distance && cameraZoom.distance >= 12 && cameraZoom.distance <= 21,
+    `distance ${cameraBefore.distance} -> ${cameraZoom.distance}`);
+  check('zoom visibly changes the view', !after.equals(zoomShot));
   await page.mouse.down({ button: 'right' });
   await page.mouse.move(cx + 180, cy, { steps: 8 });
   await page.mouse.up({ button: 'right' });
   await page.waitForTimeout(300);
-  const rotated = await page.screenshot();
-  check('camera responds to zoom/rotate', !after.equals(rotated));
-  await page.screenshot({ path: `${SHOTS}06-camera-rotate.png` });
+  const cameraDrag = (await snapshot()).camera;
+  check('right drag does not rotate the fixed camera', cameraDrag.yaw === cameraZoom.yaw,
+    `yaw ${cameraZoom.yaw} -> ${cameraDrag.yaw}`);
+  check('the fixed camera uses a 45° yaw', Math.abs(cameraDrag.yaw - Math.PI / 4) < 1e-9, `${cameraDrag.yaw}`);
+  check('the persistent HUD key guide is gone', (await page.locator('.hud__hints').count()) === 0);
+  await page.screenshot({ path: `${SHOTS}06-camera-zoom.png` });
 
   // --- Pause flow ---
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
   check('Esc opens pause menu', await page.locator('[data-screen="paused"]').isVisible());
+  const controlsText = (await page.locator('.controls').innerText()).toLowerCase();
+  check('pause menu lists controls after the guide removal',
+    controlsText.includes('right click') && controlsText.includes('q w e r f'));
   await page.screenshot({ path: `${SHOTS}07-pause.png` });
 
   // Restart run keeps the HUD and resumes play.

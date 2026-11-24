@@ -5,6 +5,7 @@ import type { GameState, SimEvent } from '../sim/state';
 import { clamp } from '../core/math';
 import { HitClock } from './anim';
 import { createHeroRig, type HeroRig } from './heroModel';
+import type { TerrainSurface } from './terrainSurface';
 
 export interface PlayerView {
   group: THREE.Group;
@@ -20,7 +21,7 @@ const DEATH_DURATION = 1.4;
  * strikes, flinches, death). Rendering consumes authoritative sim events and
  * never invents gameplay outcomes.
  */
-export function createPlayerView(def: ClassDef): PlayerView {
+export function createPlayerView(def: ClassDef, terrain: TerrainSurface): PlayerView {
   const rig: HeroRig = createHeroRig(def);
   const clock = new HitClock();
   let facing = Math.PI;
@@ -52,7 +53,7 @@ export function createPlayerView(def: ClassDef): PlayerView {
     effort += (leanIntent - effort) * (1 - Math.exp(-9 * dt));
     speedRatio += (targetSpeed - speedRatio) * (1 - Math.exp(-dt * (p.attack ? 29 : 16)));
 
-    rig.root.position.set(x, 0, z);
+    rig.root.position.set(x, terrain.heightAt(x, z), z);
 
     const diff = Math.atan2(Math.sin(p.facing - facing), Math.cos(p.facing - facing));
     const delta = diff * (1 - Math.exp(-16 * dt));

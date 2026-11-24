@@ -1,7 +1,7 @@
 {
   "name": "ashen-vale",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "qa": "npm run build && node qa/verify-targeting.mjs && node qa/verify-slice-01.mjs && node qa/verify-slice-02.mjs && node qa/verify-slice-03.mjs && node qa/verify-slice-04.mjs && node qa/verify-slice-05.mjs && node qa/verify-slice-07.mjs && node qa/verify-slice-08.mjs && node qa/verify-stats.mjs && node qa/verify-passives.mjs && node qa/verify-release.mjs",
+    "qa": "npm run build && node qa/verify-targeting.mjs && node qa/verify-slice-01.mjs && node qa/verify-slice-02.mjs && node qa/verify-slice-03.mjs && node qa/verify-slice-04.mjs && node qa/verify-slice-05.mjs && node qa/verify-slice-07.mjs && node qa/verify-slice-08.mjs && node qa/verify-postrelease.mjs && node qa/verify-stats.mjs && node qa/verify-passives.mjs && node qa/verify-release.mjs",
     "qa:release": "npm run build && node qa/verify-release.mjs"
   },
   "dependencies": {

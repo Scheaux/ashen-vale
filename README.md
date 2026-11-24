@@ -1,14 +1,18 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG in TypeScript + three.js, released as
-**v1.0.0**. Built in vertical slices; the completed MVP covers scaffold,
+**v1.2.0**. Built in vertical slices; the completed MVP covers scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
-(QWER skill hotbars, mana, flasks and the death → checkpoint retry flow), a
-passive skill tree, the zone objective loop — clear the camps, then end the
-Ashen Warden in its arena — local save slots with Continue, jointed procedural
-character rigs, and the release polish pass (combat readability, VFX,
-performance LOD and adaptive resolution).
-See [MVP.md](./MVP.md) for the slice-by-slice roadmap and
+(mana, flasks and the death → checkpoint retry flow), a passive skill tree, the
+zone objective loop — clear the camps, then end the Ashen Warden in its arena —
+local save slots with Continue, jointed procedural character rigs, and the
+post-release polish pass (fixed 45° camera, terrain grounding, HUD declutter,
+combat readability, VFX, performance LOD and adaptive resolution).
+
+v1.2 adds a **skill-point progression and six-slot loadout system** (RMB +
+Q/W/E/R/F), a skill library with unlock/upgrade ranks, and click-to-swap hotbar
+slots. See [MVP.md](./MVP.md) for the roadmap,
+[the post-release plan](./docs/post-release-plan.md) for the next phases, and
 [release notes](./docs/release-notes.md) for verification evidence, known
 limitations and rollback steps.
 
@@ -30,25 +34,33 @@ npm run qa:release # production build + the full-loop release suite only
 | --- | --- |
 | Left click (ground) | Move to point |
 | Hover near an enemy, then left click | Highlight, pursue and attack |
-| Q / W / E / R | Cast hotbar skills (Q = basic attack) |
+| Right click | Cast the RMB loadout skill |
+| Q / W / E / R / F | Cast the five keyboard loadout skills |
+| Click a hotbar slot | Open the skill picker for that slot (never casts) |
 | 1 / 2 | Drink the health / mana flask |
 | P | Open or close the passive skill tree |
-| Right drag | Rotate camera |
-| Scroll | Zoom |
+| K | Open or close the skill library/loadout picker |
+| Scroll | Zoom (close range, 12–21 units) |
 | I | Open or close inventory |
 | Esc | Pause / resume (and back out of menus) |
 | Title: Continue / Load Game | Resume the newest checkpoint or pick a slot |
-| Pause: Save Game / Load Game | Write or restore a checkpoint in any slot |
+| Pause: Skills / Save / Load | Edit the loadout, write or restore a checkpoint |
 
 ## Current state
 
 - Title screen -> class select (Marauder / Ranger / Witch) -> playable moor
 - Fixed-timestep deterministic simulation (60 Hz) with render interpolation
 - Click-to-move steering, arrival slowdown, slide-along-obstacle collision
-- Isometric camera follow with damped smoothing, zoom and yaw rotation
+- **Fixed 45° isometric camera** with damped follow and close scroll zoom
+  (12–21 units); no yaw rotation
 - Dark-fantasy procedural scene: moonlit fog, ridged terrain, instanced props,
   enemy-only hover highlight, click destination marker, drifting embers
-- Pause / restart run / quit to title
+- **Terrain grounding:** hero, enemies, props, cursor/hover/destination rings,
+  elite auras, loot, nameplates, projectiles, floating text, the camera target
+  and pointer picks all sample the heightfield; the destination marker also
+  cancels its old fade when a new point is clicked
+- Pause / restart run / quit to title; the pause menu holds the controls list
+  (the old persistent bottom hint strip is gone)
 - **Combat:** click an enemy to pursue and attack — melee cleave (Marauder),
   arrow and ember bolt projectiles (Ranger/Witch); one centralized
   damage pipeline; basic attacks resolve on the shared animation contact or
@@ -81,12 +93,17 @@ npm run qa:release # production build + the full-loop release suite only
   Spell Damage, matched against each skill's `damageClass` — spells bypass
   armour and evasion entirely. The character sheet in the inventory shows the
   full breakdown
-- **Skills & flasks:** a four-skill QWER kit per class (free basic attack +
-  three active skills across melee arcs, projectile fans, novas, telegraphed
-  ground strikes and a dash), mana costs with regen and refuse feedback,
-  per-skill cooldown sweeps, health/mana flasks (1/2) with refill-on-kill
-  charges, and distinct VFX per skill — slash arcs, nova rings, shard bursts,
-  draped strike telegraphs
+- **Skills & flasks:** a PoE-style **RMB + Q/W/E/R/F** loadout with six slots.
+  Left click is the free basic attack (Cleave / Piercing Shot / Ember Bolt);
+  it is not a hotbar skill. A fresh exile starts with one signature active in Q;
+  each level grants **1 skill point**, and the class library has actives at levels
+  1, 2 and 4. Unlocking costs 1 point and upgrading ranks 2–5 costs 1 point each
+  (+15% damage and −4% cooldown per rank). Skills are **never auto-equipped**:
+  click a hotbar slot or press K to open the picker, unlock/upgrade from the
+  library, and assign a skill to the selected slot. Empty slots are visibly
+  assignable. Mana costs, regen, refuse feedback, cooldown sweeps, health/mana
+  flasks (1/2) with refill-on-kill charges, and per-skill VFX (slash arcs, nova
+  rings, shard bursts, draped strike telegraphs) remain
 - **Passive skill tree:** a 33-node tree (offence / defence / utility
   clusters, five keystones) with one point per level, adjacency-gated
   allocation and no-orphan refunds; passive bonuses feed the shared stat
@@ -107,11 +124,12 @@ npm run qa:release # production build + the full-loop release suite only
   level-ups, death, quit, and whenever a passive or equipment choice changes;
   **Continue** on the title restores the newest readable checkpoint. Loading
   rebuilds the zone from the checkpoint — level, XP, passives, inventory,
-  flasks, position and camp/boss flags — with cleared camps left empty and a
-  live boss fight restarting at its arena spawn. Every write keeps the previous
-  body as a backup; torn writes recover, and corrupt slots are reported and
-  deletable. Schema v3 with tested v1→v3 and v2→v3 migrations
-  (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
+  flasks, **skill ranks and six-slot loadout**, position and camp/boss flags —
+  with cleared camps left empty and a live boss fight restarting at its arena
+  spawn. Every write keeps the previous body as a backup; torn writes recover,
+  and corrupt slots are reported and deletable. Schema **v4** with tested
+  v1→v4, v2→v4 and v3→v4 migrations; legacy saves pre-spend the active kit
+  available at their level (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
 - **Combat readability:** layered ground telegraphs (dark stain, rising fill,
   bright rim), one instanced health-bar draw call pair for all enemies, heavy-hit
   damage numbers, shield markers, a red/blue damage vignette, decaying camera
@@ -122,9 +140,10 @@ npm run qa:release # production build + the full-loop release suite only
   and the device cap. Release QA gates camp fights at **≤320 draw calls /
   ≤260K triangles** (measured 121–280 calls and 165–193K triangles in headless
   Chromium)
-- **Release:** v1.0.0 with a full-loop browser suite (fresh start → feedback →
+- **Release:** v1.2.0 with a full-loop browser suite (fresh start → feedback →
   camps → boss phases → victory → save → reload → Continue), high-DPI adaptive
-  quality and reduced-motion checks; see
+  quality and reduced-motion checks, plus post-release QA for grounding, the
+  fixed camera, HUD declutter and the skill-point/loadout flow; see
   [release notes](./docs/release-notes.md) for evidence and rollback
 
 ## Architecture
@@ -135,16 +154,17 @@ src/
   content/   data-only definitions: classes, skills, enemies/attacks, items/affixes, zone layout
   sim/       pure deterministic game state + authoritative combat events (no three.js imports)
   systems/   movement, centralized combat pipeline (skills, cooldowns, mana, area strikes),
-             enemy AI machine, flasks, passive tree rules, inventory transactions,
-             stats derivation (attributes, armour/evasion/energy shield, attack vs
-             spell damage), progression (XP), loot
+             enemy AI machine, flasks, passive tree rules, skill-point/loadout rules,
+             inventory transactions, stats derivation (attributes, armour/evasion/energy
+             shield, attack vs spell damage), progression (XP), loot
   render/    three.js scene, terrain, props, character rigs, enemies, projectiles, telegraphs,
              skill VFX, loot drops, camera, cursor; anim.ts holds the animation curves,
              materials.ts procedural normal/roughness maps, geo.ts bevel/lathe/sweep/rock toolkit
-  ui/        DOM-overlay screens (title, class select, HUD with hotbar/flasks, passive
-             tree, pause, death recap, inventory), floating combat text, nameplates
-  save/      versioned schema + migrations, localStorage slots with backups,
-             checkpoint restore (rebuilds zone progress from saved flags)
+  ui/        DOM-overlay screens (title, class select, HUD with six-slot loadout/flasks,
+             passive tree, skill library/loadout picker, pause with controls, death
+             recap, inventory), floating combat text, nameplates
+  save/      versioned schema (v4) + migrations, localStorage slots with backups,
+             checkpoint restore (rebuilds zone progress, ranks and loadout)
 ```
 
 Procedural detail follows the three-scale model: silhouettes get curve
@@ -168,8 +188,8 @@ flags and the deterministic layout.
 
 ## Release
 
-- **Version:** 1.0.0
+- **Version:** 1.2.0
 - **Build:** static `dist/` bundle; `npm run build`, then serve `dist/`
-- **Rollback target:** `af7b052` (Slice 8 checkpoint; the save schema v3 is
-  unchanged in v1.0.0, so checkpoints remain compatible)
+- **Rollback target:** tag `v1.0.0` (`b3091c1`). Save schema v4 is not readable
+  by v1.0.0; export/remove v4 slots before rolling back.
 - **Evidence:** see [docs/release-notes.md](./docs/release-notes.md)

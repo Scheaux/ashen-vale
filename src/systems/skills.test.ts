@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
-import { basicAttackFor, getSkill, skillsFor } from '../content/skills';
-import type { CircleCollider, ZoneLayout } from '../content/types';
+import { activeSkillsFor, basicAttackFor, getSkill } from '../content/skills';
+import { LOADOUT_SLOTS, type CircleCollider, type SkillId, type ZoneLayout } from '../content/types';
 import { createGameState, drainEvents, type GameState, type SimEvent } from '../sim/state';
 import { stepRun } from '../sim/run';
 import { damageEnemy, damagePlayer, stepPlayerCombat, stepStrikes, canCast } from './combat';
+import { equipSkill, unlockSkill } from './loadout';
 
 function layoutWith(enemies: Array<{ x: number; z: number }> = [], colliders: CircleCollider[] = []): ZoneLayout {
   return {
@@ -28,19 +29,42 @@ function runUntilCastDone(state: GameState, events: SimEvent[], cap = 120): void
   }
 }
 
-describe('skill roster (slice 5)', () => {
-  it('gives every class four hotbar skills on QWER', () => {
+/** Level up and unlock/equip the requested actives through the real rules. */
+function prepare(state: GameState, ids: SkillId[]): void {
+  state.level = Math.max(state.level, 9);
+  for (const id of ids) {
+    if ((state.skills.ranks[id] ?? 0) === 0) expect(unlockSkill(state, id).ok).toBe(true);
+  }
+  ids.forEach((id, index) => {
+    expect(equipSkill(state, LOADOUT_SLOTS[index + 1], id).ok).toBe(true);
+  });
+}
+
+describe('skill roster (post-release)', () => {
+  it('gives every class one basic attack and three unlockable actives', () => {
     for (const classId of ['marauder', 'ranger', 'witch'] as const) {
-      const skills = skillsFor(classId);
-      expect(skills.map((s) => s.slot)).toEqual(['q', 'w', 'e', 'r']);
-      expect(skills.every((s) => s.classId === classId)).toBe(true);
+      expect(basicAttackFor(classId).role).toBe('basic');
+      const actives = activeSkillsFor(classId);
+      expect(actives).toHaveLength(3);
+      expect(actives.map((s) => s.unlockLevel)).toEqual([1, 2, 4]);
+      expect(actives.every((s) => s.classId === classId && s.role === 'active')).toBe(true);
+    }
+  });
+
+  it('starts with the signature skill in Q and every other slot empty', () => {
+    for (const classId of ['marauder', 'ranger', 'witch'] as const) {
+      const state = createGameState(getClass(classId), layoutWith());
+      const signature = activeSkillsFor(classId)[0];
+      expect(state.skills.ranks[signature.id]).toBe(1);
+      expect(state.skills.loadout[LOADOUT_SLOTS.indexOf('q')]).toBe(signature.id);
+      expect(state.skills.loadout.filter(Boolean)).toHaveLength(1);
     }
   });
 
   it('keeps the basic attack free and prices the active skills in mana', () => {
     for (const classId of ['marauder', 'ranger', 'witch'] as const) {
       expect(basicAttackFor(classId).manaCost).toBe(0);
-      for (const skill of skillsFor(classId).filter((s) => s.slot !== 'q')) {
+      for (const skill of activeSkillsFor(classId)) {
         expect(skill.manaCost).toBeGreaterThan(0);
         expect(skill.cooldown).toBeGreaterThan(0);
       }
@@ -51,6 +75,7 @@ describe('skill roster (slice 5)', () => {
 describe('casting, mana and cooldowns', () => {
   it('consumes mana, starts the committed attack and starts the cooldown', () => {
     const state = createGameState(getClass('witch'), layoutWith([{ x: 0, z: 24 }]));
+    prepare(state, ['ember-nova']);
     const events: SimEvent[] = [];
     const skill = getSkill('ember-nova');
     state.player.castRequest = { skillId: 'ember-nova', x: 0, z: 24 };
@@ -65,6 +90,7 @@ describe('casting, mana and cooldowns', () => {
 
   it('refuses a cast without mana and reports it', () => {
     const state = createGameState(getClass('witch'), layoutWith([{ x: 0, z: 24 }]));
+    prepare(state, ['ember-nova']);
     const events: SimEvent[] = [];
     state.player.mana = 0;
     state.player.castRequest = { skillId: 'ember-nova', x: 0, z: 24 };
@@ -78,6 +104,7 @@ describe('casting, mana and cooldowns', () => {
 
   it('refuses a recast while the skill is on cooldown', () => {
     const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 24 }]));
+    prepare(state, ['sunder']);
     const events: SimEvent[] = [];
     state.player.castRequest = { skillId: 'sunder', x: 0, z: 24 };
     stepPlayerCombat(state, 1 / 60, events);
@@ -116,6 +143,7 @@ describe('casting, mana and cooldowns', () => {
 
   it('a hotbar cast interrupts the repeating basic swing', () => {
     const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 20 }]));
+    prepare(state, ['whirlwind']);
     const events: SimEvent[] = [];
     state.player.attackTargetId = state.enemies[0].id;
     for (let i = 0; i < 60 && state.player.attack?.skillId !== 'cleave'; i++) {
@@ -134,6 +162,7 @@ describe('casting, mana and cooldowns', () => {
 describe('skill deliveries', () => {
   it('nova hits everything inside the radius and nothing beyond it', () => {
     const state = createGameState(getClass('witch'), layoutWith([{ x: 0, z: 20 }, { x: 0, z: 26 }]));
+    prepare(state, ['ember-nova']);
     const events: SimEvent[] = [];
     const [near, far] = state.enemies;
     state.player.castRequest = { skillId: 'ember-nova', x: 0, z: 20 };
@@ -147,6 +176,7 @@ describe('skill deliveries', () => {
 
   it('ground strike holds its damage through the fuse, then bursts once', () => {
     const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 22 }]));
+    prepare(state, ['sunder']);
     const events: SimEvent[] = [];
     const enemy = state.enemies[0];
     state.player.castRequest = { skillId: 'sunder', x: enemy.position.x, z: enemy.position.z };
@@ -166,6 +196,7 @@ describe('skill deliveries', () => {
 
   it('spread launches the advertised fan of projectiles', () => {
     const state = createGameState(getClass('ranger'), layoutWith([{ x: 0, z: 28 }]));
+    prepare(state, ['split-shot']);
     const events: SimEvent[] = [];
     const skill = getSkill('split-shot');
     state.player.castRequest = { skillId: 'split-shot', x: 0, z: 28 };
@@ -181,6 +212,7 @@ describe('skill deliveries', () => {
 
   it('dash travels along the facing and hits each enemy at most once', () => {
     const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 20 }, { x: 0, z: 23 }]));
+    prepare(state, ['reckless-charge']);
     const events: SimEvent[] = [];
     const [first, second] = state.enemies;
     state.player.castRequest = { skillId: 'reckless-charge', x: 0, z: 30 };
@@ -197,6 +229,7 @@ describe('skill deliveries', () => {
 
   it('a fan loosed at point-blank range survives its birth tick', () => {
     const state = createGameState(getClass('ranger'), layoutWith([{ x: 0, z: 18.5 }]));
+    prepare(state, ['split-shot']);
     state.player.castRequest = { skillId: 'split-shot', x: 0, z: 18.5 };
 
     let peak = 0;
@@ -212,6 +245,7 @@ describe('skill deliveries', () => {
 
   it('ground strikes aim at the requested point, not the player position', () => {
     const state = createGameState(getClass('ranger'), layoutWith());
+    prepare(state, ['rain-of-arrows']);
     const events: SimEvent[] = [];
     state.player.castRequest = { skillId: 'rain-of-arrows', x: 5, z: 25 };
     stepPlayerCombat(state, 1 / 60, events);

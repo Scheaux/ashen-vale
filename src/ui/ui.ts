@@ -1,6 +1,6 @@
 import { CLASSES } from '../content/classes';
 import type { SkillDef } from '../content/skills';
-import type { ClassDef, ClassId, SkillId } from '../content/types';
+import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId } from '../content/types';
 import type { FlaskKind } from '../systems/flasks';
 import './styles.css';
 
@@ -20,8 +20,21 @@ export interface UiCallbacks {
   onContinueRun(): void;
   /** Open the save/load slot screen from the title or pause menu. */
   onOpenSlots(mode: 'load' | 'save'): void;
-  onCastSlot(slot: SkillDef['slot']): void;
+  /** Clicking a hotbar slot opens the picker for that slot. */
+  onOpenSkillPicker(slot: LoadoutSlot): void;
+  /** The pause menu's Skills button. */
+  onOpenSkills(): void;
   onUseFlask(kind: FlaskKind): void;
+}
+
+/** One hotbar entry: empty slots have a null skill and zeroed numbers. */
+export interface LoadoutEntry {
+  slot: LoadoutSlot;
+  skill: SkillDef | null;
+  rank: number;
+  minDamage: number;
+  maxDamage: number;
+  cooldown: number;
 }
 
 /** Title-screen checkpoint summary (slice 8). */
@@ -66,9 +79,10 @@ interface SlotView {
   sweep: HTMLElement;
   cooldown: number;
   manaCost: number;
+  skillId: SkillId | null;
 }
 
-const SLOT_KEYS: Record<SkillDef['slot'], string> = { q: 'Q', w: 'W', e: 'E', r: 'R' };
+const SLOT_KEYS: Record<LoadoutSlot, string> = { rmb: 'RMB', q: 'Q', w: 'W', e: 'E', r: 'R', f: 'F' };
 const FLASK_KEYS: Record<FlaskKind, string> = { health: '1', mana: '2' };
 
 /**
@@ -103,12 +117,13 @@ export class Ui {
   private readonly continueBtn: HTMLElement;
   private readonly continueDetail: HTMLElement;
   private readonly loadBtn: HTMLElement;
-  private readonly badge: HTMLElement;
+  private readonly pauseSave: HTMLElement;
   private readonly saveFlash: HTMLElement;
   private readonly damageVignette: HTMLElement;
   private saveFlashTimer = 0;
+  private activeSlot: number | null = null;
   private readonly flaskEls = new Map<FlaskKind, HTMLElement>();
-  private readonly slots = new Map<SkillId, SlotView>();
+  private readonly slots = new Map<LoadoutSlot, SlotView>();
   private lastFlaskCharges: Record<FlaskKind, number> = { health: -1, mana: -1 };
   private lastManaText = '';
 
@@ -140,7 +155,7 @@ export class Ui {
     this.continueBtn = root.querySelector('[data-title-continue]') as HTMLElement;
     this.continueDetail = root.querySelector('[data-title-continue-detail]') as HTMLElement;
     this.loadBtn = root.querySelector('[data-title-load]') as HTMLElement;
-    this.badge = root.querySelector('[data-hud-badge]') as HTMLElement;
+    this.pauseSave = root.querySelector('[data-pause-save]') as HTMLElement;
     this.saveFlash = root.querySelector('[data-save-flash]') as HTMLElement;
     this.damageVignette = root.querySelector('[data-damage-vignette]') as HTMLElement;
 
@@ -169,13 +184,14 @@ export class Ui {
     this.pauseScreen.classList.toggle('hidden', mode !== 'paused');
     this.hud.classList.toggle('hidden', mode !== 'playing' && mode !== 'paused');
     if (mode === 'class-select') this.select(this.selected);
+    if (mode === 'paused') this.updatePauseSave();
   }
 
-  showHud(def: ClassDef, zoneName: string, skills: SkillDef[]): void {
+  showHud(def: ClassDef, zoneName: string, loadout: LoadoutEntry[]): void {
     this.hudClass.textContent = def.name;
     this.hudClass.style.color = def.cssColor;
     this.hudZone.textContent = zoneName;
-    this.buildHotbar(skills);
+    this.setLoadout(loadout);
     this.lastFlaskCharges = { health: -1, mana: -1 };
     this.lastManaText = '';
   }
@@ -212,8 +228,14 @@ export class Ui {
 
   /** Which slot autosaves write to; null means the run is unbound. */
   setActiveSlot(slot: number | null): void {
-    this.badge.textContent =
-      slot === null ? 'Ashen Vale · v1.0 · autosave off' : `Ashen Vale · v1.0 · autosave slot ${slot + 1}`;
+    this.activeSlot = slot;
+    this.updatePauseSave();
+  }
+
+  private updatePauseSave(): void {
+    this.pauseSave.textContent = this.activeSlot === null
+      ? 'Ashen Vale v1.2 · autosave off — save manually'
+      : `Ashen Vale v1.2 · autosave slot ${this.activeSlot + 1}`;
   }
 
   /** Red/blue edge pulse for health or shield damage (readability, not motion). */
@@ -235,12 +257,17 @@ export class Ui {
     this.saveFlashTimer = window.setTimeout(() => this.saveFlash.classList.add('hidden'), 1600);
   }
 
-  /** Unspent passive points nag (slice 6). */
-  setPassivePoints(available: number): void {
-    this.pointsBadge.classList.toggle('hidden', available <= 0);
-    if (available > 0) {
-      this.pointsBadge.textContent = `${available} passive point${available === 1 ? '' : 's'} — press P`;
+  /** Unspent passive/skill points nag; one compact line. */
+  setPoints(passiveAvailable: number, skillAvailable: number): void {
+    const parts: string[] = [];
+    if (passiveAvailable > 0) {
+      parts.push(`${passiveAvailable} passive point${passiveAvailable === 1 ? '' : 's'} — P`);
     }
+    if (skillAvailable > 0) {
+      parts.push(`${skillAvailable} skill point${skillAvailable === 1 ? '' : 's'} — K`);
+    }
+    this.pointsBadge.classList.toggle('hidden', parts.length === 0);
+    this.pointsBadge.textContent = parts.join(' · ');
   }
 
   /** Per-frame resource readout: mana bar, cooldown sweeps, flask charges. */
@@ -252,8 +279,13 @@ export class Ui {
       this.manaText.textContent = manaText;
     }
 
-    for (const [id, slot] of this.slots) {
-      const remaining = data.cooldowns[id] ?? 0;
+    for (const slot of this.slots.values()) {
+      if (slot.skillId === null) {
+        slot.sweep.style.setProperty('--sweep', '0deg');
+        slot.root.classList.remove('slot--cooling', 'slot--unaffordable');
+        continue;
+      }
+      const remaining = data.cooldowns[slot.skillId] ?? 0;
       const frac = slot.cooldown > 0 ? Math.max(0, Math.min(1, remaining / slot.cooldown)) : 0;
       slot.sweep.style.setProperty('--sweep', `${(frac * 360).toFixed(1)}deg`);
       slot.root.classList.toggle('slot--cooling', frac > 0.001);
@@ -337,32 +369,54 @@ export class Ui {
     this.victoryScreen.classList.add('hidden');
   }
 
-  private buildHotbar(skills: SkillDef[]): void {
+  /** Rebuild the six loadout slots (RMB, Q, W, E, R, F). */
+  setLoadout(entries: LoadoutEntry[]): void {
     this.slots.clear();
-    this.hotbar.innerHTML = skills.map((skill) => `
-      <button class="slot" data-skill-slot="${skill.slot}" data-skill-id="${skill.id}"
-        style="--skill-color: ${skill.cssColor}">
-        <span class="slot__art"><span class="slot__glyph">${skill.glyph}</span></span>
-        <span class="slot__key">${SLOT_KEYS[skill.slot]}</span>
-        ${skill.manaCost > 0 ? `<span class="slot__cost">${skill.manaCost}</span>` : '<span class="slot__cost slot__cost--free">free</span>'}
-        <span class="slot__sweep" data-sweep></span>
-        <span class="slot__tip">
-          <span class="slot__tip-name">${skill.name}</span>
-          <span class="slot__tip-line">${skill.damage.min}-${skill.damage.max} damage · ${skill.manaCost > 0 ? `${skill.manaCost} mana` : 'free'} · ${skill.cooldown}s cooldown</span>
-          <span class="slot__tip-desc">${skill.description}</span>
-        </span>
-      </button>`).join('');
+    const bySlot = new Map(entries.map((entry) => [entry.slot, entry]));
+    this.hotbar.innerHTML = LOADOUT_SLOTS.map((slot) => {
+      const entry = bySlot.get(slot);
+      const skill = entry?.skill ?? null;
+      if (!skill || !entry) {
+        return `
+          <button class="slot slot--empty" data-skill-slot="${slot}">
+            <span class="slot__art slot__art--empty">+</span>
+            <span class="slot__key">${SLOT_KEYS[slot]}</span>
+            <span class="slot__assign">assign</span>
+            <span class="slot__sweep" data-sweep></span>
+            <span class="slot__tip">
+              <span class="slot__tip-name">Empty ${SLOT_KEYS[slot]}</span>
+              <span class="slot__tip-line">Click to choose a skill</span>
+            </span>
+          </button>`;
+      }
+      return `
+        <button class="slot" data-skill-slot="${slot}" data-skill-id="${skill.id}"
+          style="--skill-color: ${skill.cssColor}">
+          <span class="slot__art"><span class="slot__glyph">${skill.glyph}</span></span>
+          <span class="slot__key">${SLOT_KEYS[slot]}</span>
+          ${entry.rank > 1 ? `<span class="slot__rank">R${entry.rank}</span>` : ''}
+          <span class="slot__cost">${skill.manaCost}</span>
+          <span class="slot__sweep" data-sweep></span>
+          <span class="slot__tip">
+            <span class="slot__tip-name">${skill.name}${entry.rank > 1 ? ` · Rank ${entry.rank}` : ''}</span>
+            <span class="slot__tip-line">${entry.minDamage}-${entry.maxDamage} damage · ${skill.manaCost > 0 ? `${skill.manaCost} mana` : 'free'} · ${entry.cooldown}s cooldown</span>
+            <span class="slot__tip-desc">${skill.description}</span>
+          </span>
+        </button>`;
+    }).join('');
 
     this.hotbar.querySelectorAll<HTMLElement>('[data-skill-slot]').forEach((el) => {
-      const skill = skills.find((s) => s.slot === el.dataset.skillSlot);
-      if (!skill) return;
-      this.slots.set(skill.id, {
+      const slot = el.dataset.skillSlot as LoadoutSlot;
+      const entry = bySlot.get(slot);
+      if (!entry) return;
+      this.slots.set(slot, {
         root: el,
         sweep: el.querySelector('[data-sweep]') as HTMLElement,
-        cooldown: skill.cooldown,
-        manaCost: skill.manaCost,
+        cooldown: entry.cooldown,
+        manaCost: entry.skill?.manaCost ?? 0,
+        skillId: entry.skill?.id ?? null,
       });
-      el.addEventListener('click', () => this.callbacks.onCastSlot(skill.slot));
+      el.addEventListener('click', () => this.callbacks.onOpenSkillPicker(slot));
     });
   }
 
@@ -389,6 +443,9 @@ export class Ui {
         break;
       case 'load-slots':
         this.callbacks.onOpenSlots('load');
+        break;
+      case 'skills':
+        this.callbacks.onOpenSkills();
         break;
       case 'back':
         this.callbacks.onBack();
@@ -444,7 +501,7 @@ export class Ui {
           </button>
           <button class="btn btn--primary" data-action="new-game">New Game</button>
           <button class="btn hidden" data-action="load-game" data-title-load>Load Game</button>
-          <p class="hint">Left click to move · Right drag to rotate · Scroll to zoom</p>
+          <p class="hint">Left click to move and attack · Scroll to zoom · Esc pauses</p>
         </div>
       </div>
 
@@ -502,8 +559,6 @@ export class Ui {
           <div class="objectives__title">Objectives</div>
           <div class="objectives__list" data-objective-list></div>
         </div>
-        <div class="hud__hints">Left click: move · Click a husk: attack · Q W E R: skills · 1 2: flasks · P: passives · I: inventory · Esc: pause</div>
-        <div class="hud__badge" data-hud-badge>Ashen Vale · v1.0</div>
         <div class="save-flash hidden" data-save-flash></div>
       </div>
 
@@ -551,12 +606,28 @@ export class Ui {
         <div class="screen__content">
           <p class="eyebrow">The moor waits</p>
           <h2 class="screen-title">Paused</h2>
+          <p class="pause-save" data-pause-save>Autosave · Slot 1</p>
           <div class="pause-actions">
             <button class="btn btn--primary" data-action="resume">Resume</button>
+            <button class="btn" data-action="skills">Skills</button>
             <button class="btn" data-action="save-slots">Save Game</button>
             <button class="btn" data-action="load-slots">Load Game</button>
             <button class="btn" data-action="restart">Restart Run</button>
             <button class="btn" data-action="quit">Quit to Title</button>
+          </div>
+          <div class="controls">
+            <div class="controls__title">Controls</div>
+            <div class="controls__grid">
+              <span><kbd>Left click</kbd> move / attack</span>
+              <span><kbd>Right click</kbd> RMB skill</span>
+              <span><kbd>Q W E R F</kbd> skills</span>
+              <span><kbd>1 / 2</kbd> flasks</span>
+              <span><kbd>P</kbd> passives</span>
+              <span><kbd>K</kbd> skills</span>
+              <span><kbd>I</kbd> inventory</span>
+              <span><kbd>Scroll</kbd> zoom</span>
+              <span><kbd>Esc</kbd> pause / close</span>
+            </div>
           </div>
         </div>
       </div>`;

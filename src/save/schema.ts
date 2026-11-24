@@ -1,13 +1,15 @@
-import type { ClassId } from '../content/types';
 import { CLASSES } from '../content/classes';
 import { AFFIXES } from '../content/affixes';
 import { ITEM_BASES, ITEM_SLOTS, RARITY_COLORS, UNIQUES, type ItemSlot, type Rarity } from '../content/items';
 import { getPassive, PASSIVE_ROOT } from '../content/passives';
+import { getSkill, startingSkillFor } from '../content/skills';
+import { LOADOUT_SLOTS, type ClassId, type SkillId } from '../content/types';
 import type { GameState, Vec2 } from '../sim/state';
 import { FLASK_MAX_CHARGES } from '../sim/state';
 import type { ItemInstance } from '../sim/items';
 import { xpToNext } from '../systems/progression';
 import { BAG_CAP } from '../systems/inventory';
+import { defaultSkillState, MAX_SKILL_RANK } from '../systems/loadout';
 
 /**
  * Versioned save schema. Serialization stays independent of three.js and of
@@ -16,8 +18,9 @@ import { BAG_CAP } from '../systems/inventory';
  *
  * v1 -> v2 added progression + inventory.
  * v2 -> v3 added passive allocations, zone objective progress, and flask charges.
+ * v3 -> v4 added skill ranks, the six-slot loadout, and the skill-point economy.
  */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export interface SaveInventory {
   bags: ItemInstance[];
@@ -31,8 +34,15 @@ export interface SaveObjectives {
   bossDefeated: boolean;
 }
 
+export interface SaveSkills {
+  /** Active-skill ranks; rank 1 means unlocked. */
+  ranks: Partial<Record<SkillId, number>>;
+  /** RMB, Q, W, E, R, F order; null means an empty slot. */
+  loadout: Array<SkillId | null>;
+}
+
 export interface SaveGame {
-  version: 3;
+  version: 4;
   classId: ClassId;
   hp: number;
   maxHp: number;
@@ -45,6 +55,7 @@ export interface SaveGame {
   passives: string[];
   objectives: SaveObjectives;
   flasks: { health: number; mana: number };
+  skills: SaveSkills;
   /** Epoch milliseconds; excluded from equality checks. */
   savedAt: number;
 }
@@ -92,6 +103,10 @@ export function createSave(state: GameState, savedAt = 0): SaveGame {
       health: state.flasks.health.charges,
       mana: state.flasks.mana.charges,
     },
+    skills: {
+      ranks: { ...state.skills.ranks },
+      loadout: [...state.skills.loadout],
+    },
     savedAt,
   };
 }
@@ -126,13 +141,13 @@ export function deserializeSave(raw: string): SaveGame {
 }
 
 /**
- * Migration hook: upgrades v1 and v2 saves to v3 with conservative defaults,
- * passes validated v3 saves through, and rejects unknown versions rather than
- * silently misreading them.
+ * Migration hook: upgrades v1–v3 saves to v4 with conservative defaults, passes
+ * validated v4 saves through, and rejects unknown versions rather than silently
+ * misreading them.
  */
 export function migrateSave(data: unknown): SaveGame {
   if (!isRecord(data)) throw new Error('Save data is not an object');
-  if (data.version !== 1 && data.version !== 2 && data.version !== SAVE_VERSION) {
+  if (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== SAVE_VERSION) {
     throw new Error(`Unsupported save version: ${String(data.version)}`);
   }
 
@@ -161,6 +176,7 @@ export function migrateSave(data: unknown): SaveGame {
       passives: [PASSIVE_ROOT],
       objectives: { campsCleared: [], bossSpawned: false, bossDefeated: false },
       flasks: FULL_FLASKS(),
+      skills: defaultSkillState(playerClass.id, 1, true),
       savedAt: integerAtLeast(data.savedAt, 0) ? data.savedAt : 0,
     };
   }
@@ -183,6 +199,18 @@ export function migrateSave(data: unknown): SaveGame {
       passives: [PASSIVE_ROOT],
       objectives: { campsCleared: [], bossSpawned: false, bossDefeated: false },
       flasks: FULL_FLASKS(),
+      skills: defaultSkillState(playerClass.id, level, true),
+    };
+  }
+
+  if (data.version === 3) {
+    return {
+      ...core,
+      ...progression,
+      passives: parsePassives(data.passives, level),
+      objectives: parseObjectives(data.objectives),
+      flasks: parseFlasks(data.flasks),
+      skills: defaultSkillState(playerClass.id, level, true),
     };
   }
 
@@ -192,6 +220,7 @@ export function migrateSave(data: unknown): SaveGame {
     passives: parsePassives(data.passives, level),
     objectives: parseObjectives(data.objectives),
     flasks: parseFlasks(data.flasks),
+    skills: parseSkills(data.skills, playerClass.id, level),
   };
 }
 
@@ -250,6 +279,53 @@ function parseFlasks(value: unknown): SaveGame['flasks'] {
     throw new Error('Save data has invalid flask charges');
   }
   return { health: value.health, mana: value.mana };
+}
+
+function parseSkills(value: unknown, classId: ClassId, level: number): SaveSkills {
+  if (!isRecord(value) || !isRecord(value.ranks) || !Array.isArray(value.loadout)) {
+    throw new Error('Save data has invalid skills');
+  }
+  const ranks: SaveSkills['ranks'] = {};
+  const seen = new Set<SkillId>();
+  for (const [rawId, rawRank] of Object.entries(value.ranks)) {
+    if (!integerAtLeast(rawRank, 1) || rawRank > MAX_SKILL_RANK) {
+      throw new Error('Save data has an invalid skill rank');
+    }
+    let skill;
+    try {
+      skill = getSkill(rawId as SkillId);
+    } catch {
+      throw new Error('Save data has an unknown skill');
+    }
+    if (skill.role !== 'active' || skill.classId !== classId || seen.has(skill.id)) {
+      throw new Error('Save data has an invalid active skill');
+    }
+    seen.add(skill.id);
+    ranks[skill.id] = rawRank;
+  }
+  const starting = startingSkillFor(classId);
+  if ((ranks[starting.id] ?? 0) < 1) throw new Error('Save data is missing the starting skill');
+  // The signature skill's first rank is free; every other rank costs a point.
+  const spent = Object.values(ranks).reduce((sum, rank) => sum + (rank ?? 0), 0) - 1;
+  if (spent > Math.max(0, level - 1)) throw new Error('Save data has more skill ranks than levels allow');
+  if (value.loadout.length !== LOADOUT_SLOTS.length) throw new Error('Save data has an invalid loadout');
+  const equipped = new Set<SkillId>();
+  const loadout = value.loadout.map((raw) => {
+    if (raw === null) return null;
+    if (typeof raw !== 'string') throw new Error('Save data has an invalid loadout skill');
+    let skill;
+    try {
+      skill = getSkill(raw as SkillId);
+    } catch {
+      throw new Error('Save data has an unknown loadout skill');
+    }
+    if (skill.role !== 'active' || skill.classId !== classId || !seen.has(skill.id) || equipped.has(skill.id)) {
+      throw new Error('Save data has an invalid or duplicate loadout skill');
+    }
+    equipped.add(skill.id);
+    return skill.id;
+  });
+  return { ranks, loadout };
 }
 
 function parseInventory(value: unknown): SaveInventory {

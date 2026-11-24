@@ -3,9 +3,6 @@ import type { ClassId, SkillId } from './types';
 /** Normalized strike keys used by both skill simulation and pose curves. */
 export const BASIC_ATTACK_CONTACT = { melee: 0.45, projectile: 0.6 } as const;
 
-/** Hotbar slot the skill is bound to (QWER row). */
-export type SkillSlot = 'q' | 'w' | 'e' | 'r';
-
 /**
  * How a skill delivers its damage:
  *   melee-arc    — sweep around the committed facing (cleave)
@@ -25,7 +22,10 @@ export interface SkillDef {
   classId: ClassId;
   /** Attack Damage or Spell Damage scales this skill (stat rework). */
   damageClass: 'attack' | 'spell';
-  slot: SkillSlot;
+  /** Basic attacks are left-click only; active skills are loadout-eligible. */
+  role: 'basic' | 'active';
+  /** Character level required before the library allows unlocking. */
+  unlockLevel: number;
   /** One-line mechanic summary for hotbar tooltips. */
   description: string;
   delivery: SkillDelivery;
@@ -72,7 +72,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Cleave',
     classId: 'marauder',
     damageClass: 'attack',
-    slot: 'q',
+    role: 'basic',
+    unlockLevel: 0,
     description: 'A wide axe sweep. Free — always ready.',
     delivery: 'melee-arc',
     damage: { min: 9, max: 14 },
@@ -92,7 +93,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Sunder',
     classId: 'marauder',
     damageClass: 'attack',
-    slot: 'w',
+    role: 'active',
+    unlockLevel: 1,
     description: 'Crack the ground at the target. Heavy impact after a short tell.',
     delivery: 'ground',
     damage: { min: 22, max: 32 },
@@ -113,7 +115,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Whirlwind',
     classId: 'marauder',
     damageClass: 'attack',
-    slot: 'e',
+    role: 'active',
+    unlockLevel: 2,
     description: 'Spin in place, striking everything around you.',
     delivery: 'nova',
     damage: { min: 16, max: 24 },
@@ -133,7 +136,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Reckless Charge',
     classId: 'marauder',
     damageClass: 'attack',
-    slot: 'r',
+    role: 'active',
+    unlockLevel: 4,
     description: 'Charge forward, carving through everything in the path.',
     delivery: 'dash',
     damage: { min: 18, max: 26 },
@@ -156,7 +160,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Piercing Shot',
     classId: 'ranger',
     damageClass: 'attack',
-    slot: 'q',
+    role: 'basic',
+    unlockLevel: 0,
     description: 'Loose an arrow. Free — always ready.',
     delivery: 'projectile',
     damage: { min: 7, max: 12 },
@@ -176,7 +181,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Split Shot',
     classId: 'ranger',
     damageClass: 'attack',
-    slot: 'w',
+    role: 'active',
+    unlockLevel: 1,
     description: 'Three arrows loosed in a fan.',
     delivery: 'spread',
     damage: { min: 6, max: 10 },
@@ -198,7 +204,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Snipe',
     classId: 'ranger',
     damageClass: 'attack',
-    slot: 'e',
+    role: 'active',
+    unlockLevel: 2,
     description: 'One brutally fast shot for high damage.',
     delivery: 'projectile',
     damage: { min: 26, max: 38 },
@@ -218,7 +225,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Rain of Arrows',
     classId: 'ranger',
     damageClass: 'attack',
-    slot: 'r',
+    role: 'active',
+    unlockLevel: 4,
     description: 'Call a hail of arrows down on the target area.',
     delivery: 'ground',
     damage: { min: 30, max: 42 },
@@ -241,7 +249,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Ember Bolt',
     classId: 'witch',
     damageClass: 'spell',
-    slot: 'q',
+    role: 'basic',
+    unlockLevel: 0,
     description: 'A smouldering dart of ember-curse fire. Free — always ready.',
     delivery: 'projectile',
     damage: { min: 8, max: 13 },
@@ -261,7 +270,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Ember Nova',
     classId: 'witch',
     damageClass: 'spell',
-    slot: 'w',
+    role: 'active',
+    unlockLevel: 1,
     description: 'A ring of cursed fire erupts around you.',
     delivery: 'nova',
     damage: { min: 18, max: 27 },
@@ -281,7 +291,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Cinder Barrage',
     classId: 'witch',
     damageClass: 'spell',
-    slot: 'e',
+    role: 'active',
+    unlockLevel: 2,
     description: 'A fan of three cinder bolts.',
     delivery: 'spread',
     damage: { min: 8, max: 13 },
@@ -303,7 +314,8 @@ export const SKILLS: readonly SkillDef[] = [
     name: 'Meteor Strike',
     classId: 'witch',
     damageClass: 'spell',
-    slot: 'r',
+    role: 'active',
+    unlockLevel: 4,
     description: 'Pull a burning stone from the sky onto the target area.',
     delivery: 'ground',
     damage: { min: 42, max: 58 },
@@ -327,17 +339,23 @@ export function getSkill(id: SkillId): SkillDef {
   return def;
 }
 
-/** All of a class's skills in hotbar order (Q, W, E, R). */
-export function skillsFor(classId: ClassId): SkillDef[] {
-  const order: SkillSlot[] = ['q', 'w', 'e', 'r'];
-  return SKILLS.filter((s) => s.classId === classId)
+/** Active skills in unlock order; the first is the class signature skill. */
+export function activeSkillsFor(classId: ClassId): SkillDef[] {
+  return SKILLS.filter((s) => s.classId === classId && s.role === 'active')
     .slice()
-    .sort((a, b) => order.indexOf(a.slot) - order.indexOf(b.slot));
+    .sort((a, b) => a.unlockLevel - b.unlockLevel || a.name.localeCompare(b.name));
 }
 
-/** Each class's basic attack (Q slot, click-to-attack); free and always available. */
+/** Each class's signature active skill, granted free at level 1. */
+export function startingSkillFor(classId: ClassId): SkillDef {
+  const def = activeSkillsFor(classId)[0];
+  if (!def) throw new Error(`No starting skill for class: ${classId}`);
+  return def;
+}
+
+/** Each class's basic attack (left click); free and always available. */
 export function basicAttackFor(classId: ClassId): SkillDef {
-  const def = SKILLS.find((s) => s.classId === classId && s.slot === 'q');
+  const def = SKILLS.find((s) => s.classId === classId && s.role === 'basic');
   if (!def) throw new Error(`No basic attack for class: ${classId}`);
   return def;
 }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { GameState } from '../sim/state';
 import { disposeMeshTree } from './dispose';
+import type { TerrainSurface } from './terrainSurface';
 
 interface ProjectileView {
   mesh: THREE.Object3D;
@@ -14,7 +15,7 @@ export class ProjectileViews {
   private readonly direction = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, private readonly terrain: TerrainSurface) {
     scene.add(this.group);
   }
 
@@ -62,7 +63,8 @@ export class ProjectileViews {
         view = { mesh, light };
         this.views.set(proj.id, view);
       }
-      view.mesh.position.set(proj.position.x, proj.y, proj.position.z);
+      const groundY = this.terrain.heightAt(proj.position.x, proj.position.z);
+      view.mesh.position.set(proj.position.x, groundY + proj.y, proj.position.z);
       view.light?.position.copy(view.mesh.position);
     }
   }

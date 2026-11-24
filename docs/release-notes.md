@@ -1,5 +1,61 @@
 # Ashen Vale — Release Notes
 
+## v1.2.0 — 2026-11-25
+
+The first post-release patch fixes the launch feedback and adds skill-point
+progression and a six-slot loadout.
+
+### What ships
+
+- **Fixed 45° isometric camera.** Right-drag rotation is removed; scroll zoom is
+  narrowed to 12–21 units (close range only). The pause menu lists controls.
+- **Terrain grounding.** The hero, enemies, props, cursor/hover/destination
+  rings, elite auras, loot, nameplates, projectiles, floating text, camera target
+  and pointer ground-picks all sample the heightfield. The destination marker's
+  old fade is cancelled on a new click.
+- **HUD declutter.** The persistent bottom key guide is gone; controls live in
+  the pause menu. The autosave badge moves into the pause line.
+- **Skill points and six slots.** Left click remains the free basic attack. The
+  hotbar is `RMB + Q/W/E/R/F`; a fresh character has one signature active in Q.
+  Each level grants 1 skill point. Actives unlock at levels 1, 2 and 4; unlocking
+  and ranks 2–5 cost 1 point each. Rank scaling is +15% damage and −4% cooldown
+  per rank. Skills stay in the library with no auto-equip; click a slot or press
+  K, unlock/upgrade, and assign to the selected slot.
+- **Save schema v4.** Ranks and loadout persist; v1–v3 saves migrate with the
+  legacy active kit pre-spent and loaded into Q/W/E.
+- **QA:** a new post-release suite covers raised-ground markers, fixed camera,
+  zoom clamps, guide removal, picker unlock/equip/upgrade, RMB/QWERF casts, and
+  save/reload of the loadout.
+
+### Verification evidence
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm test` | 209 tests across 24 files |
+| `npm run build` | production build in `dist/` |
+| `npm run qa` | **249 browser checks** across targeting, slices, post-release, stats, passives and release; no console errors |
+| `qa/verify-postrelease.mjs` | **26/26** grounding, camera, HUD and loadout checks |
+| `qa/verify-release.mjs` | **33/33** full-loop, budget, high-DPI and reduced-motion checks |
+| Render budget | camp fights stay under the 320-call / 260K-triangle release gate (121–280 calls observed) |
+| Save migration | v1→v4, v2→v4 and v3→v4 covered |
+
+### Rollback
+
+Rollback target: **tag `v1.0.0` (`b3091c1`)**.
+
+```bash
+git checkout v1.0.0
+npm ci
+npm run build
+```
+
+**Save compatibility caveat:** v1.2 writes schema v4. v1.0.0 only understands
+schema v3 and will reject v4 slot data. Export or remove v4 slots before a
+rollback, or keep a v1.0-era save backup.
+
+---
+
 ## v1.0.0 — 2026-11-24
 
 The MVP is complete: one coherent dark-fantasy ARPG loop from title screen to the

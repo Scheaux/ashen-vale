@@ -226,7 +226,7 @@ export class SkillVfxLayer {
     const mesh = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.42, 16), material);
     mesh.rotation.x = -Math.PI / 2;
     const root = new THREE.Group();
-    root.position.set(x, y, z);
+    root.position.set(x, this.terrain.heightAt(x, z) + y, z);
     root.add(mesh);
     this.group.add(root);
     this.pushTransient({

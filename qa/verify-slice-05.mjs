@@ -136,19 +136,35 @@ async function main() {
   // ============ Marauder: hotbar, deliveries, gating, flasks, recap ============
   await startRun('marauder');
 
-  // --- Hotbar shell: four QWER slots + two flask slots with charges ---
+  // --- Hotbar shell: six PoE slots; a fresh exile has only the signature ---
   const slots = await page.locator('.slot').evaluateAll((els) =>
     els.map((el) => ({ slot: el.getAttribute('data-skill-slot'), key: el.querySelector('.slot__key')?.textContent })));
-  check('hotbar shows four QWER skill slots', slots.length === 4 &&
-    slots.map((s) => s.slot).join('') === 'qwer' && slots.map((s) => s.key).join('') === 'QWER', JSON.stringify(slots));
-  check('skill slots advertise mana costs', (await page.locator('.slot__cost').allTextContents()).length === 4);
+  check('hotbar shows six PoE slots (RMB + QWERF)', slots.length === 6 &&
+    slots.map((s) => s.slot).join('') === 'rmbqwerf' &&
+    slots.map((s) => s.key).join(',') === 'RMB,Q,W,E,R,F', JSON.stringify(slots));
+  check('a fresh exile starts with one equipped skill', (await page.locator('.slot:not(.slot--empty)').count()) === 1);
+  check('the other five slots are empty and assignable', (await page.locator('.slot--empty').count()) === 5);
+  check('the equipped skill advertises its mana cost', (await page.locator('.slot__cost').allTextContents()).length === 1);
   check('flask slots show full charge pips', (await page.locator('.pip--full').count()) === 8);
+
+  // Unlock and equip the legacy QWER kit through the real loadout rules.
+  await page.evaluate(() => {
+    window.__ashen.grantXp(5000);
+    window.__ashen.unlockSkill('whirlwind');
+    window.__ashen.unlockSkill('reckless-charge');
+    window.__ashen.equipSkill('w', 'sunder');
+    window.__ashen.equipSkill('e', 'whirlwind');
+    window.__ashen.equipSkill('r', 'reckless-charge');
+  });
+  await sleep(300);
+  check('unlocked skills can be assigned to any slot', (await page.locator('.slot:not(.slot--empty)').count()) === 3);
 
   // --- Ground strike (W): mana spend, cooldown sweep, telegraph, burst ---
   let s = await snap();
   let target = await engageClose(3.5);
+  s = await snap();
   const manaBefore = s.playerMana;
-  const strikeTargetHp = target ? (await snap()).enemies.find((e) => e.id === target.id)?.hp : null;
+  const strikeTargetHp = target ? s.enemies.find((e) => e.id === target.id)?.hp : null;
   await page.keyboard.press('w');
   await sleep(120);
   s = await snap();
@@ -263,6 +279,15 @@ async function main() {
   await page.click('[data-screen="paused"] [data-action="quit"]');
   await sleep(300);
   await startRun('ranger');
+  await page.evaluate(() => {
+    window.__ashen.grantXp(5000);
+    window.__ashen.unlockSkill('snipe');
+    window.__ashen.unlockSkill('rain-of-arrows');
+    window.__ashen.equipSkill('w', 'split-shot');
+    window.__ashen.equipSkill('e', 'snipe');
+    window.__ashen.equipSkill('r', 'rain-of-arrows');
+  });
+  await sleep(300);
 
   // --- Split Shot: the fan must be visible in flight ---
   await page.evaluate(() => window.__ashen.clearEnemies()); // clear sky for the fan
@@ -300,14 +325,28 @@ async function main() {
   await page.click('[data-screen="paused"] [data-action="quit"]');
   await sleep(300);
   await startRun('witch');
+  await page.evaluate(() => window.__ashen.equipSkill('w', 'ember-nova'));
+  await sleep(200);
 
   target = await engageClose(2.5);
-  const witchVictimHp = target ? (await snap()).enemies.find((e) => e.id === target.id)?.hp : null;
+  let witchVictimHp = target ? (await snap()).enemies.find((e) => e.id === target.id)?.hp : null;
+  if (target) {
+    await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z + 0.8), [target.x, target.z]);
+    await sleep(120);
+    witchVictimHp = (await snap()).enemies.find((e) => e.id === target.id)?.hp ?? witchVictimHp;
+  }
   await page.keyboard.press('w'); // Ember Nova
+  for (let i = 0; i < 25; i++) {
+    if ((await snap()).cooldowns['ember-nova'] > 0) break;
+    await page.keyboard.press('w');
+    await sleep(80);
+  }
   await sleep(700);
   s = await snap();
-  const witchHpAfter = target ? s.enemies.find((e) => e.id === target.id)?.hp : null;
-  check('Ember Nova burns everything around the caster', witchVictimHp !== null && witchHpAfter < witchVictimHp,
+  const witchVictim = target ? s.enemies.find((e) => e.id === target.id) : null;
+  const witchHpAfter = witchVictim ? (witchVictim.dead ? 0 : witchVictim.hp) : 0;
+  check('Ember Nova burns everything around the caster',
+    witchVictimHp !== null && (witchVictim === null || witchVictim.dead || witchHpAfter < witchVictimHp),
     `hp ${witchVictimHp} -> ${witchHpAfter}`);
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

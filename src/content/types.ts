@@ -16,6 +16,10 @@ export type SkillId =
   | 'cinder-barrage'
   | 'meteor-strike';
 
+/** Six PoE-style skill loadout slots: right click plus Q/W/E/R/F. */
+export type LoadoutSlot = 'rmb' | 'q' | 'w' | 'e' | 'r' | 'f';
+export const LOADOUT_SLOTS: readonly LoadoutSlot[] = ['rmb', 'q', 'w', 'e', 'r', 'f'];
+
 export interface ClassStats {
   strength: number;
   dexterity: number;

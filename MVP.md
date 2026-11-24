@@ -157,7 +157,9 @@ limitations, deploy steps and rollback to `af7b052` are in
 ## Content scope (deliberately thin — depth from data, not breadth)
 
 - **Classes (3):** Marauder (melee, strength), Ranger (projectile, dexterity),
-  Witch (projectile, intelligence) — 4-skill QWER kits each (basic + 3 actives) since slice 5.
+  Witch (projectile, intelligence) — one free left-click basic plus three
+  skill-point actives per class, loaded into a six-slot RMB + Q/W/E/R/F bar
+  (post-release 1.2).
 - **Enemies (3 + elites):** Ashen Husk (melee charger), ranged caster, fast swarm —
   elite modifiers from slice 3.
 - **Loot:** 4 rarity tiers, 6 equipment slots, ~24 affixes in plain stat
@@ -200,10 +202,32 @@ Simulation is deterministic for the same seed and tick-by-tick inputs. Rendering
 consumes authoritative sim events. The current save format is a character
 checkpoint, not a snapshot of the simulation or its RNG state.
 
+## Post-release 1.2.0
+
+The first post-release patch fixes the launch feedback and adds the skill
+progression the MVP bar left out:
+
+- **Terrain grounding:** hero, enemies, props, cursor/hover/destination rings,
+  elite auras, loot, nameplates, projectiles, floating text, camera target and
+  pointer picks now sample the heightfield. The destination marker's fade race
+  is fixed.
+- **Camera:** fixed 45° isometric yaw; scroll zoom narrowed to 12–21 units; no
+  rotation.
+- **HUD:** the persistent bottom key guide is gone; controls live in the pause
+  menu; the autosave badge moves into the pause line.
+- **Skills:** left-click basic attack stays; the hotbar is a six-slot RMB +
+  Q/W/E/R/F loadout. A fresh character has one signature active. Each level
+  grants 1 skill point; actives unlock at levels 1/2/4; unlocking and ranks 2–5
+  cost 1 point each (+15% damage, −4% cooldown per rank). Skills stay in the
+  library until the player clicks a slot and assigns them. Save schema **v4**
+  persists ranks/loadout and migrates v1–v3 with the legacy active kit.
+- **QA:** post-release suite covers grounding, fixed camera/zoom, HUD declutter,
+  skill unlock/upgrade/equip, RMB/QWERF casts and save/reload.
+
 ## Release
 
-**v1.0.0** is the completed MVP. The deployable artifact is the static `dist/`
-bundle. The previous release checkpoint is `af7b052` (Slice 8); the save schema
-(v3) is unchanged in v1.0.0, so v1.0.0 checkpoints load after a rollback. Full
-verification evidence, known limitations and the release checklist live in
-[docs/release-notes.md](./docs/release-notes.md).
+**v1.2.0** is the current release; **v1.0.0** is the completed MVP baseline. The
+deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.0.0`
+(`b3091c1`). Save schema v4 is not readable by v1.0.0, so export/remove v4 slot
+data before rolling back. Full verification evidence, known limitations and the
+release checklist live in [docs/release-notes.md](./docs/release-notes.md).
