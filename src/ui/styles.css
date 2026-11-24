@@ -1178,6 +1178,239 @@ body {
   text-shadow: 0 0 32px rgba(200, 162, 74, 0.35);
 }
 
+/* ---------- Save slots (slice 8) ---------- */
+
+.title-continue {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.title-continue__detail {
+  font-family: var(--serif);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: none;
+  color: var(--muted);
+}
+
+.save-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.save-panel {
+  pointer-events: auto;
+  width: min(62rem, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 1.4rem 1.7rem 1.1rem;
+  background: rgba(13, 17, 28, 0.96);
+  border: 1px solid rgba(200, 162, 74, 0.4);
+  box-shadow: 0 12px 60px rgba(0, 0, 0, 0.65);
+}
+
+.save-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.save-close {
+  pointer-events: auto;
+  cursor: pointer;
+  width: 2rem;
+  height: 2rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid rgba(200, 162, 74, 0.25);
+  font-size: 0.9rem;
+}
+
+.save-close:hover {
+  color: var(--gold-bright);
+  border-color: var(--gold);
+}
+
+.save-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.9rem;
+  margin-top: 1.1rem;
+}
+
+.save-slot {
+  display: flex;
+  flex-direction: column;
+  min-height: 15rem;
+  background: linear-gradient(180deg, rgba(22, 27, 40, 0.9), rgba(14, 18, 28, 0.92));
+  border: 1px solid rgba(200, 162, 74, 0.22);
+}
+
+.save-slot--active {
+  border-color: rgba(232, 200, 119, 0.75);
+  box-shadow: 0 0 22px -8px rgba(232, 200, 119, 0.6);
+}
+
+.save-slot--corrupt {
+  border-color: rgba(196, 74, 58, 0.5);
+}
+
+.save-slot__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1rem 1.1rem 0.8rem;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.save-slot__body:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.save-slot__body:not(:disabled):hover {
+  background: rgba(200, 162, 74, 0.07);
+}
+
+.save-slot__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.save-slot__index {
+  font-size: 0.62rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.save-slot__tag {
+  padding: 0.12rem 0.45rem;
+  font-size: 0.54rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid rgba(143, 136, 122, 0.35);
+}
+
+.save-slot__tag--active {
+  color: var(--gold-bright);
+  border-color: rgba(232, 200, 119, 0.55);
+}
+
+.save-slot__tag--warn {
+  color: #ff8577;
+  border-color: rgba(255, 133, 119, 0.5);
+}
+
+.save-slot__class {
+  margin-top: 0.3rem;
+  font-family: var(--serif);
+  font-size: 1.12rem;
+  letter-spacing: 0.06em;
+}
+
+.save-slot__details {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.save-slot__line {
+  font-family: var(--serif);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--text);
+  opacity: 0.82;
+}
+
+.save-slot__stamp {
+  margin-top: 0.15rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.save-slot__action {
+  margin-top: auto;
+  padding-top: 0.55rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+  border-top: 1px solid rgba(200, 162, 74, 0.16);
+}
+
+.save-slot__delete {
+  cursor: pointer;
+  padding: 0.5rem;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid rgba(200, 162, 74, 0.14);
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.save-slot__delete:hover {
+  color: #ff8577;
+}
+
+.save-flash {
+  position: absolute;
+  bottom: 4.6rem;
+  right: 1.55rem;
+  padding: 0.32rem 0.7rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold-bright);
+  background: rgba(12, 15, 24, 0.9);
+  border: 1px solid rgba(200, 162, 74, 0.35);
+  pointer-events: none;
+}
+
+.save-flash--pulse {
+  animation: save-flash 1.6s ease forwards;
+}
+
+@keyframes save-flash {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  12%,
+  72% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 860px) {
+  .save-slots {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- HUD passive points badge ---------- */
 
 .hud__pts {

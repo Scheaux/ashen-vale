@@ -23,8 +23,8 @@ localStorage saves · Vitest unit tests + headless-browser QA playthroughs per s
 | 5 | Skills & flasks | ✅ Done | Full combat kit |
 | 6 | Passive skill tree | ✅ Done | Meaningful build choice |
 | 7 | Zone objective & boss | ✅ Done | Complete the loop |
-| 8 | Save slots | ⬜ Next | Survive reload; migration tested |
-| 9 | Polish & release | ⬜ Planned | Ship-ready build |
+| 8 | Save slots | ✅ Done | Survive reload; migration tested |
+| 9 | Polish & release | ⬜ Next | Ship-ready build |
 
 ---
 
@@ -115,10 +115,20 @@ title; the defeat screen's retry/title flow stands. Zone population is now
 camp-grouped (with elite retinues inside their camp), and a birth-tick
 projectile grace keeps point-blank fans visible and honest.
 
-### Slice 8 — Save slots
-localStorage save slots (3+) with save/load UI from the title and pause menus;
-checkpoint saves on zone milestones; versioned schema migrations proven by tests
-(v1 → vN), corrupted-save recovery, and "Continue" from the title screen.
+### Slice 8 — Save slots ✅
+Three localStorage save slots with a shared save/load screen on the title and
+pause menus. A new run binds to the first empty slot; from then on it
+checkpoints automatically when a camp falls, when the Warden wakes or dies,
+on level-ups, on death, on quitting to title and whenever the build or
+equipment changes. The title's **Continue**
+loads the newest readable checkpoint and rebuilds the zone from it: level,
+XP, passive allocations, inventory, flask charges, position and camp/boss
+objective flags are restored, cleared camps leave no enemies behind, and a
+live boss fight restarts from its arena spawn. Every write keeps the previous
+slot body as a backup, so a torn write recovers instead of losing the run;
+unreadable slots are listed as corrupted and can be deleted without crashing
+the game. Schema v3 adds passives, objectives and flasks, with tested
+v1 → v3 and v2 → v3 migrations.
 
 ### Slice 9 — Polish & release
 Combat readability pass (telegraph contrast, damage numbers, hit feedback); VFX polish

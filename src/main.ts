@@ -21,7 +21,19 @@ import { createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
 import { createGameState, drainEvents, type GameState } from './sim/state';
 import { respawnPlayer, stepRun } from './sim/run';
-import { createSave, serializeSave } from './save/schema';
+import { createCheckpointSave, serializeSave } from './save/schema';
+import { restoreGameState } from './save/restore';
+import {
+  browserSaveStorage,
+  createMemoryStorage,
+  deleteSaveSlot,
+  firstEmptySlot,
+  latestSaveSlot,
+  listSaveSlots,
+  readSaveSlot,
+  writeSaveSlot,
+  type SaveStorage,
+} from './save/slots';
 import { damageEnemy, damagePlayer } from './systems/combat';
 import { useFlask, type FlaskKind } from './systems/flasks';
 import { equipItem, unequipItem } from './systems/inventory';
@@ -40,6 +52,7 @@ import { FloatingTextLayer } from './ui/floatingText';
 import { InventoryPanel } from './ui/inventory';
 import { NameplateLayer } from './ui/nameplates';
 import { PassiveTreePanel } from './ui/passives';
+import { SaveSlotsPanel, type SavePanelMode } from './ui/saveSlots';
 import { Ui, type GameMode } from './ui/ui';
 
 type GameEvents = {
@@ -132,6 +145,24 @@ export interface AshenDebug {
   setFlaskCharges(kind: FlaskKind, charges: number): void;
   /** Review fixture: serialize the current save (for save-shape checks). */
   exportSave(): string;
+  /** Review fixture: save-slot inventory and the run's bound autosave slot. */
+  saves(): {
+    activeSlot: number | null;
+    persistent: boolean;
+    slots: Array<{
+      slot: number;
+      status: 'empty' | 'ok' | 'corrupt';
+      classId: string | null;
+      level: number | null;
+      campsCleared: number;
+      campsTotal: number;
+      bossSpawned: boolean;
+      bossDefeated: boolean;
+      savedAt: number;
+      recovered: boolean;
+      error: string | null;
+    }>;
+  };
 }
 
 /**
@@ -154,9 +185,12 @@ class Game {
   private readonly nameplates: NameplateLayer;
   private readonly inventoryPanel: InventoryPanel;
   private readonly passivePanel: PassiveTreePanel;
+  private readonly savePanel: SaveSlotsPanel;
   private readonly ui: Ui;
   private readonly loop: GameLoop;
   private readonly bus = new EventBus<GameEvents>();
+  private readonly storage: SaveStorage;
+  private readonly persistentSaves: boolean;
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -171,6 +205,8 @@ class Game {
   private playerView: PlayerView | null = null;
   private classDef: ClassDef = getClass('marauder');
   private mode: GameMode = 'title';
+  /** Slot autosaves write to for the current run; null when all slots are full. */
+  private activeSlot: number | null = null;
   private rotating = false;
   private destinationActive = false;
   private dead = false;
@@ -189,6 +225,9 @@ class Game {
     this.world = createWorldScene(canvas);
     this.scene = this.world.scene;
     this.layout = generateZoneLayout();
+    const browserStorage = browserSaveStorage();
+    this.persistentSaves = browserStorage !== null;
+    this.storage = browserStorage ?? createMemoryStorage();
 
     const terrain = createTerrain();
     this.scene.add(terrain.mesh);
@@ -211,10 +250,12 @@ class Game {
       onStartRun: (id) => this.startRun(id),
       onPause: () => this.pause(),
       onResume: () => this.resume(),
-      onRestart: () => this.startRun(this.classDef.id),
+      onRestart: () => this.restartRun(),
       onQuitToTitle: () => this.quitToTitle(),
       onRespawn: () => this.respawn(),
       onContinue: () => this.continueAfterVictory(),
+      onContinueRun: () => this.continueRun(),
+      onOpenSlots: (mode) => this.openSlots(mode),
       onCastSlot: (slot) => this.castSlot(slot),
       onUseFlask: (kind) => this.handleUseFlask(kind),
     });
@@ -229,7 +270,17 @@ class Game {
       onAllocate: (id) => this.handlePassiveAllocate(id),
       onRefund: (id) => this.handlePassiveRefund(id),
     });
+    this.savePanel = new SaveSlotsPanel(uiRoot, {
+      onChoose: (slot) => this.chooseSlot(slot),
+      onDelete: (slot) => this.deleteSlot(slot),
+      onClose: () => this.savePanel.close(),
+    });
+    this.ui.setActiveSlot(null);
+    this.refreshTitleSaves();
     this.ui.setMode('title');
+    if (!this.persistentSaves) {
+      this.ui.showToast('Browser storage is unavailable — checkpoints last for this session only', '#ff8577');
+    }
 
     this.bus.on('input:move-target', ({ x, z }) => {
       if (!this.state) return;
@@ -255,16 +306,42 @@ class Game {
   // ---------- Mode state machine ----------
 
   private startRun(id: ClassId): void {
+    this.freshRun(id, null);
+  }
+
+  /** Restart keeps the run's slot, replacing the checkpoint it had reached. */
+  private restartRun(): void {
+    if (this.mode !== 'paused' && this.mode !== 'playing') return;
+    this.freshRun(this.classDef.id, this.activeSlot);
+  }
+
+  private freshRun(id: ClassId, preferredSlot: number | null): void {
     this.clearRun();
     this.classDef = getClass(id);
     this.state = createGameState(this.classDef, this.layout);
+    this.activeSlot = preferredSlot ?? firstEmptySlot(listSaveSlots(this.storage));
+    this.ui.setActiveSlot(this.activeSlot);
+    this.beginRun();
+    if (this.activeSlot !== null) {
+      this.saveCheckpoint();
+      this.ui.showToast(`Checkpoint · Slot ${this.activeSlot + 1}`, '#8f887a');
+    } else {
+      this.ui.showToast('All save slots are full — save manually from the pause menu', '#ff8577');
+    }
+  }
 
+  /** Attach the live state to the render world and enter play. */
+  private beginRun(): void {
+    const state = this.state;
+    if (!state) return;
+    this.classDef = getClass(state.player.classId);
     this.playerView = createPlayerView(this.classDef);
     this.scene.add(this.playerView.group);
-
-    this.rig.snapTo(this.layout.spawn.x, this.layout.spawn.z);
-    this.ui.setPlayerHp(this.state.player.hp, this.state.player.maxHp);
-    this.ui.showHud(this.classDef, this.layout.name, skillsFor(id));
+    this.rig.snapTo(state.player.position.x, state.player.position.z);
+    this.ui.setPlayerHp(state.player.hp, state.player.maxHp);
+    this.ui.setPlayerEs(state.player.energyShield, state.player.maxEnergyShield);
+    this.ui.setPlayerXp(state.level, state.xp, state.xpToNext);
+    this.ui.showHud(this.classDef, this.layout.name, skillsFor(state.player.classId));
     this.setMode('playing');
   }
 
@@ -279,8 +356,10 @@ class Game {
   }
 
   private quitToTitle(): void {
+    if (this.state) this.saveCheckpoint();
     this.clearRun();
     this.setMode('title');
+    this.refreshTitleSaves();
   }
 
   private clearRun(): void {
@@ -297,6 +376,7 @@ class Game {
     this.nameplates.clear();
     this.inventoryPanel.close();
     this.passivePanel.close();
+    this.savePanel.close();
     this.dead = false;
     this.tellTelegraphs = 0;
     this.tellPlayerDamages = 0;
@@ -362,6 +442,121 @@ class Game {
     if (this.mode === 'playing' && !this.dead) this.loop.setRunning(true);
   }
 
+  // ---------- Save slots (slice 8) ----------
+
+  private refreshTitleSaves(): void {
+    const slots = listSaveSlots(this.storage);
+    const latest = latestSaveSlot(slots);
+    this.ui.setSaveInfo(
+      latest?.save ? { classId: latest.save.classId, level: latest.save.level } : null,
+      slots.some((info) => info.status !== 'empty'),
+    );
+  }
+
+  private openSlots(mode: SavePanelMode): void {
+    this.savePanel.open(mode, listSaveSlots(this.storage), this.activeSlot);
+  }
+
+  private chooseSlot(slot: number): void {
+    if (this.savePanel.currentMode === 'save') this.saveToSlot(slot);
+    else this.loadSlot(slot);
+  }
+
+  /** Autosave into the run's bound slot (milestones, build changes, death, quit). */
+  private saveCheckpoint(): void {
+    const state = this.state;
+    if (!state || this.activeSlot === null) return;
+    const result = writeSaveSlot(
+      this.storage,
+      this.activeSlot,
+      createCheckpointSave(state, this.layout.spawn, Date.now()),
+    );
+    if (result.ok) this.ui.flashSave(`Checkpoint · Slot ${this.activeSlot + 1}`);
+    else this.ui.showToast(result.error, '#ff8577');
+    this.refreshTitleSaves();
+  }
+
+  private saveToSlot(slot: number): void {
+    const state = this.state;
+    if (!state) return;
+    const result = writeSaveSlot(
+      this.storage,
+      slot,
+      createCheckpointSave(state, this.layout.spawn, Date.now()),
+    );
+    if (!result.ok) {
+      this.ui.showToast(result.error, '#ff8577');
+      return;
+    }
+    this.activeSlot = slot;
+    this.ui.setActiveSlot(slot);
+    this.savePanel.close();
+    this.ui.showToast(`Saved · Slot ${slot + 1}`, '#e8c877');
+    this.refreshTitleSaves();
+  }
+
+  private loadSlot(slot: number): void {
+    const read = readSaveSlot(this.storage, slot);
+    if (!read.ok) {
+      this.ui.showToast(`Cannot load Slot ${slot + 1}: ${read.error}`, '#ff8577');
+      this.savePanel.sync(listSaveSlots(this.storage), this.activeSlot);
+      this.refreshTitleSaves();
+      return;
+    }
+    if (read.save.zoneSeed !== this.layout.seed) {
+      this.ui.showToast('That save belongs to a different realm', '#ff8577');
+      return;
+    }
+    let restored: GameState;
+    try {
+      restored = restoreGameState(read.save, this.layout);
+    } catch (err) {
+      this.ui.showToast(err instanceof Error ? err.message : String(err), '#ff8577');
+      return;
+    }
+    // A slot read from its backup is healed on load, so the next read is direct.
+    if (read.recovered) writeSaveSlot(this.storage, slot, read.save);
+
+    this.clearRun();
+    this.state = restored;
+    this.activeSlot = slot;
+    this.ui.setActiveSlot(slot);
+    this.savePanel.close();
+    this.beginRun();
+    this.ui.showToast(
+      read.recovered
+        ? `Recovered Slot ${slot + 1} from backup`
+        : `Loaded Slot ${slot + 1} · ${this.classDef.name} Lv ${restored.level}`,
+      '#e8c877',
+    );
+    this.refreshTitleSaves();
+  }
+
+  private continueRun(): void {
+    const latest = latestSaveSlot(listSaveSlots(this.storage));
+    if (!latest) {
+      this.refreshTitleSaves();
+      this.ui.showToast('No saved exile to continue', '#ff8577');
+      return;
+    }
+    this.loadSlot(latest.slot);
+  }
+
+  private deleteSlot(slot: number): void {
+    const result = deleteSaveSlot(this.storage, slot);
+    if (!result.ok) {
+      this.ui.showToast(result.error, '#ff8577');
+      return;
+    }
+    if (this.activeSlot === slot) {
+      this.activeSlot = null;
+      this.ui.setActiveSlot(null);
+    }
+    this.savePanel.sync(listSaveSlots(this.storage), this.activeSlot);
+    this.refreshTitleSaves();
+    this.ui.showToast(`Slot ${slot + 1} cleared`, '#8f887a');
+  }
+
   private setMode(mode: GameMode): void {
     this.mode = mode;
     this.loop.setRunning(mode === 'playing' && !this.dead);
@@ -403,13 +598,21 @@ class Game {
           }
         }
         for (const ev of events) {
-          if (ev.kind === 'death' && ev.targetKind === 'player') this.onPlayerDeath();
-          else if (ev.kind === 'levelup') this.ui.showToast(`Level ${ev.level}!`, '#e8c877');
-          else if (ev.kind === 'refuse') this.reportRefusal(ev.reason, ev.label);
-          else if (ev.kind === 'objective') this.ui.showToast(ev.text, '#e8c877');
-          else if (ev.kind === 'boss-phase') this.ui.showToast(ev.label, '#ff8577');
-          else if (ev.kind === 'victory') this.onVictory();
-          else if (ev.kind === 'pickup') {
+          if (ev.kind === 'death' && ev.targetKind === 'player') {
+            this.onPlayerDeath();
+            this.saveCheckpoint();
+          } else if (ev.kind === 'levelup') {
+            this.ui.showToast(`Level ${ev.level}!`, '#e8c877');
+            this.saveCheckpoint();
+          } else if (ev.kind === 'refuse') this.reportRefusal(ev.reason, ev.label);
+          else if (ev.kind === 'objective') {
+            this.ui.showToast(ev.text, '#e8c877');
+            this.saveCheckpoint();
+          } else if (ev.kind === 'boss-phase') this.ui.showToast(ev.label, '#ff8577');
+          else if (ev.kind === 'victory') {
+            this.onVictory();
+            this.saveCheckpoint();
+          } else if (ev.kind === 'pickup') {
             const rarity = ev.rarity as keyof typeof RARITY_COLORS;
             this.ui.showToast(`Picked up ${ev.name}`, RARITY_COLORS[rarity]?.cssColor);
           }
@@ -570,6 +773,10 @@ class Game {
         return;
       }
       if (e.key !== 'Escape') return;
+      if (this.savePanel.visible) {
+        this.savePanel.close();
+        return;
+      }
       if (this.passivePanel.visible) {
         this.passivePanel.close();
         return;
@@ -638,6 +845,7 @@ class Game {
     if (result.ok) {
       this.inventoryPanel.sync(this.state);
       this.ui.setPlayerHp(this.state.player.hp, this.state.player.maxHp);
+      this.saveCheckpoint();
     } else {
       this.ui.showToast(`Cannot equip: ${result.reason}`, '#ff8577');
     }
@@ -649,6 +857,7 @@ class Game {
     if (result.ok) {
       this.inventoryPanel.sync(this.state);
       this.ui.setPlayerHp(this.state.player.hp, this.state.player.maxHp);
+      this.saveCheckpoint();
     } else {
       this.ui.showToast(`Cannot unequip: ${result.reason}`, '#ff8577');
     }
@@ -661,6 +870,7 @@ class Game {
     if (!state || this.mode !== 'playing' || this.dead) return;
     const result = allocatePassive(state, id);
     if (!result.ok) this.ui.showToast(passiveRefusalMessage(result), '#ff8577');
+    else this.saveCheckpoint();
     this.passivePanel.sync(state);
     if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
   }
@@ -670,6 +880,7 @@ class Game {
     if (!state || this.mode !== 'playing' || this.dead) return;
     const result = refundPassive(state, id);
     if (!result.ok) this.ui.showToast(passiveRefusalMessage(result), '#ff8577');
+    else this.saveCheckpoint();
     this.passivePanel.sync(state);
     if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
   }
@@ -876,7 +1087,27 @@ class Game {
 
   exportSave(): string {
     if (!this.state) throw new Error('no active state');
-    return serializeSave(createSave(this.state));
+    return serializeSave(createCheckpointSave(this.state, this.layout.spawn));
+  }
+
+  saves(): ReturnType<AshenDebug['saves']> {
+    return {
+      activeSlot: this.activeSlot,
+      persistent: this.persistentSaves,
+      slots: listSaveSlots(this.storage).map((info) => ({
+        slot: info.slot,
+        status: info.status,
+        classId: info.save?.classId ?? null,
+        level: info.save?.level ?? null,
+        campsCleared: info.save ? info.save.objectives.campsCleared.filter(Boolean).length : 0,
+        campsTotal: info.save ? info.save.objectives.campsCleared.length : 0,
+        bossSpawned: info.save?.objectives.bossSpawned ?? false,
+        bossDefeated: info.save?.objectives.bossDefeated ?? false,
+        savedAt: info.save?.savedAt ?? 0,
+        recovered: info.recovered,
+        error: info.error ?? null,
+      })),
+    };
   }
 }
 
@@ -899,4 +1130,5 @@ const game = new Game(canvas, uiRoot);
   teleportPlayer: (x, z) => game.teleportPlayer(x, z),
   sceneryPoints: () => game.sceneryPoints(),
   exportSave: () => game.exportSave(),
+  saves: () => game.saves(),
 };

@@ -2,7 +2,9 @@ import type { ClassId } from '../content/types';
 import { CLASSES } from '../content/classes';
 import { AFFIXES } from '../content/affixes';
 import { ITEM_BASES, ITEM_SLOTS, RARITY_COLORS, UNIQUES, type ItemSlot, type Rarity } from '../content/items';
-import type { GameState } from '../sim/state';
+import { getPassive, PASSIVE_ROOT } from '../content/passives';
+import type { GameState, Vec2 } from '../sim/state';
+import { FLASK_MAX_CHARGES } from '../sim/state';
 import type { ItemInstance } from '../sim/items';
 import { xpToNext } from '../systems/progression';
 import { BAG_CAP } from '../systems/inventory';
@@ -11,16 +13,26 @@ import { BAG_CAP } from '../systems/inventory';
  * Versioned save schema. Serialization stays independent of three.js and of
  * live GameState internals so save migrations never break when runtime state
  * evolves. Saves describe character checkpoints, not exact combat/replay state.
+ *
+ * v1 -> v2 added progression + inventory.
+ * v2 -> v3 added passive allocations, zone objective progress, and flask charges.
  */
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface SaveInventory {
   bags: ItemInstance[];
   equipment: Record<ItemSlot, ItemInstance | null>;
 }
 
+/** Zone progress at the checkpoint; the live layout supplies camp totals. */
+export interface SaveObjectives {
+  campsCleared: boolean[];
+  bossSpawned: boolean;
+  bossDefeated: boolean;
+}
+
 export interface SaveGame {
-  version: 2;
+  version: 3;
   classId: ClassId;
   hp: number;
   maxHp: number;
@@ -29,6 +41,10 @@ export interface SaveGame {
   level: number;
   xp: number;
   inventory: SaveInventory;
+  /** Allocated passive node ids, including the permanent root. */
+  passives: string[];
+  objectives: SaveObjectives;
+  flasks: { health: number; mana: number };
   /** Epoch milliseconds; excluded from equality checks. */
   savedAt: number;
 }
@@ -40,6 +56,11 @@ const EMPTY_EQUIPMENT = (): SaveInventory['equipment'] => ({
   gloves: null,
   boots: null,
   amulet: null,
+});
+
+const FULL_FLASKS = (): SaveGame['flasks'] => ({
+  health: FLASK_MAX_CHARGES,
+  mana: FLASK_MAX_CHARGES,
 });
 
 export function createSave(state: GameState, savedAt = 0): SaveGame {
@@ -61,8 +82,32 @@ export function createSave(state: GameState, savedAt = 0): SaveGame {
         ]),
       ) as SaveInventory['equipment'],
     },
+    passives: [...state.passives.allocated],
+    objectives: {
+      campsCleared: state.objectives.campCleared.map((cleared) => cleared === true),
+      bossSpawned: state.objectives.bossSpawned,
+      bossDefeated: state.objectives.bossDefeated,
+    },
+    flasks: {
+      health: state.flasks.health.charges,
+      mana: state.flasks.mana.charges,
+    },
     savedAt,
   };
+}
+
+/**
+ * Checkpoint saves never store a dead character: if the player is already
+ * down, the checkpoint records a full-health respawn at the zone spawn so
+ * "Continue" always resumes play.
+ */
+export function createCheckpointSave(state: GameState, spawn: Vec2, savedAt = 0): SaveGame {
+  const save = createSave(state, savedAt);
+  if (state.player.hp <= 0) {
+    save.hp = save.maxHp;
+    save.position = { x: spawn.x, z: spawn.z };
+  }
+  return save;
 }
 
 export function serializeSave(save: SaveGame): string {
@@ -81,13 +126,13 @@ export function deserializeSave(raw: string): SaveGame {
 }
 
 /**
- * Migration hook: upgrades v1 saves to v2 (progression and inventory default
- * to fresh values), passes validated v2 through, and rejects unknown versions
- * rather than silently misreading them.
+ * Migration hook: upgrades v1 and v2 saves to v3 with conservative defaults,
+ * passes validated v3 saves through, and rejects unknown versions rather than
+ * silently misreading them.
  */
 export function migrateSave(data: unknown): SaveGame {
   if (!isRecord(data)) throw new Error('Save data is not an object');
-  if (data.version !== 1 && data.version !== SAVE_VERSION) {
+  if (data.version !== 1 && data.version !== 2 && data.version !== SAVE_VERSION) {
     throw new Error(`Unsupported save version: ${String(data.version)}`);
   }
 
@@ -98,13 +143,24 @@ export function migrateSave(data: unknown): SaveGame {
     !integerAtLeast(zoneSeed, 0) || zoneSeed > 0xffffffff) {
     throw new Error('Save data is missing required fields or has invalid character values');
   }
-  const core = { version: SAVE_VERSION, classId: playerClass.id, hp, maxHp, position: { x: position.x, z: position.z }, zoneSeed } as const;
+  const core = {
+    version: SAVE_VERSION,
+    classId: playerClass.id,
+    hp,
+    maxHp,
+    position: { x: position.x, z: position.z },
+    zoneSeed,
+  } as const;
+
   if (data.version === 1) {
     return {
       ...core,
       level: 1,
       xp: 0,
       inventory: { bags: [], equipment: EMPTY_EQUIPMENT() },
+      passives: [PASSIVE_ROOT],
+      objectives: { campsCleared: [], bossSpawned: false, bossDefeated: false },
+      flasks: FULL_FLASKS(),
       savedAt: integerAtLeast(data.savedAt, 0) ? data.savedAt : 0,
     };
   }
@@ -113,7 +169,30 @@ export function migrateSave(data: unknown): SaveGame {
   if (!integerAtLeast(level, 1) || !integerAtLeast(xp, 0) || xp >= xpToNext(level) || !integerAtLeast(savedAt, 0)) {
     throw new Error('Save data has invalid progression or timestamp');
   }
-  return { ...core, level, xp, savedAt, inventory: parseInventory(data.inventory) };
+  const progression = {
+    level,
+    xp,
+    inventory: parseInventory(data.inventory),
+    savedAt,
+  } as const;
+
+  if (data.version === 2) {
+    return {
+      ...core,
+      ...progression,
+      passives: [PASSIVE_ROOT],
+      objectives: { campsCleared: [], bossSpawned: false, bossDefeated: false },
+      flasks: FULL_FLASKS(),
+    };
+  }
+
+  return {
+    ...core,
+    ...progression,
+    passives: parsePassives(data.passives, level),
+    objectives: parseObjectives(data.objectives),
+    flasks: parseFlasks(data.flasks),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,6 +205,51 @@ function finite(value: unknown): value is number {
 
 function integerAtLeast(value: unknown, min: number): value is number {
   return finite(value) && Number.isSafeInteger(value) && value >= min;
+}
+
+function parsePassives(value: unknown, level: number): string[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('Save data has invalid passives');
+  const allocated = new Set<string>();
+  for (const id of value) {
+    if (typeof id !== 'string' || !getPassive(id) || allocated.has(id)) {
+      throw new Error('Save data has an invalid passive node');
+    }
+    allocated.add(id);
+  }
+  if (!allocated.has(PASSIVE_ROOT)) throw new Error('Save data is missing the passive root');
+  // One point per level gained; the root is free.
+  if (allocated.size - 1 > level - 1) throw new Error('Save data has more passives than levels allow');
+  // Every allocated node must still be connected to the allocated path.
+  for (const id of allocated) {
+    const node = getPassive(id)!;
+    if (!node.prereqs.every((prereq) => allocated.has(prereq))) {
+      throw new Error('Save data has an orphaned passive node');
+    }
+  }
+  return [...allocated];
+}
+
+function parseObjectives(value: unknown): SaveObjectives {
+  if (!isRecord(value) || !Array.isArray(value.campsCleared) || value.campsCleared.length > 32 ||
+    !value.campsCleared.every((flag) => typeof flag === 'boolean') ||
+    typeof value.bossSpawned !== 'boolean' || typeof value.bossDefeated !== 'boolean') {
+    throw new Error('Save data has invalid zone objectives');
+  }
+  const campsCleared = [...value.campsCleared] as boolean[];
+  if (value.bossDefeated && !value.bossSpawned) throw new Error('Save data has an impossible boss state');
+  if (value.bossSpawned && !campsCleared.every(Boolean)) {
+    throw new Error('Save data spawns the boss before the camps are cleared');
+  }
+  return { campsCleared, bossSpawned: value.bossSpawned, bossDefeated: value.bossDefeated };
+}
+
+function parseFlasks(value: unknown): SaveGame['flasks'] {
+  if (!isRecord(value) ||
+    !integerAtLeast(value.health, 0) || value.health > FLASK_MAX_CHARGES ||
+    !integerAtLeast(value.mana, 0) || value.mana > FLASK_MAX_CHARGES) {
+    throw new Error('Save data has invalid flask charges');
+  }
+  return { health: value.health, mana: value.mana };
 }
 
 function parseInventory(value: unknown): SaveInventory {

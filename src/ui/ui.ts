@@ -16,8 +16,18 @@ export interface UiCallbacks {
   onQuitToTitle(): void;
   onRespawn(): void;
   onContinue(): void;
+  /** Title-screen Continue: load the most recent checkpoint. */
+  onContinueRun(): void;
+  /** Open the save/load slot screen from the title or pause menu. */
+  onOpenSlots(mode: 'load' | 'save'): void;
   onCastSlot(slot: SkillDef['slot']): void;
   onUseFlask(kind: FlaskKind): void;
+}
+
+/** Title-screen checkpoint summary (slice 8). */
+export interface TitleSaveInfo {
+  classId: ClassId;
+  level: number;
 }
 
 /** Per-frame combat HUD data (slice 5: mana gating + cooldown sweeps). */
@@ -90,6 +100,12 @@ export class Ui {
   private readonly hotbar: HTMLElement;
   private readonly objectivesEl: HTMLElement;
   private readonly objectiveList: HTMLElement;
+  private readonly continueBtn: HTMLElement;
+  private readonly continueDetail: HTMLElement;
+  private readonly loadBtn: HTMLElement;
+  private readonly badge: HTMLElement;
+  private readonly saveFlash: HTMLElement;
+  private saveFlashTimer = 0;
   private readonly flaskEls = new Map<FlaskKind, HTMLElement>();
   private readonly slots = new Map<SkillId, SlotView>();
   private lastFlaskCharges: Record<FlaskKind, number> = { health: -1, mana: -1 };
@@ -120,6 +136,11 @@ export class Ui {
     this.hotbar = root.querySelector('[data-hotbar]') as HTMLElement;
     this.objectivesEl = root.querySelector('[data-objectives]') as HTMLElement;
     this.objectiveList = root.querySelector('[data-objective-list]') as HTMLElement;
+    this.continueBtn = root.querySelector('[data-title-continue]') as HTMLElement;
+    this.continueDetail = root.querySelector('[data-title-continue-detail]') as HTMLElement;
+    this.loadBtn = root.querySelector('[data-title-load]') as HTMLElement;
+    this.badge = root.querySelector('[data-hud-badge]') as HTMLElement;
+    this.saveFlash = root.querySelector('[data-save-flash]') as HTMLElement;
 
     root.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
       btn.addEventListener('click', () => this.onAction(btn.dataset.action ?? ''));
@@ -176,6 +197,31 @@ export class Ui {
     const ratio = Math.max(0, Math.min(1, xp / Math.max(1, xpToNext)));
     this.xpFill.style.width = `${(ratio * 100).toFixed(1)}%`;
     this.levelText.textContent = `LVL ${level}`;
+  }
+
+  /** Title-screen Continue availability and summary (slice 8). */
+  setSaveInfo(latest: TitleSaveInfo | null, hasSaves: boolean): void {
+    this.continueBtn.classList.toggle('hidden', latest === null);
+    this.loadBtn.classList.toggle('hidden', !hasSaves);
+    if (!latest) return;
+    const def = CLASSES.find((c) => c.id === latest.classId);
+    this.continueDetail.textContent = `${def?.name ?? 'Exile'} · Level ${latest.level}`;
+  }
+
+  /** Which slot autosaves write to; null means the run is unbound. */
+  setActiveSlot(slot: number | null): void {
+    this.badge.textContent =
+      slot === null ? 'Ashen Vale · v0.8 · autosave off' : `Ashen Vale · v0.8 · autosave slot ${slot + 1}`;
+  }
+
+  /** Small transient confirmation near the HUD badge. */
+  flashSave(text: string): void {
+    this.saveFlash.textContent = text;
+    this.saveFlash.classList.remove('hidden', 'save-flash--pulse');
+    void this.saveFlash.offsetWidth;
+    this.saveFlash.classList.add('save-flash--pulse');
+    window.clearTimeout(this.saveFlashTimer);
+    this.saveFlashTimer = window.setTimeout(() => this.saveFlash.classList.add('hidden'), 1600);
   }
 
   /** Unspent passive points nag (slice 6). */
@@ -319,6 +365,18 @@ export class Ui {
       case 'new-game':
         this.callbacks.onNewGame();
         break;
+      case 'continue-run':
+        this.callbacks.onContinueRun();
+        break;
+      case 'load-game':
+        this.callbacks.onOpenSlots('load');
+        break;
+      case 'save-slots':
+        this.callbacks.onOpenSlots('save');
+        break;
+      case 'load-slots':
+        this.callbacks.onOpenSlots('load');
+        break;
       case 'back':
         this.callbacks.onBack();
         break;
@@ -365,7 +423,12 @@ export class Ui {
           <p class="eyebrow">A dark fantasy action RPG</p>
           <h1 class="game-title">Ashen Vale</h1>
           <p class="tagline">The moor is burning. Walk into it.</p>
+          <button class="btn btn--primary title-continue hidden" data-action="continue-run" data-title-continue>
+            <span>Continue</span>
+            <span class="title-continue__detail" data-title-continue-detail></span>
+          </button>
           <button class="btn btn--primary" data-action="new-game">New Game</button>
+          <button class="btn hidden" data-action="load-game" data-title-load>Load Game</button>
           <p class="hint">Left click to move · Right drag to rotate · Scroll to zoom</p>
         </div>
       </div>
@@ -425,7 +488,8 @@ export class Ui {
           <div class="objectives__list" data-objective-list></div>
         </div>
         <div class="hud__hints">Left click: move · Click a husk: attack · Q W E R: skills · 1 2: flasks · P: passives · I: inventory · Esc: pause</div>
-        <div class="hud__badge">Skills &amp; flasks · v0.5</div>
+        <div class="hud__badge" data-hud-badge>Ashen Vale · v0.8</div>
+        <div class="save-flash hidden" data-save-flash></div>
       </div>
 
       <div class="toast-layer" data-toasts></div>
@@ -474,6 +538,8 @@ export class Ui {
           <h2 class="screen-title">Paused</h2>
           <div class="pause-actions">
             <button class="btn btn--primary" data-action="resume">Resume</button>
+            <button class="btn" data-action="save-slots">Save Game</button>
+            <button class="btn" data-action="load-slots">Load Game</button>
             <button class="btn" data-action="restart">Restart Run</button>
             <button class="btn" data-action="quit">Quit to Title</button>
           </div>

@@ -169,9 +169,9 @@ async function main() {
   check('level-up grants apply', s.level >= 2, `level ${s.level}`);
   check('level-up toast appears', (await page.locator('.toast').count()) > 0);
 
-  // --- Save stub shape (schema v2) ---
+  // --- Save shape (current schema) ---
   const save = await page.evaluate(() => JSON.parse(window.__ashen.exportSave()));
-  check('save serializes at schema v2', save.version === 2, `version ${save.version}`);
+  check('save serializes at the current schema version', save.version === 3, `version ${save.version}`);
   check('save carries progression + inventory', save.level >= 2 && Array.isArray(save.inventory.bags));
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

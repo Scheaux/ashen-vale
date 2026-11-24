@@ -1,12 +1,12 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG prototype in TypeScript + three.js.
-Built in vertical slices; this repo currently covers **Slices 0–7**: scaffold,
+Built in vertical slices; this repo currently covers **Slices 0–8**: scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
 (QWER skill hotbars, mana, flasks and the death → checkpoint retry flow), a
-passive skill tree, and the zone objective loop — clear the camps, then end
-the Ashen Warden in its arena — plus jointed procedural character rigs with
-full animation sets.
+passive skill tree, the zone objective loop — clear the camps, then end the
+Ashen Warden in its arena — and local save slots with Continue, plus jointed
+procedural character rigs with full animation sets.
 See [MVP.md](./MVP.md) for the full slice-by-slice roadmap to the MVP.
 
 ## Run
@@ -33,6 +33,8 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
 | Scroll | Zoom |
 | I | Open or close inventory |
 | Esc | Pause / resume (and back out of menus) |
+| Title: Continue / Load Game | Resume the newest checkpoint or pick a slot |
+| Pause: Save Game / Load Game | Write or restore a checkpoint in any slot |
 
 ## Current state
 
@@ -95,8 +97,16 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
   taken, kills, time survived) and respawn at the checkpoint, which preserves
   progression and encounter damage while refilling mana and flasks and
   cancelling unfinished attacks and projectiles
-- Validated character checkpoint schema v2 with a tested v1→v2 migration
-  (`src/save/schema.ts`); not a mid-combat replay snapshot or a Continue flow
+- **Save slots:** three localStorage checkpoints with a shared slot screen on
+  the title and pause menus. A new run binds to the first empty slot and
+  autosaves at zone milestones (camp cleared, Warden wakes or dies), on
+  level-ups, death, quit, and whenever a passive or equipment choice changes;
+  **Continue** on the title restores the newest readable checkpoint. Loading rebuilds the zone from the checkpoint — level,
+  XP, passives, inventory, flasks, position and camp/boss flags — with cleared
+  camps left empty and a live boss fight restarting at its arena spawn. Every
+  write keeps the previous body as a backup; torn writes recover, and corrupt
+  slots are reported and deletable. Schema v3 with tested v1→v3 and v2→v3
+  migrations (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
 
 ## Architecture
 
@@ -114,7 +124,8 @@ src/
              materials.ts procedural normal/roughness maps, geo.ts bevel/lathe/sweep/rock toolkit
   ui/        DOM-overlay screens (title, class select, HUD with hotbar/flasks, passive
              tree, pause, death recap, inventory), floating combat text, nameplates
-  save/      versioned save schema + migration (localStorage slots in slice 8)
+  save/      versioned schema + migrations, localStorage slots with backups,
+             checkpoint restore (rebuilds zone progress from saved flags)
 ```
 
 Procedural detail follows the three-scale model: silhouettes get curve
@@ -124,5 +135,7 @@ extra geometry. Render budget is reported in the QA snapshot
 (~135K triangles / ~150 draw calls).
 
 The same seed and tick-by-tick inputs produce the same gameplay outcomes.
-Rendering consumes authoritative state and events. The checkpoint export stores
-character progression, inventory, and zone seed, not live encounters or RNG state.
+Rendering consumes authoritative state and events. Checkpoints store character
+progression, passives, inventory, flask charges, position and zone objective
+flags — not live encounters or RNG state. Loading rebuilds the zone from those
+flags and the deterministic layout.
