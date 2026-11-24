@@ -26,6 +26,8 @@ interface TelegraphView {
 }
 
 const RING_SEGMENTS = 40;
+/** Hard cap on simultaneous skill transients; oldest is retired first. */
+const MAX_TRANSIENTS = 48;
 
 export class SkillVfxLayer {
   private readonly group = new THREE.Group();
@@ -54,6 +56,10 @@ export class SkillVfxLayer {
         }
       } else if (ev.kind === 'burst') {
         this.spawnBurst(ev.x, ev.z, ev.radius, ev.color);
+      } else if (ev.kind === 'damage' && ev.targetKind === 'enemy') {
+        this.spawnImpact(ev.x, ev.y, ev.z);
+      } else if (ev.kind === 'death' && ev.targetKind === 'enemy') {
+        this.spawnDeathPuff(ev.x, ev.z);
       }
     }
   }
@@ -113,7 +119,7 @@ export class SkillVfxLayer {
     root.position.set(x, this.terrain.heightAt(x, z) + 0.12, z);
     root.add(mesh);
     this.group.add(root);
-    this.transients.push({
+    this.pushTransient({
       root,
       age: 0,
       life: 0.32,
@@ -141,7 +147,7 @@ export class SkillVfxLayer {
     root.position.set(x, this.terrain.heightAt(x, z) + 0.15, z);
     root.add(mesh);
     this.group.add(root);
-    this.transients.push({
+    this.pushTransient({
       root,
       age: 0,
       life: 0.2,
@@ -190,10 +196,10 @@ export class SkillVfxLayer {
     }
 
     const light = new THREE.PointLight(color, 26, radius * 4.5, 2);
-    light.position.set(x, baseY + 1.4, z);
-    this.group.add(light);
+    light.position.set(0, 1.4, 0);
+    root.add(light);
 
-    this.transients.push({
+    this.pushTransient({
       root,
       age: 0,
       life: 0.5,
@@ -203,12 +209,93 @@ export class SkillVfxLayer {
         shardMaterial.opacity = 0.9 * (1 - t) ** 1.8;
         light.intensity = 26 * (1 - t) ** 2;
         for (const shard of shards) shard.position.y += 0.09 * (1 - t);
-        if (t >= 1) {
-          light.removeFromParent();
-          light.dispose();
-        }
       },
     });
+  }
+
+  /** Small contact ring where a player hit lands on an enemy. */
+  private spawnImpact(x: number, y: number, z: number): void {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffd9a8,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.42, 16), material);
+    mesh.rotation.x = -Math.PI / 2;
+    const root = new THREE.Group();
+    root.position.set(x, y, z);
+    root.add(mesh);
+    this.group.add(root);
+    this.pushTransient({
+      root,
+      age: 0,
+      life: 0.2,
+      tick: (t) => {
+        root.scale.setScalar(0.6 + 1.8 * t);
+        material.opacity = 0.8 * (1 - t) ** 1.5;
+      },
+    });
+  }
+
+  /** Ember-heavy collapse burst on an enemy death. */
+  private spawnDeathPuff(x: number, z: number): void {
+    const root = new THREE.Group();
+    root.position.set(x, this.terrain.heightAt(x, z), z);
+    this.group.add(root);
+
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff9a4d,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.55, 18), ringMaterial);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.08;
+    root.add(ring);
+
+    const shardMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffb36b,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const shards: THREE.Mesh[] = [];
+    for (let i = 0; i < 5; i++) {
+      const shard = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.5, 4), shardMaterial);
+      const angle = (i / 5) * Math.PI * 2;
+      shard.position.set(Math.cos(angle) * 0.25, 0.12, Math.sin(angle) * 0.25);
+      shard.rotation.set(Math.sin(angle) * 0.55, 0, -Math.cos(angle) * 0.55);
+      root.add(shard);
+      shards.push(shard);
+    }
+
+    this.pushTransient({
+      root,
+      age: 0,
+      life: 0.55,
+      tick: (t) => {
+        root.scale.setScalar(0.4 + 1.2 * t);
+        ringMaterial.opacity = 0.7 * (1 - t) ** 1.2;
+        shardMaterial.opacity = 0.8 * (1 - t) ** 1.5;
+        for (const shard of shards) shard.position.y = 0.12 + t * 0.5;
+      },
+    });
+  }
+
+  /** Cap simultaneous effects by retiring the oldest. */
+  private pushTransient(transient: Transient): void {
+    if (this.transients.length >= MAX_TRANSIENTS) {
+      const oldest = this.transients.shift();
+      if (oldest) disposeMeshTree(oldest.root);
+    }
+    this.transients.push(transient);
   }
 
   /** Draped fill disc + outline ring conformed to the terrain. */

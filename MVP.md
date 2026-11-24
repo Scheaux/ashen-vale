@@ -24,7 +24,7 @@ localStorage saves · Vitest unit tests + headless-browser QA playthroughs per s
 | 6 | Passive skill tree | ✅ Done | Meaningful build choice |
 | 7 | Zone objective & boss | ✅ Done | Complete the loop |
 | 8 | Save slots | ✅ Done | Survive reload; migration tested |
-| 9 | Polish & release | ⬜ Next | Ship-ready build |
+| 9 | Polish & release | ✅ Done | Ship-ready build |
 
 ---
 
@@ -130,12 +130,27 @@ unreadable slots are listed as corrupted and can be deleted without crashing
 the game. Schema v3 adds passives, objectives and flasks, with tested
 v1 → v3 and v2 → v3 migrations.
 
-### Slice 9 — Polish & release
-Combat readability pass (telegraph contrast, damage numbers, hit feedback); VFX polish
-(skill trails, impact frames, ambient effects); performance pass (draw calls, instancing,
-adaptive quality, mobile-no-longer-required desktop budget); production build; full
-browser playthrough checklist (fresh start → boss → save → reload → continue); release
-notes and rollback readiness.
+### Slice 9 — Polish & release ✅
+Combat readability now reads at a glance: telegraphs layer a dark ground stain,
+a rising warning fill and a bright rim; enemy health bars are instanced and
+always legible; big hits use a heavy damage treatment with shield markers; player
+damage pulses a red or blue edge vignette and punches the camera; hits and deaths
+emit capped impact/death VFX. Spell bolts carry additive wakes and the scene
+gains a cinematic edge vignette.
+
+The performance pass cut the representative camp fight from ~500 draw calls to
+121–280 (165–193K triangles): distant enemies use one-draw silhouettes (full
+jointed rigs are capped at the eight closest on-screen enemies), contact shadows
+are one instanced blob pass, health bars are two instanced passes, and detail
+selection is frustum-culled. Resolution adapts between 1x and the device cap on a
+1.5s frame-time window. Release QA gates the budget at ≤320 draw calls and
+≤260K triangles.
+
+The v1.0.0 release adds a full-loop browser suite (fresh start → combat feedback
+→ camps → Warden phases → victory → save → reload → Continue), a high-DPI
+adaptive-quality pass and a reduced-motion boot. Verification evidence, known
+limitations, deploy steps and rollback to `af7b052` are in
+[docs/release-notes.md](./docs/release-notes.md).
 
 ---
 
@@ -178,7 +193,17 @@ of the pool.
 3. `npm run build` — production build passes.
 4. `npm run qa` — headless-Chromium playthrough of the slice's gate with screenshots
    (`qa/shots/`) and zero console errors; earlier slices' suites must stay green.
+5. `npm run qa:release` — the full loop plus the release gates: camp-fight render
+   budget, high-DPI adaptive resolution and reduced-motion boot.
 
 Simulation is deterministic for the same seed and tick-by-tick inputs. Rendering
 consumes authoritative sim events. The current save format is a character
 checkpoint, not a snapshot of the simulation or its RNG state.
+
+## Release
+
+**v1.0.0** is the completed MVP. The deployable artifact is the static `dist/`
+bundle. The previous release checkpoint is `af7b052` (Slice 8); the save schema
+(v3) is unchanged in v1.0.0, so v1.0.0 checkpoints load after a rollback. Full
+verification evidence, known limitations and the release checklist live in
+[docs/release-notes.md](./docs/release-notes.md).

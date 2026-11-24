@@ -47,6 +47,13 @@ export class ProjectileViews {
               new THREE.SphereGeometry(0.17, 12, 10),
               new THREE.MeshBasicMaterial({ color: proj.color }),
             );
+        if (proj.visual !== 'arrow') {
+          mesh.add(this.createTrail(
+            proj.color,
+            proj.visual === 'streak' ? 2.4 : 1.1,
+            proj.visual === 'streak' ? 0.12 : 0.085,
+          ));
+        }
         if (proj.visual !== 'orb' && this.direction.set(proj.velocity.x, 0, proj.velocity.z).lengthSq() > 0) {
           mesh.quaternion.setFromUnitVectors(this.up, this.direction.normalize());
         }
@@ -72,6 +79,22 @@ export class ProjectileViews {
     feather.position.y = -0.24;
     arrow.add(shaft, tip, feather);
     return arrow;
+  }
+
+  /** Additive wake trailing behind a glowing bolt, along the travel axis. */
+  private createTrail(color: number, length: number, radius: number): THREE.Mesh {
+    const geometry = new THREE.ConeGeometry(radius, length, 8, 1, true);
+    geometry.rotateX(Math.PI);
+    geometry.translate(0, -length / 2 - 0.08, 0);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    return new THREE.Mesh(geometry, material);
   }
 
   /** A fast luminous streak (snipe): stretched along the direction of travel. */

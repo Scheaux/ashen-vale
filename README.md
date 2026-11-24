@@ -1,13 +1,16 @@
 # Ashen Vale
 
-A dark-fantasy isometric action RPG prototype in TypeScript + three.js.
-Built in vertical slices; this repo currently covers **Slices 0–8**: scaffold,
+A dark-fantasy isometric action RPG in TypeScript + three.js, released as
+**v1.0.0**. Built in vertical slices; the completed MVP covers scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
 (QWER skill hotbars, mana, flasks and the death → checkpoint retry flow), a
 passive skill tree, the zone objective loop — clear the camps, then end the
-Ashen Warden in its arena — and local save slots with Continue, plus jointed
-procedural character rigs with full animation sets.
-See [MVP.md](./MVP.md) for the full slice-by-slice roadmap to the MVP.
+Ashen Warden in its arena — local save slots with Continue, jointed procedural
+character rigs, and the release polish pass (combat readability, VFX,
+performance LOD and adaptive resolution).
+See [MVP.md](./MVP.md) for the slice-by-slice roadmap and
+[release notes](./docs/release-notes.md) for verification evidence, known
+limitations and rollback steps.
 
 ## Run
 
@@ -17,7 +20,8 @@ npm run dev        # http://localhost:5173
 npm test           # unit tests (deterministic sim core)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build in dist/
-npm run qa         # fresh production build + browser playthrough (screenshots in qa/shots/)
+npm run qa         # fresh production build + every browser suite (screenshots in qa/shots/)
+npm run qa:release # production build + the full-loop release suite only
 ```
 
 ## Controls
@@ -101,12 +105,27 @@ npm run qa         # fresh production build + browser playthrough (screenshots i
   the title and pause menus. A new run binds to the first empty slot and
   autosaves at zone milestones (camp cleared, Warden wakes or dies), on
   level-ups, death, quit, and whenever a passive or equipment choice changes;
-  **Continue** on the title restores the newest readable checkpoint. Loading rebuilds the zone from the checkpoint — level,
-  XP, passives, inventory, flasks, position and camp/boss flags — with cleared
-  camps left empty and a live boss fight restarting at its arena spawn. Every
-  write keeps the previous body as a backup; torn writes recover, and corrupt
-  slots are reported and deletable. Schema v3 with tested v1→v3 and v2→v3
-  migrations (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
+  **Continue** on the title restores the newest readable checkpoint. Loading
+  rebuilds the zone from the checkpoint — level, XP, passives, inventory,
+  flasks, position and camp/boss flags — with cleared camps left empty and a
+  live boss fight restarting at its arena spawn. Every write keeps the previous
+  body as a backup; torn writes recover, and corrupt slots are reported and
+  deletable. Schema v3 with tested v1→v3 and v2→v3 migrations
+  (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
+- **Combat readability:** layered ground telegraphs (dark stain, rising fill,
+  bright rim), one instanced health-bar draw call pair for all enemies, heavy-hit
+  damage numbers, shield markers, a red/blue damage vignette, decaying camera
+  punch on hits and boss phases, and impact/death VFX with capped transients
+- **Performance:** distance-based enemy LOD (full jointed rigs up close, one-draw
+  silhouettes beyond 16 units, at most eight full rigs), instanced contact
+  shadows, frustum-culled detail selection, and adaptive resolution between 1x
+  and the device cap. Release QA gates camp fights at **≤320 draw calls /
+  ≤260K triangles** (measured 121–280 calls and 165–193K triangles in headless
+  Chromium)
+- **Release:** v1.0.0 with a full-loop browser suite (fresh start → feedback →
+  camps → boss phases → victory → save → reload → Continue), high-DPI adaptive
+  quality and reduced-motion checks; see
+  [release notes](./docs/release-notes.md) for evidence and rollback
 
 ## Architecture
 
@@ -131,11 +150,26 @@ src/
 Procedural detail follows the three-scale model: silhouettes get curve
 segments (adaptive swept trees, lathed pillars), edges get bevels (weapons,
 armor), and microdetail comes from generated normal/roughness maps rather than
-extra geometry. Render budget is reported in the QA snapshot
-(~135K triangles / ~150 draw calls).
+extra geometry. Release QA gates the render budget at **≤320 draw calls** and
+**≤260K triangles** in a live camp fight; the same snapshot reports detailed
+rigs, health bars, pixel ratio, shadow state and quality-window samples.
+
+Enemy rendering uses a detail budget: the closest eight on-screen rigs get full
+jointed animation, while distant enemies use a merged, vertex-colored
+silhouette with glowing eyes. Contact shadows are one instanced blob pass, and
+all health bars are two instanced passes. The pixel ratio steps between 1x and
+the device cap (up to 2x) based on a 1.5s frame-time window.
 
 The same seed and tick-by-tick inputs produce the same gameplay outcomes.
 Rendering consumes authoritative state and events. Checkpoints store character
 progression, passives, inventory, flask charges, position and zone objective
 flags — not live encounters or RNG state. Loading rebuilds the zone from those
 flags and the deterministic layout.
+
+## Release
+
+- **Version:** 1.0.0
+- **Build:** static `dist/` bundle; `npm run build`, then serve `dist/`
+- **Rollback target:** `af7b052` (Slice 8 checkpoint; the save schema v3 is
+  unchanged in v1.0.0, so checkpoints remain compatible)
+- **Evidence:** see [docs/release-notes.md](./docs/release-notes.md)

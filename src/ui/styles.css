@@ -38,6 +38,120 @@ body {
   pointer-events: none;
 }
 
+/* Cinematic edge falloff: focuses the isometric action without post-processing. */
+#ui::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 44%, transparent 54%, rgba(2, 4, 9, 0.5) 100%);
+}
+
+.damage-vignette {
+  --damage-strength: 0.5;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(ellipse at 50% 50%, transparent 38%, var(--damage-tint, transparent) 100%);
+}
+
+.damage-vignette--health {
+  --damage-tint: rgba(184, 34, 25, 0.92);
+  animation: damage-pulse 0.5s ease-out;
+}
+
+.damage-vignette--shield {
+  --damage-tint: rgba(112, 152, 255, 0.85);
+  animation: damage-pulse 0.45s ease-out;
+}
+
+@keyframes damage-pulse {
+  0% {
+    opacity: 0;
+  }
+  16% {
+    opacity: var(--damage-strength);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-text {
+    animation-name: float-fade;
+  }
+
+  .toast {
+    animation-name: toast-fade;
+  }
+
+  .save-flash--pulse {
+    animation-name: save-fade;
+  }
+
+  .pnode--available {
+    animation: none;
+  }
+
+  .damage-vignette--health,
+  .damage-vignette--shield {
+    animation-name: damage-fade;
+  }
+}
+
+@keyframes float-fade {
+  0% {
+    opacity: 0;
+  }
+  15%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes toast-fade {
+  0% {
+    opacity: 0;
+  }
+  10%,
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes save-fade {
+  0% {
+    opacity: 0;
+  }
+  12%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes damage-fade {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: var(--damage-strength);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .hidden {
   display: none !important;
 }
@@ -571,6 +685,23 @@ body {
 .floating-text--player-damage {
   color: #ff8577;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 14px rgba(220, 70, 50, 0.5);
+}
+
+.floating-text--heavy {
+  font-size: 1.62rem;
+  color: #ffe6b8;
+  text-shadow:
+    0 2px 7px rgba(0, 0, 0, 0.9),
+    0 0 18px rgba(255, 180, 90, 0.55),
+    0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.floating-text--player-damage.floating-text--heavy {
+  color: #ff6a5a;
+  text-shadow:
+    0 2px 7px rgba(0, 0, 0, 0.9),
+    0 0 20px rgba(230, 60, 40, 0.65),
+    0 0 2px rgba(0, 0, 0, 0.9);
 }
 
 /* ---------- Elite nameplates ---------- */

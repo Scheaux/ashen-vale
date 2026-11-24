@@ -116,7 +116,20 @@ export interface AshenDebug {
     drops: number;
     dropPositions: Array<{ x: number; z: number }>;
     tellOrder: { telegraphs: number; playerDamages: number; damageBeforeTelegraph: boolean };
-    render: { triangles: number; drawCalls: number; geometries: number; textures: number };
+    render: {
+      triangles: number;
+      drawCalls: number;
+      geometries: number;
+      textures: number;
+      pixelRatio: number;
+      pixelRatioCap: number;
+      shadows: boolean;
+      detailedEnemies: number;
+      healthBars: number;
+      reducedMotion: boolean;
+      qualityWindow: number;
+      qualityFrames: number;
+    };
   };
   worldToScreen(x: number, z: number, height?: number): { x: number; y: number };
   /** Review fixture: force damage to reach edge states (death flow, low HP). Spell damage: always lands. */
@@ -143,6 +156,10 @@ export interface AshenDebug {
   drainMana(amount: number): void;
   /** Review fixture: set flask charges to test empty-flask feedback and refill. */
   setFlaskCharges(kind: FlaskKind, charges: number): void;
+  /** Review fixture: toggle shadow casting to isolate the shadow-pass budget. */
+  setShadows(enabled: boolean): void;
+  /** Review fixture: play the damage vignette without waiting for a hit. */
+  flashDamage(kind: 'health' | 'shield', strength: number): void;
   /** Review fixture: serialize the current save (for save-shape checks). */
   exportSave(): string;
   /** Review fixture: save-slot inventory and the run's bound autosave slot. */
@@ -210,6 +227,12 @@ class Game {
   private rotating = false;
   private destinationActive = false;
   private dead = false;
+  /** Adaptive resolution: step the pixel ratio between 1 and the device cap. */
+  private qualityCap = 2;
+  private qualityRatio = 1;
+  private qualityTime = 0;
+  private qualityFrames = 0;
+  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   /** Event-order recorder, scoped to the attack instance that caused the hit. */
   private readonly advertisedAttacks = new Set<string>();
   private tellTelegraphs = 0;
@@ -224,6 +247,9 @@ class Game {
   ) {
     this.world = createWorldScene(canvas);
     this.scene = this.world.scene;
+    this.qualityCap = Math.min(window.devicePixelRatio, 2);
+    this.qualityRatio = this.qualityCap;
+    this.world.renderer.setPixelRatio(this.qualityRatio);
     this.layout = generateZoneLayout();
     const browserStorage = browserSaveStorage();
     this.persistentSaves = browserStorage !== null;
@@ -232,7 +258,7 @@ class Game {
     const terrain = createTerrain();
     this.scene.add(terrain.mesh);
     this.scene.add(createProps(this.layout));
-    this.enemyViews = new EnemyViews(this.scene);
+    this.enemyViews = new EnemyViews(this.scene, terrain.surface);
     this.projectileViews = new ProjectileViews(this.scene);
     this.telegraphs = new TelegraphLayer(this.scene, terrain.surface);
     this.skillVfx = new SkillVfxLayer(this.scene, terrain.surface);
@@ -242,6 +268,7 @@ class Game {
     this.cursor = new CursorMarker(this.scene, 0xe8c877);
 
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
+    this.rig.setReducedMotion(this.reducedMotion);
     this.rig.snapTo(this.layout.spawn.x, this.layout.spawn.z);
 
     this.ui = new Ui(uiRoot, {
@@ -600,7 +627,14 @@ class Game {
         for (const ev of events) {
           if (ev.kind === 'death' && ev.targetKind === 'player') {
             this.onPlayerDeath();
+            this.rig.shake(0.4, 0.5);
             this.saveCheckpoint();
+          } else if (ev.kind === 'damage' && ev.targetKind === 'player' && ev.attackId !== QA_DAMAGE_ID) {
+            const absorbed = ev.absorbed ?? 0;
+            const shieldOnly = absorbed >= ev.amount;
+            const fraction = ev.amount / Math.max(1, state.player.maxHp);
+            this.ui.flashDamage(shieldOnly ? 'shield' : 'health', 0.3 + Math.min(0.7, fraction * 4));
+            this.rig.shake(shieldOnly ? 0.06 : Math.min(0.32, 0.1 + fraction), shieldOnly ? 0.14 : 0.24);
           } else if (ev.kind === 'levelup') {
             this.ui.showToast(`Level ${ev.level}!`, '#e8c877');
             this.saveCheckpoint();
@@ -608,8 +642,10 @@ class Game {
           else if (ev.kind === 'objective') {
             this.ui.showToast(ev.text, '#e8c877');
             this.saveCheckpoint();
-          } else if (ev.kind === 'boss-phase') this.ui.showToast(ev.label, '#ff8577');
-          else if (ev.kind === 'victory') {
+          } else if (ev.kind === 'boss-phase') {
+            this.ui.showToast(ev.label, '#ff8577');
+            this.rig.shake(0.22, 0.5);
+          } else if (ev.kind === 'victory') {
             this.onVictory();
             this.saveCheckpoint();
           } else if (ev.kind === 'pickup') {
@@ -649,7 +685,29 @@ class Game {
     this.updateHover();
     this.embers.update(dt);
     this.cursor.update(elapsed, dt);
+    this.updateQuality(dt);
     this.world.renderer.render(this.scene, this.rig.camera);
+  }
+
+  /**
+   * Dynamic resolution: a slow frame budget steps the pixel ratio down in
+   * quarter increments; headroom steps it back toward the device cap. The
+   * gameplay simulation and render interpolation never change.
+   */
+  private updateQuality(dt: number): void {
+    if (this.mode !== 'playing' || dt <= 0) return;
+    this.qualityTime += dt;
+    this.qualityFrames++;
+    if (this.qualityTime < 1.5) return;
+    const average = this.qualityTime / this.qualityFrames;
+    this.qualityTime = 0;
+    this.qualityFrames = 0;
+    let next = this.qualityRatio;
+    if (average > 0.022 && next > 1) next = Math.max(1, next - 0.25);
+    else if (average < 0.0175 && next < this.qualityCap) next = Math.min(this.qualityCap, next + 0.25);
+    if (next === this.qualityRatio) return;
+    this.qualityRatio = next;
+    this.world.renderer.setPixelRatio(next);
   }
 
   // ---------- Picking ----------
@@ -794,8 +852,10 @@ class Game {
   private onResize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    this.qualityCap = Math.min(window.devicePixelRatio, 2);
+    this.qualityRatio = Math.min(this.qualityRatio, this.qualityCap);
+    this.world.renderer.setPixelRatio(this.qualityRatio);
     this.world.renderer.setSize(w, h);
-    this.world.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.rig.setAspect(w / h);
     this.viewport.set(w, h);
   }
@@ -988,6 +1048,14 @@ class Game {
         drawCalls: this.world.renderer.info.render.calls,
         geometries: this.world.renderer.info.memory.geometries,
         textures: this.world.renderer.info.memory.textures,
+        pixelRatio: this.world.renderer.getPixelRatio(),
+        pixelRatioCap: this.qualityCap,
+        shadows: this.world.renderer.shadowMap.enabled,
+        detailedEnemies: this.enemyViews.detailedCount,
+        healthBars: this.enemyViews.visibleBars,
+        reducedMotion: this.reducedMotion,
+        qualityWindow: Math.round(this.qualityTime * 1000) / 1000,
+        qualityFrames: this.qualityFrames,
       },
     };
   }
@@ -1085,6 +1153,14 @@ class Game {
     flask.charges = Math.max(0, Math.min(flask.max, charges));
   }
 
+  setShadows(enabled: boolean): void {
+    this.world.renderer.shadowMap.enabled = enabled;
+  }
+
+  flashDamage(kind: 'health' | 'shield', strength: number): void {
+    this.ui.flashDamage(kind, strength);
+  }
+
   exportSave(): string {
     if (!this.state) throw new Error('no active state');
     return serializeSave(createCheckpointSave(this.state, this.layout.spawn));
@@ -1123,6 +1199,8 @@ const game = new Game(canvas, uiRoot);
   grantXp: (amount) => game.grantXp(amount),
   drainMana: (amount) => game.drainMana(amount),
   setFlaskCharges: (kind, charges) => game.setFlaskCharges(kind, charges),
+  setShadows: (enabled) => game.setShadows(enabled),
+  flashDamage: (kind, strength) => game.flashDamage(kind, strength),
   setDefences: (armour, evasion) => game.setDefences(armour, evasion),
   clearEnemies: () => game.clearEnemies(),
   clearCamps: () => game.clearCamps(),

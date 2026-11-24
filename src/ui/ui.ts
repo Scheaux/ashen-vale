@@ -105,6 +105,7 @@ export class Ui {
   private readonly loadBtn: HTMLElement;
   private readonly badge: HTMLElement;
   private readonly saveFlash: HTMLElement;
+  private readonly damageVignette: HTMLElement;
   private saveFlashTimer = 0;
   private readonly flaskEls = new Map<FlaskKind, HTMLElement>();
   private readonly slots = new Map<SkillId, SlotView>();
@@ -141,6 +142,7 @@ export class Ui {
     this.loadBtn = root.querySelector('[data-title-load]') as HTMLElement;
     this.badge = root.querySelector('[data-hud-badge]') as HTMLElement;
     this.saveFlash = root.querySelector('[data-save-flash]') as HTMLElement;
+    this.damageVignette = root.querySelector('[data-damage-vignette]') as HTMLElement;
 
     root.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
       btn.addEventListener('click', () => this.onAction(btn.dataset.action ?? ''));
@@ -211,7 +213,16 @@ export class Ui {
   /** Which slot autosaves write to; null means the run is unbound. */
   setActiveSlot(slot: number | null): void {
     this.badge.textContent =
-      slot === null ? 'Ashen Vale · v0.8 · autosave off' : `Ashen Vale · v0.8 · autosave slot ${slot + 1}`;
+      slot === null ? 'Ashen Vale · v1.0 · autosave off' : `Ashen Vale · v1.0 · autosave slot ${slot + 1}`;
+  }
+
+  /** Red/blue edge pulse for health or shield damage (readability, not motion). */
+  flashDamage(kind: 'health' | 'shield', strength: number): void {
+    const el = this.damageVignette;
+    el.style.setProperty('--damage-strength', String(Math.max(0.2, Math.min(1, strength))));
+    el.classList.remove('damage-vignette--health', 'damage-vignette--shield');
+    void el.offsetWidth;
+    el.classList.add(kind === 'health' ? 'damage-vignette--health' : 'damage-vignette--shield');
   }
 
   /** Small transient confirmation near the HUD badge. */
@@ -276,6 +287,7 @@ export class Ui {
   }
 
   showDeath(recap: DeathRecap): void {
+    this.clearToasts();
     const minutes = Math.floor(recap.seconds / 60);
     const seconds = Math.round(recap.seconds % 60);
     (this.deathScreen.querySelector('[data-recap-killer]') as HTMLElement).textContent = recap.killer;
@@ -310,6 +322,7 @@ export class Ui {
   }
 
   showVictory(recap: VictoryRecap): void {
+    this.clearToasts();
     const minutes = Math.floor(recap.seconds / 60);
     const seconds = Math.round(recap.seconds % 60);
     (this.victoryScreen.querySelector('[data-victory-kills]') as HTMLElement).textContent = String(recap.kills);
@@ -417,6 +430,8 @@ export class Ui {
     ).join('');
 
     return `
+      <div class="damage-vignette" data-damage-vignette></div>
+
       <div class="screen" data-screen="title">
         <div class="screen__vignette"></div>
         <div class="screen__content">
@@ -488,7 +503,7 @@ export class Ui {
           <div class="objectives__list" data-objective-list></div>
         </div>
         <div class="hud__hints">Left click: move · Click a husk: attack · Q W E R: skills · 1 2: flasks · P: passives · I: inventory · Esc: pause</div>
-        <div class="hud__badge" data-hud-badge>Ashen Vale · v0.8</div>
+        <div class="hud__badge" data-hud-badge>Ashen Vale · v1.0</div>
         <div class="save-flash hidden" data-save-flash></div>
       </div>
 

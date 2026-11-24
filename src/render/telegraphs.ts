@@ -4,13 +4,25 @@ import { disposeMeshTree } from './dispose';
 import type { TerrainSurface } from './terrainSurface';
 
 interface TelegraphView {
-  mesh: THREE.Mesh;
-  material: THREE.MeshBasicMaterial;
+  /** Dark ground stain: guarantees contrast against every terrain tone. */
+  underlay: THREE.Mesh;
+  fill: THREE.Mesh;
+  /** Bright rim tracing the exact footprint edge. */
+  rim: THREE.Mesh;
+  underlayMaterial: THREE.MeshBasicMaterial;
+  fillMaterial: THREE.MeshBasicMaterial;
+  rimMaterial: THREE.MeshBasicMaterial;
+  /** Seconds since the tell started, plus its advertised duration. */
+  age: number;
+  duration: number;
   /** Fade-out timer once the strike has passed. */
   fade: number;
 }
 
 const TELEGRAPH_COLOR = 0xff4a33;
+const RIM_COLOR = 0xffb070;
+const UNDERLAY_COLOR = 0x160405;
+const RIM_WIDTH = 0.1;
 
 export function warningFootprints(ev: Extract<SimEvent, { kind: 'telegraph' }>) {
   const sin = Math.sin(ev.facing);
@@ -46,11 +58,34 @@ export function warningFootprints(ev: Extract<SimEvent, { kind: 'telegraph' }>) 
   ]);
 }
 
+/** Narrow quads centred on every polygon edge, for a bright warning rim. */
+function outlineQuads(points: ReadonlyArray<{ x: number; z: number }>, width: number) {
+  const quads: Array<Array<{ x: number; z: number }>> = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 1e-6) continue;
+    const nx = (-dz / length) * width * 0.5;
+    const nz = (dx / length) * width * 0.5;
+    quads.push([
+      { x: a.x + nx, z: a.z + nz },
+      { x: b.x + nx, z: b.z + nz },
+      { x: b.x - nx, z: b.z - nz },
+      { x: a.x - nx, z: a.z - nz },
+    ]);
+  }
+  return quads;
+}
+
 /**
- * Ground telegraphs drawn from authoritative 'telegraph' sim events: a
- * pulsing sector for arc sweeps and a locked lane for pounces and bolts.
- * The shape is drawn from the enemy's LOCKED windup facing, so what the
- * player sees is exactly what the strike will hit.
+ * Ground telegraphs drawn from authoritative 'telegraph' sim events. Each tell
+ * is three layers: a dark stain for contrast, a rising fill that communicates
+ * how close the strike is, and a bright rim tracing the exact locked footprint.
+ * The shape comes from the enemy's locked windup facing, so what the player
+ * sees is exactly what the strike will hit.
  */
 export class TelegraphLayer {
   private readonly group = new THREE.Group();
@@ -61,46 +96,94 @@ export class TelegraphLayer {
   }
 
   clear(): void {
-    for (const view of this.views.values()) disposeMeshTree(view.mesh);
+    for (const view of this.views.values()) this.disposeView(view);
     this.views.clear();
   }
 
   handleEvents(events: readonly SimEvent[]): void {
     for (const ev of events) {
       if (ev.kind !== 'telegraph') continue;
-      const view = this.views.get(ev.enemyId);
-      if (view) disposeMeshTree(view.mesh);
+      const existing = this.views.get(ev.enemyId);
+      if (existing) this.disposeView(existing);
 
-      const geometry = this.terrain.drape(warningFootprints(ev));
-      const material = new THREE.MeshBasicMaterial({
+      const footprints = warningFootprints(ev);
+      const underlayMaterial = new THREE.MeshBasicMaterial({
+        color: UNDERLAY_COLOR,
+        transparent: true,
+        opacity: 0.36,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const fillMaterial = new THREE.MeshBasicMaterial({
         color: TELEGRAPH_COLOR,
         transparent: true,
         opacity: 0.2,
         depthWrite: false,
         side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
       });
-      const mesh = new THREE.Mesh(geometry, material);
-      this.group.add(mesh);
-      this.views.set(ev.enemyId, { mesh, material, fade: 0 });
+      const rimMaterial = new THREE.MeshBasicMaterial({
+        color: RIM_COLOR,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const underlay = new THREE.Mesh(this.terrain.drape(footprints, 0.04), underlayMaterial);
+      const fill = new THREE.Mesh(this.terrain.drape(footprints, 0.05), fillMaterial);
+      const rim = new THREE.Mesh(
+        this.terrain.drape(footprints.flatMap((polygon) => outlineQuads(polygon, RIM_WIDTH)), 0.06),
+        rimMaterial,
+      );
+      underlay.renderOrder = 1;
+      fill.renderOrder = 2;
+      rim.renderOrder = 3;
+      this.group.add(underlay, fill, rim);
+      this.views.set(ev.enemyId, {
+        underlay,
+        fill,
+        rim,
+        underlayMaterial,
+        fillMaterial,
+        rimMaterial,
+        age: 0,
+        duration: Math.max(0.15, ev.duration),
+        fade: 0,
+      });
     }
   }
 
   sync(state: { enemies: Array<{ id: string; phase: string; dead: boolean }> }, dt: number): void {
+    const now = performance.now();
     for (const [id, view] of this.views) {
       const enemy = state.enemies.find((e) => e.id === id);
       if (enemy && !enemy.dead && (enemy.phase === 'windup' || enemy.phase === 'active')) {
         view.fade = 0;
-        // Pulse brighter through the windup so urgency reads.
-        const pulse = 0.20 + 0.17 * (0.5 + 0.5 * Math.sin(performance.now() / 90));
-        view.material.opacity = pulse;
+        view.age += dt;
+        const progress = Math.min(1, view.age / view.duration);
+        // A fast pulse layered over a rising fill: urgency without hiding the shape.
+        const pulse = 0.5 + 0.5 * Math.sin(now / 85);
+        view.underlayMaterial.opacity = 0.3 + 0.1 * progress;
+        view.fillMaterial.opacity = 0.12 + 0.2 * progress + 0.05 * pulse * progress;
+        view.rimMaterial.opacity = 0.34 + 0.2 * progress + 0.08 * pulse;
       } else {
         view.fade += dt;
-        view.material.opacity = Math.max(0, 0.37 - view.fade * 1.85);
+        const k = Math.max(0, 1 - view.fade / 0.25);
+        view.underlayMaterial.opacity = 0.4 * k;
+        view.fillMaterial.opacity = 0.34 * k;
+        view.rimMaterial.opacity = 0.62 * k;
         if (view.fade > 0.25) {
-          disposeMeshTree(view.mesh);
+          this.disposeView(view);
           this.views.delete(id);
         }
       }
     }
+  }
+
+  private disposeView(view: TelegraphView): void {
+    disposeMeshTree(view.underlay);
+    disposeMeshTree(view.fill);
+    disposeMeshTree(view.rim);
   }
 }
