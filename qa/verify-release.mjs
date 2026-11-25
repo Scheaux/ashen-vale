@@ -173,7 +173,7 @@ async function main() {
   await page.keyboard.press('Escape');
   await sleep(250);
   check('the pause menu names the version and autosave slot',
-    (await page.locator('[data-pause-save]').innerText()).toLowerCase().includes('v1.2') &&
+    (await page.locator('[data-pause-save]').innerText()).toLowerCase().includes('v1.3') &&
     (await page.locator('[data-pause-save]').innerText()).toLowerCase().includes('slot 1'));
   await page.keyboard.press('Escape');
   await sleep(250);

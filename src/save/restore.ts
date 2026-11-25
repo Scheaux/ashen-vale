@@ -21,6 +21,7 @@ export function restoreGameState(save: SaveGame, layout: ZoneLayout): GameState 
   state.passives.allocated = [...save.passives];
   state.skills.ranks = { ...save.skills.ranks };
   state.skills.loadout = [...save.skills.loadout];
+  state.skills.runes = { ...save.skills.runes };
   state.inventory = {
     bags: save.inventory.bags.map((item) => ({ ...item, affixes: item.affixes.map((affix) => ({ ...affix })) })),
     equipment: Object.fromEntries(

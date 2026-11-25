@@ -1,6 +1,7 @@
 import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
 import { getEnemy, type AttackDef, type BossPhaseDef, type EnemyDef } from '../content/enemies';
 import { createEnemyState, type EnemyState, type GameState, type SimEvent } from '../sim/state';
+import { spawnHazard } from '../sim/hazards';
 import { damagePlayer, rollDamage, spawnEnemyBolt } from './combat';
 import { activeBounds, clampCircleToBounds, resolveCircleCollisions } from './movement';
 
@@ -117,6 +118,7 @@ export function resetEnemyCombat(enemy: EnemyState): void {
   enemy.attackId = null;
   enemy.lungeRemaining = 0;
   enemy.lungeHit = false;
+  enemy.chillTime = 0;
   enemy.velocity.x = 0;
   enemy.velocity.z = 0;
   enemy.previousPosition.x = enemy.position.x;
@@ -167,6 +169,21 @@ function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, event
     if (Math.hypot(sx, sz) <= attack.range + p.radius) {
       hit(rollDamage(state, attack.damage.min, attack.damage.max));
     }
+    // The Warden's slam leaves a burning crater behind.
+    if (enemy.defId === 'ashen-warden') {
+      spawnHazard(state, {
+        kind: 'cinder',
+        x: enemy.strikeTarget.x,
+        z: enemy.strikeTarget.z,
+        radius: attack.range * 0.82,
+        fuse: 0.55,
+        duration: 2.6,
+        tickInterval: 0.5,
+        damage: 5,
+        sourceName: def.name,
+        color: 0xff5a33,
+      }, events);
+    }
     return;
   }
 
@@ -184,7 +201,8 @@ function stepChase(state: GameState, enemy: EnemyState, def: EnemyDef, dt: numbe
   const dz = p.position.z - enemy.position.z;
   const dist = Math.hypot(dx, dz);
   const attack = activeAttack(enemy, def);
-  const speed = enemy.speed * swiftAura(state, enemy) * phaseSpeedMult(def, enemy);
+  const chillMult = enemy.chillTime > 0 ? 0.65 : 1;
+  const speed = enemy.speed * swiftAura(state, enemy) * phaseSpeedMult(def, enemy) * chillMult;
 
   let moveX = 0;
   let moveZ = 0;
@@ -233,6 +251,7 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
     }
 
     enemy.phaseTime += dt;
+    if (enemy.chillTime > 0) enemy.chillTime = Math.max(0, enemy.chillTime - dt);
     if (enemy.attackCooldown > 0) enemy.attackCooldown -= dt;
 
     const def = getEnemy(enemy.defId);

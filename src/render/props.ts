@@ -114,9 +114,39 @@ function axisScale(min: number, max: number, t: number): number {
   return min + (max - min) * t;
 }
 
-export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): THREE.Group {
+interface PropInstance {
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+  radius: number;
+  tall: boolean;
+  fade: number;
+}
+
+interface PropMesh {
+  mesh: THREE.InstancedMesh;
+  instances: PropInstance[];
+}
+
+export interface PropsView {
+  group: THREE.Group;
+  /** Fade tall props that sit between the camera and the hero. */
+  update(camera: THREE.Camera, playerX: number, playerZ: number, dt: number): void;
+  readonly occludedCount: number;
+}
+
+const OCCLUSION_PADDING = 1.1;
+const PROP_RADIUS: Record<PropKind, number> = {
+  rock: 0.85,
+  deadTree: 0.55,
+  pillar: 0.75,
+  pillarBroken: 0.9,
+};
+
+export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): PropsView {
   const style = styles();
   const group = new THREE.Group();
+  const meshes: PropMesh[] = [];
 
   const byKind = new Map<PropKind, PropPlacement[]>();
   for (const p of layout.props) {
@@ -136,6 +166,7 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): THREE
     const mesh = new THREE.InstancedMesh(s.geometry, s.material, placements.length);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    const instances: PropInstance[] = [];
 
     placements.forEach((p, i) => {
       // Deterministic per-instance variation derived from placement values.
@@ -154,10 +185,68 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): THREE
       );
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(i, matrix);
+      instances.push({
+        position: position.clone(),
+        quaternion: quaternion.clone(),
+        scale: scale.clone(),
+        radius: PROP_RADIUS[kind] * p.scale,
+        tall: kind !== 'rock',
+        fade: 0,
+      });
     });
     mesh.instanceMatrix.needsUpdate = true;
     group.add(mesh);
+    meshes.push({ mesh, instances });
   }
 
-  return group;
+  let occludedCount = 0;
+  const cameraPosition = new THREE.Vector3();
+  const playerPosition = new THREE.Vector3();
+  const fadeScale = new THREE.Vector3();
+
+  function update(camera: THREE.Camera, playerX: number, playerZ: number, dt: number): void {
+    camera.getWorldPosition(cameraPosition);
+    playerPosition.set(playerX, (terrain?.heightAt(playerX, playerZ) ?? 0) + 1, playerZ);
+    const dx = playerPosition.x - cameraPosition.x;
+    const dz = playerPosition.z - cameraPosition.z;
+    const lenSq = dx * dx + dz * dz;
+    let occluded = 0;
+
+    for (const { mesh, instances } of meshes) {
+      let anyChanged = false;
+      for (let i = 0; i < instances.length; i++) {
+        const instance = instances[i];
+        let target = 0;
+        if (instance.tall && lenSq > 1e-4) {
+          const t = ((instance.position.x - cameraPosition.x) * dx +
+            (instance.position.z - cameraPosition.z) * dz) / lenSq;
+          if (t > 0.08 && t < 0.97) {
+            const lineX = cameraPosition.x + dx * t;
+            const lineZ = cameraPosition.z + dz * t;
+            const dist = Math.hypot(instance.position.x - lineX, instance.position.z - lineZ);
+            if (dist < instance.radius + OCCLUSION_PADDING) target = 1;
+          }
+        }
+        const previous = instance.fade;
+        instance.fade += (target - instance.fade) * (1 - Math.exp(-14 * dt));
+        if (Math.abs(instance.fade - target) < 0.01) instance.fade = target;
+        if (instance.fade > 0.5) occluded++;
+        if (instance.fade !== previous) anyChanged = true;
+        const shrink = 1 - 0.92 * instance.fade;
+        fadeScale.copy(instance.scale).multiplyScalar(shrink);
+        matrix.compose(instance.position, instance.quaternion, fadeScale);
+        mesh.setMatrixAt(i, matrix);
+      }
+      if (anyChanged) mesh.instanceMatrix.needsUpdate = true;
+    }
+    occludedCount = occluded;
+  }
+
+  return {
+    group,
+    update,
+    get occludedCount() {
+      return occludedCount;
+    },
+  };
 }

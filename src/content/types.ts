@@ -14,7 +14,10 @@ export type SkillId =
   | 'ember-bolt'
   | 'ember-nova'
   | 'cinder-barrage'
-  | 'meteor-strike';
+  | 'meteor-strike'
+  | 'leap-slam'
+  | 'blast-shot'
+  | 'frost-nova';
 
 /** Six PoE-style skill loadout slots: right click plus Q/W/E/R/F. */
 export type LoadoutSlot = 'rmb' | 'q' | 'w' | 'e' | 'r' | 'f';
@@ -66,7 +69,7 @@ export interface ZoneBounds {
   radius: number;
 }
 
-export type EliteModifier = 'vital' | 'savage' | 'swift';
+export type EliteModifier = 'vital' | 'savage' | 'swift' | 'volatile';
 
 export interface EnemySpawn {
   enemyId: EnemyId;

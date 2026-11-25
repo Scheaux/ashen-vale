@@ -4,6 +4,7 @@ import { GameLoop } from './core/loop';
 import { getClass } from './content/classes';
 import { RARITY_COLORS, type ItemSlot } from './content/items';
 import { getSkill } from './content/skills';
+import { getRune, type RuneId } from './content/runes';
 import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId, type ZoneLayout } from './content/types';
 import { generateZoneLayout } from './content/zone';
 import { createPlayerView, type PlayerView } from './render/player';
@@ -12,11 +13,12 @@ import { CursorMarker } from './render/cursor';
 import { disposeMeshTree } from './render/dispose';
 import { createEmbers, type EmberField } from './render/effects';
 import { EnemyViews } from './render/enemies';
+import { HazardLayer } from './render/hazards';
 import { LootViews } from './render/loot';
 import { ProjectileViews } from './render/projectiles';
 import { SkillVfxLayer } from './render/skillVfx';
 import { TelegraphLayer } from './render/telegraphs';
-import { createProps } from './render/props';
+import { createProps, type PropsView } from './render/props';
 import { createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
 import type { TerrainSurface } from './render/terrainSurface';
@@ -53,7 +55,10 @@ import {
   effectiveSkillDamage,
   equipSkill,
   loadoutRefusalMessage,
+  runeFor,
+  setRune,
   skillInSlot,
+  skillManaCost,
   skillPointsAvailable,
   skillPointsSpent,
   skillPointsTotal,
@@ -117,6 +122,7 @@ export interface AshenDebug {
     }>;
     projectiles: number;
     strikes: number;
+    hazards: number;
     camera: { yaw: number; pitch: number; distance: number };
     markers: {
       hover: { x: number; y: number; z: number } | null;
@@ -132,6 +138,7 @@ export interface AshenDebug {
       manaCost: number;
       cooldown: number;
       rank: number;
+      rune: string | null;
     }>;
     skillPoints: { total: number; spent: number; available: number };
     cooldowns: Record<string, number>;
@@ -156,6 +163,7 @@ export interface AshenDebug {
       shadows: boolean;
       detailedEnemies: number;
       healthBars: number;
+      occludedProps: number;
       reducedMotion: boolean;
       qualityWindow: number;
       qualityFrames: number;
@@ -195,6 +203,8 @@ export interface AshenDebug {
   /** Review fixture: unlock/equip skills through the real loadout rules. */
   unlockSkill(id: SkillId): boolean;
   equipSkill(slot: LoadoutSlot, id: SkillId): boolean;
+  /** Review fixture: mark an existing enemy Volatile for hazard testing. */
+  makeVolatile(id: string): boolean;
   /** Review fixture: serialize the current save (for save-shape checks). */
   exportSave(): string;
   /** Review fixture: save-slot inventory and the run's bound autosave slot. */
@@ -225,11 +235,13 @@ export interface AshenDebug {
 class Game {
   private readonly world: WorldScene;
   private readonly scene: THREE.Scene;
+  private readonly propsView: PropsView;
   private readonly rig: CameraRig;
   private readonly enemyViews: EnemyViews;
   private readonly projectileViews: ProjectileViews;
   private readonly telegraphs: TelegraphLayer;
   private readonly skillVfx: SkillVfxLayer;
+  private readonly hazardLayer: HazardLayer;
   private readonly lootViews: LootViews;
   private readonly embers: EmberField;
   private readonly cursor: CursorMarker;
@@ -293,11 +305,13 @@ class Game {
     const terrain = createTerrain();
     this.terrainSurface = terrain.surface;
     this.scene.add(terrain.mesh);
-    this.scene.add(createProps(this.layout, terrain.surface));
+    this.propsView = createProps(this.layout, terrain.surface);
+    this.scene.add(this.propsView.group);
     this.enemyViews = new EnemyViews(this.scene, terrain.surface);
     this.projectileViews = new ProjectileViews(this.scene, terrain.surface);
     this.telegraphs = new TelegraphLayer(this.scene, terrain.surface);
     this.skillVfx = new SkillVfxLayer(this.scene, terrain.surface);
+    this.hazardLayer = new HazardLayer(this.scene, terrain.surface);
     this.lootViews = new LootViews(this.scene, terrain.surface);
     this.embers = createEmbers(this.layout.bounds);
     this.scene.add(this.embers.points);
@@ -342,6 +356,7 @@ class Game {
       onAssign: (slot, id) => this.handleAssignSkill(slot, id),
       onUnlock: (id) => this.handleUnlockSkill(id),
       onUpgrade: (id) => this.handleUpgradeSkill(id),
+      onRune: (id, rune) => this.handleSetRune(id, rune),
       onClose: () => this.skillPanel.close(),
     });
     this.savePanel = new SaveSlotsPanel(uiRoot, {
@@ -470,6 +485,7 @@ class Game {
     this.projectileViews.clear();
     this.telegraphs.clear();
     this.skillVfx.clear();
+    this.hazardLayer.clear();
     this.floatingText.clear();
     this.advertisedAttacks.clear();
     this.cursor.setDestination(null);
@@ -674,6 +690,9 @@ class Game {
           if (ev.kind === 'telegraph') {
             this.advertisedAttacks.add(ev.attackId);
             this.tellTelegraphs++;
+          } else if (ev.kind === 'hazard') {
+            this.advertisedAttacks.add(ev.id);
+            this.tellTelegraphs++;
           } else if (ev.kind === 'damage' && ev.targetKind === 'player' && ev.attackId !== QA_DAMAGE_ID) {
             this.tellPlayerDamages++;
             if (!ev.attackId || !this.advertisedAttacks.delete(ev.attackId)) this.tellDamageBeforeTelegraph = true;
@@ -716,6 +735,7 @@ class Game {
       this.projectileViews.sync(state);
       this.telegraphs.sync(state, dt);
       this.skillVfx.sync(state, dt);
+      this.hazardLayer.sync(state);
       this.lootViews.sync(state, elapsed);
       this.nameplates.sync(state, this.rig.camera);
       this.ui.setPlayerHp(state.player.hp, state.player.maxHp);
@@ -742,6 +762,7 @@ class Game {
         this.terrainSurface.heightAt(state.player.position.x, state.player.position.z),
         dt,
       );
+      this.propsView.update(this.rig.camera, state.player.position.x, state.player.position.z, dt);
     }
     this.updateHover();
     this.embers.update(dt);
@@ -954,7 +975,18 @@ class Game {
   private loadoutEntries(state: GameState): LoadoutEntry[] {
     return LOADOUT_SLOTS.map((slot) => {
       const id = skillInSlot(state, slot);
-      if (!id) return { slot, skill: null, rank: 0, minDamage: 0, maxDamage: 0, cooldown: 0 };
+      if (!id) {
+        return {
+          slot,
+          skill: null,
+          rank: 0,
+          minDamage: 0,
+          maxDamage: 0,
+          cooldown: 0,
+          manaCost: 0,
+          rune: null,
+        };
+      }
       const skill = getSkill(id);
       const damage = effectiveSkillDamage(state, id);
       return {
@@ -964,6 +996,8 @@ class Game {
         minDamage: damage.min,
         maxDamage: damage.max,
         cooldown: effectiveSkillCooldown(state, id),
+        manaCost: skillManaCost(state, id),
+        rune: runeFor(state, id),
       };
     });
   }
@@ -1047,6 +1081,22 @@ class Game {
       this.ui.showToast(loadoutRefusalMessage(result), '#ff8577');
     } else {
       this.ui.showToast(`${getSkill(id).name} reached rank ${skillRank(state, id)}`, '#e8c877');
+      this.saveCheckpoint();
+    }
+    this.refreshSkillUi();
+  }
+
+  private handleSetRune(id: SkillId, runeId: RuneId | null): void {
+    const state = this.state;
+    if (!state) return;
+    const result = setRune(state, id, runeId);
+    if (!result.ok) {
+      this.ui.showToast(loadoutRefusalMessage(result), '#ff8577');
+    } else {
+      this.ui.showToast(
+        runeId ? `${getSkill(id).name} · ${getRune(runeId)?.name ?? 'rune'}` : `${getSkill(id).name} rune removed`,
+        '#8f887a',
+      );
       this.saveCheckpoint();
     }
     this.refreshSkillUi();
@@ -1185,6 +1235,7 @@ class Game {
         : { campsCleared: 0, campsTotal: 0, bossSpawned: false, bossDefeated: false },
       projectiles: state?.projectiles.length ?? 0,
       strikes: state?.strikes.length ?? 0,
+      hazards: state?.hazards.length ?? 0,
       camera: { yaw: this.rig.yaw, pitch: this.rig.pitch, distance: this.rig.distance },
       markers: this.cursor.probe(),
       playerRenderY: this.playerView?.group.position.y ?? 0,
@@ -1193,9 +1244,10 @@ class Game {
           slot: entry.slot,
           id: entry.skill?.id ?? null,
           name: entry.skill?.name ?? null,
-          manaCost: entry.skill?.manaCost ?? 0,
+          manaCost: entry.manaCost,
           cooldown: entry.cooldown,
           rank: entry.rank,
+          rune: entry.rune?.id ?? null,
         }))
         : [],
       skillPoints: state
@@ -1244,6 +1296,7 @@ class Game {
         shadows: this.world.renderer.shadowMap.enabled,
         detailedEnemies: this.enemyViews.detailedCount,
         healthBars: this.enemyViews.visibleBars,
+        occludedProps: this.propsView.occludedCount,
         reducedMotion: this.reducedMotion,
         qualityWindow: Math.round(this.qualityTime * 1000) / 1000,
         qualityFrames: this.qualityFrames,
@@ -1278,6 +1331,7 @@ class Game {
   clearEnemies(): void {
     if (!this.state) return;
     this.state.enemies.length = 0;
+    this.state.hazards.length = 0;
     // A quiet moor must not read as "camps cleared" and wake the Warden.
     this.state.objectives.campsTotal = 0;
     this.state.objectives.campCleared = [];
@@ -1370,6 +1424,13 @@ class Game {
     return result.ok;
   }
 
+  makeVolatile(id: string): boolean {
+    const enemy = this.state?.enemies.find((candidate) => candidate.id === id && !candidate.dead);
+    if (!enemy) return false;
+    if (!enemy.elite.includes('volatile')) enemy.elite.push('volatile');
+    return true;
+  }
+
   exportSave(): string {
     if (!this.state) throw new Error('no active state');
     return serializeSave(createCheckpointSave(this.state, this.layout.spawn));
@@ -1412,6 +1473,7 @@ const game = new Game(canvas, uiRoot);
   flashDamage: (kind, strength) => game.flashDamage(kind, strength),
   unlockSkill: (id) => game.unlockSkill(id),
   equipSkill: (slot, id) => game.equipSkill(slot, id),
+  makeVolatile: (id) => game.makeVolatile(id),
   setDefences: (armour, evasion) => game.setDefences(armour, evasion),
   clearEnemies: () => game.clearEnemies(),
   clearCamps: () => game.clearCamps(),

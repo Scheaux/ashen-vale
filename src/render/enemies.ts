@@ -20,6 +20,8 @@ interface EnemyView {
   model: CreatureModel;
   /** One-draw silhouette used while the enemy is far from the hero. */
   far: THREE.Mesh;
+  /** Small modifier-colored ring under a far elite silhouette. */
+  farElite: THREE.Mesh | null;
   hitTime: number;
   flash: number;
   facing: number;
@@ -252,6 +254,7 @@ export class EnemyViews {
   clear(): void {
     for (const view of this.views.values()) {
       disposeMeshTree(view.model.root);
+      if (view.farElite) disposeMeshTree(view.farElite);
       view.far.removeFromParent();
     }
     this.views.clear();
@@ -277,6 +280,7 @@ export class EnemyViews {
     for (const [id, view] of this.views) {
       if (!state.enemies.some((e) => e.id === id)) {
         disposeMeshTree(view.model.root);
+        if (view.farElite) disposeMeshTree(view.farElite);
         view.far.removeFromParent();
         this.views.delete(id);
       }
@@ -355,6 +359,25 @@ export class EnemyViews {
     far.visible = false;
     this.group.add(far);
 
+    let farElite: THREE.Mesh | null = null;
+    if (enemy.elite.length > 0) {
+      const mod = ELITE_MODIFIERS[enemy.elite[0]];
+      farElite = new THREE.Mesh(
+        new THREE.RingGeometry(0.62, 0.82, 24),
+        new THREE.MeshBasicMaterial({
+          color: mod.color,
+          transparent: true,
+          opacity: 0.5,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      farElite.rotation.x = -Math.PI / 2;
+      farElite.position.y = 0.06;
+      far.add(farElite);
+    }
+
     // Elite aura ring on the ground.
     let eliteRing: THREE.Mesh | null = null;
     if (enemy.elite.length > 0) {
@@ -374,7 +397,7 @@ export class EnemyViews {
       model.root.add(eliteRing);
     }
 
-    return { model, far, hitTime: 0, flash: 0, facing: enemy.facing, eliteRing };
+    return { model, far, farElite, hitTime: 0, flash: 0, facing: enemy.facing, eliteRing };
   }
 
   private updateView(view: EnemyView, enemy: EnemyState, dt: number, alpha: number): void {
@@ -415,11 +438,16 @@ export class EnemyViews {
       return;
     }
 
-    // Hit flash + hover tint across body materials.
+    // Hit flash + hover tint + a cool chill wash across body materials.
     const flash: number = view.flash * view.flash;
     const hover = enemy.id === this.highlightedId ? 1 : 0;
+    const chill = enemy.chillTime > 0 ? 1 : 0;
     for (const mat of view.model.flashMaterials) {
-      mat.emissive.setRGB(flash * 0.55 + hover * 0.22, flash * 0.4 + hover * 0.16, flash * 0.32 + hover * 0.1);
+      mat.emissive.setRGB(
+        flash * 0.55 + hover * 0.22 + chill * 0.06,
+        flash * 0.4 + hover * 0.16 + chill * 0.22,
+        flash * 0.32 + hover * 0.1 + chill * 0.42,
+      );
     }
 
     // Pose from authoritative state; the strike curve follows the AI phases.

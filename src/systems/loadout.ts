@@ -1,4 +1,5 @@
 import { getSkill, activeSkillsFor } from '../content/skills';
+import { getRune, type RuneDef, type RuneId } from '../content/runes';
 import { LOADOUT_SLOTS, type LoadoutSlot, type SkillId } from '../content/types';
 import type { GameState, SkillState } from '../sim/state';
 
@@ -22,7 +23,9 @@ export type LoadoutRefusal =
   | 'points'
   | 'max-rank'
   | 'not-unlocked'
-  | 'slot';
+  | 'slot'
+  | 'unknown-rune'
+  | 'rune-level';
 
 export type LoadoutResult = { ok: true } | { ok: false; reason: LoadoutRefusal };
 
@@ -46,14 +49,28 @@ export function skillPointsAvailable(state: GameState): number {
   return Math.max(0, skillPointsTotal(state) - skillPointsSpent(state));
 }
 
+export function runeFor(state: GameState, id: SkillId): RuneDef | null {
+  const runeId = state.skills.runes[id];
+  return runeId ? getRune(runeId) : null;
+}
+
 export function skillDamageMultiplier(state: GameState, id: SkillId): number {
   const rank = Math.max(1, skillRank(state, id));
-  return 1 + RANK_DAMAGE_STEP * (rank - 1);
+  return (1 + RANK_DAMAGE_STEP * (rank - 1)) * (runeFor(state, id)?.damageMult ?? 1);
 }
 
 export function skillCooldownMultiplier(state: GameState, id: SkillId): number {
   const rank = Math.max(1, skillRank(state, id));
-  return Math.max(0.4, 1 - RANK_COOLDOWN_STEP * (rank - 1));
+  const rankMult = Math.max(0.4, 1 - RANK_COOLDOWN_STEP * (rank - 1));
+  return rankMult * (runeFor(state, id)?.cooldownMult ?? 1);
+}
+
+export function skillManaCost(state: GameState, id: SkillId): number {
+  return Math.ceil(getSkill(id).manaCost * (runeFor(state, id)?.manaMult ?? 1));
+}
+
+export function skillAreaMultiplier(state: GameState, id: SkillId): number {
+  return runeFor(state, id)?.areaMult ?? 1;
 }
 
 /** Effective damage range for tooltips and the skill library. */
@@ -61,6 +78,26 @@ export function effectiveSkillDamage(state: GameState, id: SkillId): { min: numb
   const skill = getSkill(id);
   const power = skillDamageMultiplier(state, id);
   return { min: Math.round(skill.damage.min * power), max: Math.round(skill.damage.max * power) };
+}
+
+export function canSetRune(state: GameState, id: SkillId, runeId: RuneId | null): LoadoutResult {
+  const base = validateActive(state, id);
+  if (!base.ok) return base;
+  if (skillRank(state, id) <= 0) return { ok: false, reason: 'not-unlocked' };
+  if (runeId === null) return { ok: true };
+  const rune = getRune(runeId);
+  if (!rune) return { ok: false, reason: 'unknown-rune' };
+  if (state.level < rune.unlockLevel) return { ok: false, reason: 'rune-level' };
+  return { ok: true };
+}
+
+/** Runes are free to swap once their level gate is met. */
+export function setRune(state: GameState, id: SkillId, runeId: RuneId | null): LoadoutResult {
+  const result = canSetRune(state, id, runeId);
+  if (!result.ok) return result;
+  if (runeId === null) delete state.skills.runes[id];
+  else state.skills.runes[id] = runeId;
+  return { ok: true };
 }
 
 export function effectiveSkillCooldown(state: GameState, id: SkillId): number {
@@ -154,7 +191,7 @@ export function defaultSkillState(classId: GameState['player']['classId'], level
     ranks[starting.id] = 1;
     loadout[slotIndex('q')] = starting.id;
   }
-  return { ranks, loadout };
+  return { ranks, loadout, runes: {} };
 }
 
 export function loadoutRefusalMessage(result: Extract<LoadoutResult, { ok: false }>): string {
@@ -177,5 +214,9 @@ export function loadoutRefusalMessage(result: Extract<LoadoutResult, { ok: false
       return 'Unlock the skill first';
     case 'slot':
       return 'Unknown skill slot';
+    case 'unknown-rune':
+      return 'Unknown rune';
+    case 'rune-level':
+      return 'Level up to use that rune';
   }
 }

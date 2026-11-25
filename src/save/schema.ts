@@ -3,6 +3,7 @@ import { AFFIXES } from '../content/affixes';
 import { ITEM_BASES, ITEM_SLOTS, RARITY_COLORS, UNIQUES, type ItemSlot, type Rarity } from '../content/items';
 import { getPassive, PASSIVE_ROOT } from '../content/passives';
 import { getSkill, startingSkillFor } from '../content/skills';
+import { getRune, type RuneId } from '../content/runes';
 import { LOADOUT_SLOTS, type ClassId, type SkillId } from '../content/types';
 import type { GameState, Vec2 } from '../sim/state';
 import { FLASK_MAX_CHARGES } from '../sim/state';
@@ -19,8 +20,9 @@ import { defaultSkillState, MAX_SKILL_RANK } from '../systems/loadout';
  * v1 -> v2 added progression + inventory.
  * v2 -> v3 added passive allocations, zone objective progress, and flask charges.
  * v3 -> v4 added skill ranks, the six-slot loadout, and the skill-point economy.
+ * v4 -> v5 added per-skill runes.
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 export interface SaveInventory {
   bags: ItemInstance[];
@@ -39,10 +41,12 @@ export interface SaveSkills {
   ranks: Partial<Record<SkillId, number>>;
   /** RMB, Q, W, E, R, F order; null means an empty slot. */
   loadout: Array<SkillId | null>;
+  /** One rune per active skill. */
+  runes: Partial<Record<SkillId, RuneId>>;
 }
 
 export interface SaveGame {
-  version: 4;
+  version: 5;
   classId: ClassId;
   hp: number;
   maxHp: number;
@@ -106,6 +110,7 @@ export function createSave(state: GameState, savedAt = 0): SaveGame {
     skills: {
       ranks: { ...state.skills.ranks },
       loadout: [...state.skills.loadout],
+      runes: { ...state.skills.runes },
     },
     savedAt,
   };
@@ -147,7 +152,8 @@ export function deserializeSave(raw: string): SaveGame {
  */
 export function migrateSave(data: unknown): SaveGame {
   if (!isRecord(data)) throw new Error('Save data is not an object');
-  if (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== SAVE_VERSION) {
+  if (data.version !== 1 && data.version !== 2 && data.version !== 3 &&
+    data.version !== 4 && data.version !== SAVE_VERSION) {
     throw new Error(`Unsupported save version: ${String(data.version)}`);
   }
 
@@ -214,13 +220,24 @@ export function migrateSave(data: unknown): SaveGame {
     };
   }
 
+  if (data.version === 4) {
+    return {
+      ...core,
+      ...progression,
+      passives: parsePassives(data.passives, level),
+      objectives: parseObjectives(data.objectives),
+      flasks: parseFlasks(data.flasks),
+      skills: parseSkills(data.skills, playerClass.id, level, true),
+    };
+  }
+
   return {
     ...core,
     ...progression,
     passives: parsePassives(data.passives, level),
     objectives: parseObjectives(data.objectives),
     flasks: parseFlasks(data.flasks),
-    skills: parseSkills(data.skills, playerClass.id, level),
+    skills: parseSkills(data.skills, playerClass.id, level, false),
   };
 }
 
@@ -281,7 +298,7 @@ function parseFlasks(value: unknown): SaveGame['flasks'] {
   return { health: value.health, mana: value.mana };
 }
 
-function parseSkills(value: unknown, classId: ClassId, level: number): SaveSkills {
+function parseSkills(value: unknown, classId: ClassId, level: number, legacyNoRunes = false): SaveSkills {
   if (!isRecord(value) || !isRecord(value.ranks) || !Array.isArray(value.loadout)) {
     throw new Error('Save data has invalid skills');
   }
@@ -325,7 +342,28 @@ function parseSkills(value: unknown, classId: ClassId, level: number): SaveSkill
     equipped.add(skill.id);
     return skill.id;
   });
-  return { ranks, loadout };
+
+  const runes: SaveSkills['runes'] = {};
+  if (value.runes !== undefined || !legacyNoRunes) {
+    if (!isRecord(value.runes)) throw new Error('Save data has invalid runes');
+    for (const [rawId, rawRune] of Object.entries(value.runes)) {
+      if (typeof rawRune !== 'string') throw new Error('Save data has an invalid rune');
+      let skill;
+      try {
+        skill = getSkill(rawId as SkillId);
+      } catch {
+        throw new Error('Save data has a rune on an unknown skill');
+      }
+      if (skill.role !== 'active' || skill.classId !== classId || !seen.has(skill.id)) {
+        throw new Error('Save data has a rune on a locked skill');
+      }
+      const rune = getRune(rawRune);
+      if (!rune) throw new Error('Save data has an unknown rune');
+      if (rune.unlockLevel > level) throw new Error('Save data has a rune above the character level');
+      runes[skill.id] = rune.id;
+    }
+  }
+  return { ranks, loadout, runes };
 }
 
 function parseInventory(value: unknown): SaveInventory {

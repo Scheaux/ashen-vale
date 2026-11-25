@@ -11,6 +11,10 @@ import {
   effectiveSkillCooldown,
   effectiveSkillDamage,
   equipSkill,
+  runeFor,
+  setRune,
+  skillAreaMultiplier,
+  skillManaCost,
   skillCooldownMultiplier,
   skillDamageMultiplier,
   skillInSlot,
@@ -132,6 +136,40 @@ describe('loadout slots', () => {
   });
 });
 
+describe('runes', () => {
+  it('applies damage, mana, cooldown and area trade-offs', () => {
+    const state = stateFor('marauder');
+    state.level = 9;
+    const signature = activeSkillsFor('marauder')[0];
+    const baseMana = skillManaCost(state, signature.id);
+    expect(setRune(state, signature.id, 'cruel').ok).toBe(true);
+    expect(runeFor(state, signature.id)?.id).toBe('cruel');
+    expect(skillDamageMultiplier(state, signature.id)).toBeCloseTo(1.25);
+    expect(skillCooldownMultiplier(state, signature.id)).toBeCloseTo(1);
+    expect(skillManaCost(state, signature.id)).toBe(Math.ceil(baseMana * 1.15));
+
+    expect(setRune(state, signature.id, 'wide').ok).toBe(true);
+    expect(skillAreaMultiplier(state, signature.id)).toBeCloseTo(1.3);
+    expect(skillDamageMultiplier(state, signature.id)).toBeCloseTo(0.9);
+
+    expect(setRune(state, signature.id, 'swift').ok).toBe(true);
+    expect(skillCooldownMultiplier(state, signature.id)).toBeCloseTo(0.8);
+
+    expect(setRune(state, signature.id, null).ok).toBe(true);
+    expect(runeFor(state, signature.id)).toBeNull();
+  });
+
+  it('gates runes by level and refuses locked skills', () => {
+    const state = stateFor('ranger');
+    const signature = activeSkillsFor('ranger')[0];
+    state.level = 2;
+    expect(setRune(state, signature.id, 'cruel')).toMatchObject({ ok: false, reason: 'rune-level' });
+    const locked = activeSkillsFor('ranger')[2];
+    state.level = 9;
+    expect(setRune(state, locked.id, 'cruel')).toMatchObject({ ok: false, reason: 'not-unlocked' });
+  });
+});
+
 describe('defaults and legacy migration', () => {
   it('builds a signature-only state for a new character', () => {
     const state = defaultSkillState('witch', 1);
@@ -144,7 +182,7 @@ describe('defaults and legacy migration', () => {
     const legacy = defaultSkillState('marauder', 4, true);
     const actives = activeSkillsFor('marauder');
     expect(Object.keys(legacy.ranks)).toHaveLength(3);
-    expect(legacy.loadout.filter(Boolean)).toEqual(actives.map((skill) => skill.id));
+    expect(legacy.loadout.filter(Boolean)).toEqual(actives.filter((skill) => skill.unlockLevel <= 4).map((skill) => skill.id));
     expect(legacy.loadout[LOADOUT_SLOTS.indexOf('q')]).toBe(actives[0].id);
     expect(legacy.loadout[LOADOUT_SLOTS.indexOf('w')]).toBe(actives[1].id);
     expect(legacy.loadout[LOADOUT_SLOTS.indexOf('e')]).toBe(actives[2].id);

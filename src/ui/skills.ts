@@ -1,13 +1,17 @@
 import { activeSkillsFor, getSkill } from '../content/skills';
+import { RUNES, type RuneId } from '../content/runes';
 import { LOADOUT_SLOTS, type LoadoutSlot, type SkillId } from '../content/types';
 import type { GameState } from '../sim/state';
 import {
   MAX_SKILL_RANK,
+  canSetRune,
   canUnlockSkill,
   canUpgradeSkill,
   effectiveSkillCooldown,
   effectiveSkillDamage,
+  runeFor,
   skillInSlot,
+  skillManaCost,
   skillPointsAvailable,
   skillPointsSpent,
   skillPointsTotal,
@@ -18,6 +22,7 @@ export interface SkillPanelCallbacks {
   onAssign(slot: LoadoutSlot, skillId: SkillId | null): void;
   onUnlock(skillId: SkillId): void;
   onUpgrade(skillId: SkillId): void;
+  onRune(skillId: SkillId, runeId: RuneId | null): void;
   onClose(): void;
 }
 
@@ -152,7 +157,7 @@ export class SkillPanel {
       <span class="skill-card__rank"></span>`;
     (head.querySelector('.skill-card__name') as HTMLElement).textContent = skill.name;
     (head.querySelector('.skill-card__meta') as HTMLElement).textContent =
-      `${damage.min}-${damage.max} damage · ${skill.manaCost} mana · ${cooldown}s cooldown`;
+      `${damage.min}-${damage.max} damage · ${skillManaCost(state, id)} mana · ${cooldown}s cooldown`;
     (head.querySelector('.skill-card__rank') as HTMLElement).textContent =
       unlocked ? `Rank ${rank}/${MAX_SKILL_RANK}` : `Level ${skill.unlockLevel}`;
     card.appendChild(head);
@@ -161,6 +166,36 @@ export class SkillPanel {
     description.className = 'skill-card__desc';
     description.textContent = skill.description;
     card.appendChild(description);
+
+    if (unlocked) {
+      const runes = document.createElement('div');
+      runes.className = 'skill-card__runes';
+      const label = document.createElement('span');
+      label.className = 'skill-card__rune-label';
+      label.textContent = 'Rune';
+      runes.appendChild(label);
+      const current = runeFor(state, id)?.id ?? null;
+      const none = document.createElement('button');
+      none.className = `rune-btn${current === null ? ' rune-btn--active' : ''}`;
+      none.dataset.skillRuneNone = id;
+      none.textContent = 'None';
+      none.addEventListener('click', () => this.callbacks.onRune(id, null));
+      runes.appendChild(none);
+      for (const rune of RUNES) {
+        const button = document.createElement('button');
+        const allowed = canSetRune(state, id, rune.id).ok;
+        button.className = `rune-btn${current === rune.id ? ' rune-btn--active' : ''}`;
+        button.dataset.skillRune = rune.id;
+        button.dataset.skillRuneFor = id;
+        button.style.color = rune.cssColor;
+        button.disabled = !allowed && current !== rune.id;
+        button.title = allowed ? rune.description : `${rune.description} Unlocks at level ${rune.unlockLevel}.`;
+        button.textContent = `${rune.glyph} ${rune.name.replace(' Rune', '')}`;
+        button.addEventListener('click', () => this.callbacks.onRune(id, rune.id));
+        runes.appendChild(button);
+      }
+      card.appendChild(runes);
+    }
 
     const actions = document.createElement('div');
     actions.className = 'skill-card__actions';

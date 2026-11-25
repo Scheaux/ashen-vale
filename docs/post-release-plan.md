@@ -1,9 +1,9 @@
 # Ashen Vale — Post-Release Polish & Expansion Plan
 
 Baseline: **v1.0.0** (`b3091c1`, tag `v1.0.0`).
-Status: **v1.2.0 ships the v1.1 + v1.2 scope together** (grounding, fixed
-camera, HUD declutter, skill points and the six-slot loadout). It passed 209
-unit tests and 249 browser checks. The next planned slice is v1.3 combat depth.
+Status: **v1.3.0 ships the v1.3 combat-depth scope** (fourth actives, runes,
+volatile elites, Warden cinder pools, camera occlusion). It passed 221 unit tests
+and 263 browser checks. The next planned slice is v1.4 itemization & economy.
 
 This plan starts with correctness and UX debt found in the shipped build, then
 expands the game in vertical slices. Every release keeps the same gates:
@@ -282,22 +282,22 @@ Effort: **M** (one larger slice).
 
 ---
 
-## 6. Expansion roadmap (after v1.2)
+## 6. Expansion roadmap (after v1.3)
 
 Sizes are relative slices, not calendar estimates.
 
-### v1.3 — Combat depth (M)
-- Add a **fourth active skill** per class; the six-slot library/loadout is
-  already in place, so this adds build choice rather than bar capacity.
-- Add one **skill modifier** layer (e.g. runes/supports that change count,
-  area, cooldown or damage type) with a small, readable pool.
-- Give elites and the Warden one new mechanic each (e.g. a curse, a ground
-  hazard, a summoner add).
-- Improve camera occlusion (C1) and far-elite readability (C3).
-- Acceptance: every class has four meaningful actives; modifiers are data-only
-  and testable; boss phases remain dodgeable.
+### v1.3 — Combat depth ✅ (shipped in v1.3.0)
+- Fourth active per class: Leap Slam (dash + landing shockwave), Blast Shot
+  (exploding projectile), Frost Nova (chill).
+- Rune layer: Cruel/Wide/Swift, level-gated and free to swap, changing damage,
+  mana, area and cooldown per skill.
+- Elite **Volatile** death blasts and Warden phase-2 **cinder pools**, both
+  telegraphed and dodgeable.
+- Tall-prop camera occlusion and far-elite aura rings.
+- Acceptance met: four actives per class; runes data-only and tested; hazards
+  covered by unit and browser QA; save schema v5.
 
-### v1.4 — Itemization & economy (L)
+### v1.4 — Itemization & economy (L) — next
 - Expand bases/affixes and add a few build-defining uniques.
 - Add a simple currency/crafting loop (re-roll one affix, add one affix, quality)
   with loss-tested inventory transactions.
@@ -382,7 +382,6 @@ placed in Q. Clicking any slot opens the skill picker with that slot selected.
 
 ## 9. Execution order
 
-v1.1 (grounding, fixed 45° camera, narrowed zoom, HUD declutter, destination
-fade) and v1.2 (skill points, unlock/upgrade, six-slot RMB/QWERF loadout,
-click-to-swap picker, save v4) shipped together as **v1.2.0**. The next slice is
-**v1.3 combat depth**; new content begins only after that.
+v1.1/v1.2 shipped as **v1.2.0**; v1.3 (fourth actives, runes, volatile elites,
+Warden cinder pools and camera occlusion) shipped as **v1.3.0**. The next slice
+is **v1.4 itemization & economy**.

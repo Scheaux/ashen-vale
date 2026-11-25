@@ -10,6 +10,7 @@ import type {
 import { LOADOUT_SLOTS } from '../content/types';
 import { getEnemy } from '../content/enemies';
 import { startingSkillFor } from '../content/skills';
+import type { RuneId } from '../content/runes';
 import type { ItemSlot } from '../content/items';
 import { PASSIVE_ROOT } from '../content/passives';
 import { createRng, type Rng } from '../core/rng';
@@ -40,7 +41,16 @@ export interface PlayerState {
    * contact frame share this clock; `aim` fixes ground-strike placement and
    * `hit` keeps dash travel from hitting one enemy twice.
    */
-  attack: { skillId: SkillId; elapsed: number; facing: number; aim: Vec2; hit: string[]; dashLeft: number } | null;
+  attack: {
+    skillId: SkillId;
+    elapsed: number;
+    facing: number;
+    aim: Vec2;
+    hit: string[];
+    dashLeft: number;
+    /** Leap Slam-style landing shockwave has fired once. */
+    impactDone: boolean;
+  } | null;
   hp: number;
   maxHp: number;
   mana: number;
@@ -106,6 +116,8 @@ export interface EnemyState {
   dead: boolean;
   /** Seconds since death, for the corpse fade. */
   deadTime: number;
+  /** Remaining chill/slow seconds from Frost Nova; 0 = normal speed. */
+  chillTime: number;
 }
 
 export interface ProjectileState {
@@ -130,6 +142,31 @@ export interface ProjectileState {
   damageClass: 'attack' | 'spell';
   /** Seconds alive; contact is ignored during the spawn grace. */
   age: number;
+  /** Blast Shot: damage every enemy inside this radius on impact. */
+  explodeRadius?: number;
+  /** Frost effect carried by a projectile, in seconds. */
+  chill?: number;
+}
+
+/** Telegraphed ground danger: volatile elite death blasts and cinder pools. */
+export interface HazardState {
+  id: string;
+  kind: 'volatile' | 'cinder';
+  x: number;
+  z: number;
+  radius: number;
+  /** Seconds before the first detonation/tick. */
+  fuse: number;
+  /** Lingering pool seconds after the first detonation (0 = one-shot). */
+  duration: number;
+  /** Seconds between pool damage ticks. */
+  tickInterval: number;
+  damage: number;
+  sourceName: string;
+  color: number;
+  age: number;
+  detonated: boolean;
+  tickTimer: number;
 }
 
 /** Delayed player area strike (ground delivery): telegraphed, then detonates. */
@@ -193,6 +230,8 @@ export interface SkillState {
   ranks: Partial<Record<SkillId, number>>;
   /** RMB, Q, W, E, R, F order; null means an empty slot. */
   loadout: Array<SkillId | null>;
+  /** One rune per active skill; missing means no rune. */
+  runes: Partial<Record<SkillId, RuneId>>;
 }
 
 /**
@@ -228,6 +267,7 @@ export type SimEvent =
     }
   | { kind: 'evade'; targetId: string; x: number; y: number; z: number }
   | { kind: 'death'; targetKind: 'player' | 'enemy'; targetId: string; x: number; z: number }
+  | { kind: 'hazard'; id: string; x: number; z: number; radius: number; color: number; duration: number }
   | { kind: 'levelup'; level: number }
   | { kind: 'pickup'; name: string; rarity: string }
   | {
@@ -259,6 +299,8 @@ export interface GameState {
   projectiles: ProjectileState[];
   /** Pending player area strikes ticking down to their fuse. */
   strikes: AreaStrike[];
+  /** Telegraphed enemy ground hazards (volatile deaths, cinder pools). */
+  hazards: HazardState[];
   colliders: CircleCollider[];
   bounds: ZoneBounds;
   /** Boss arena bounds; active during the boss fight (slice 7). */
@@ -348,6 +390,7 @@ export function createEnemyState(spawn: EnemySpawn, id: string): EnemyState {
     aggro: false,
     dead: false,
     deadTime: 0,
+    chillTime: 0,
   };
 }
 
@@ -395,6 +438,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
     enemies: layout.enemySpawns.map((spawn, i) => createEnemyState(spawn, `enemy-${i}`)),
     projectiles: [],
     strikes: [],
+    hazards: [],
     colliders: layout.colliders.map((c) => ({ ...c })),
     bounds: {
       center: { ...layout.bounds.center },
@@ -420,6 +464,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
     skills: {
       ranks: { [startingSkill.id]: 1 },
       loadout,
+      runes: {},
     },
     flasks: {
       health: { charges: FLASK_MAX_CHARGES, max: FLASK_MAX_CHARGES },

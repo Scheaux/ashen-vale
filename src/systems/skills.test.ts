@@ -45,8 +45,8 @@ describe('skill roster (post-release)', () => {
     for (const classId of ['marauder', 'ranger', 'witch'] as const) {
       expect(basicAttackFor(classId).role).toBe('basic');
       const actives = activeSkillsFor(classId);
-      expect(actives).toHaveLength(3);
-      expect(actives.map((s) => s.unlockLevel)).toEqual([1, 2, 4]);
+      expect(actives).toHaveLength(4);
+      expect(actives.map((s) => s.unlockLevel)).toEqual([1, 2, 4, 6]);
       expect(actives.every((s) => s.classId === classId && s.role === 'active')).toBe(true);
     }
   });
@@ -225,6 +225,49 @@ describe('skill deliveries', () => {
       expect(hits).toHaveLength(1);
       expect(enemy.hp).toBeLessThan(enemy.maxHp);
     }
+  });
+
+  it('Frost Nova chills everything it hits', () => {
+    const state = createGameState(getClass('witch'), layoutWith([{ x: 0, z: 20 }, { x: 0, z: 30 }]));
+    prepare(state, ['frost-nova']);
+    const events: SimEvent[] = [];
+    const [near, far] = state.enemies;
+    state.player.castRequest = { skillId: 'frost-nova', x: 0, z: 20 };
+    stepPlayerCombat(state, 1 / 60, events);
+    runUntilCastDone(state, events);
+    expect(near.chillTime).toBeGreaterThan(0);
+    expect(far.chillTime).toBe(0);
+    expect(events.some((ev) => ev.kind === 'burst' && ev.skillId === 'frost-nova')).toBe(true);
+  });
+
+  it('Leap Slam travels and shatters the landing area once', () => {
+    const state = createGameState(getClass('marauder'), layoutWith([{ x: 0, z: 12 }]));
+    prepare(state, ['leap-slam']);
+    const events: SimEvent[] = [];
+    const enemy = state.enemies[0];
+    const before = { ...state.player.position };
+    state.player.castRequest = { skillId: 'leap-slam', x: 0, z: 11 };
+    stepPlayerCombat(state, 1 / 60, events);
+    runUntilCastDone(state, events);
+    expect(Math.hypot(state.player.position.x - before.x, state.player.position.z - before.z)).toBeGreaterThan(3);
+    expect(enemy.hp).toBeLessThan(enemy.maxHp);
+    const bursts = events.filter((ev) => ev.kind === 'burst' && ev.skillId === 'leap-slam');
+    expect(bursts).toHaveLength(1);
+  });
+
+  it('Blast Shot damages every enemy in its impact radius', () => {
+    const state = createGameState(getClass('ranger'), layoutWith([{ x: 0, z: 20 }, { x: 0.8, z: 20.6 }]));
+    prepare(state, ['blast-shot']);
+    const events: SimEvent[] = [];
+    const [first, second] = state.enemies;
+    state.player.castRequest = { skillId: 'blast-shot', x: 0, z: 20 };
+    stepPlayerCombat(state, 1 / 60, events);
+    for (let i = 0; i < 240 && (state.projectiles.length > 0 || state.player.attack); i++) {
+      stepRun(state, 1 / 60);
+    }
+    expect(first.hp).toBeLessThan(first.maxHp);
+    expect(second.hp).toBeLessThan(second.maxHp);
+    expect([...events, ...state.events].some((ev) => ev.kind === 'burst' && ev.skillId === 'blast-shot')).toBe(true);
   });
 
   it('a fan loosed at point-blank range survives its birth tick', () => {

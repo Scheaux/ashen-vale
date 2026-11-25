@@ -1,6 +1,7 @@
 import { stepPlayerCombat, stepProjectiles, stepStrikes } from '../systems/combat';
 import { resetEnemyCombat, stepEnemies } from '../systems/enemyAi';
 import { refillFlasks } from '../systems/flasks';
+import { stepHazards } from '../systems/hazards';
 import { stepPickups } from '../systems/loot';
 import { stepMovement } from '../systems/movement';
 import { stepObjectives } from '../systems/objectives';
@@ -16,6 +17,8 @@ export function stepRun(state: GameState, dt: number): void {
   stepEnemies(state, dt, events);
   if (state.player.hp <= 0) return;
   stepProjectiles(state, dt, events);
+  stepHazards(state, dt, events);
+  if (state.player.hp <= 0) return;
   stepObjectives(state, events);
   if (state.player.hp > 0) stepPickups(state, events);
 }
@@ -36,6 +39,7 @@ export function respawnPlayer(state: GameState, spawn: Vec2): void {
   p.cooldowns = {};
   state.projectiles.length = 0;
   state.strikes.length = 0;
+  state.hazards.length = 0;
   refillFlasks(state);
   state.runStats = { kills: 0, damageTaken: 0, evades: 0, seconds: 0, lastBlow: null };
   for (const enemy of state.enemies) {

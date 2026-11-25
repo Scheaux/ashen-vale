@@ -1,9 +1,10 @@
 import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
 import { getEnemy, type AttackDef } from '../content/enemies';
 import { basicAttackFor, getSkill, type SkillDef } from '../content/skills';
-import { skillCooldownMultiplier, skillDamageMultiplier, skillRank } from './loadout';
+import { skillAreaMultiplier, skillCooldownMultiplier, skillDamageMultiplier, skillManaCost, skillRank } from './loadout';
 import type { SkillId } from '../content/types';
 import type { AreaStrike, EnemyState, GameState, PlayerState, SimEvent, Vec2 } from '../sim/state';
+import { spawnHazard } from '../sim/hazards';
 import { onEnemyDeath } from './loot';
 import {
   cancelMove,
@@ -61,6 +62,18 @@ export function damageEnemy(state: GameState, enemy: EnemyState, amount: number,
     enemy.deadTime = 0;
     state.runStats.kills += 1;
     events.push({ kind: 'death', targetKind: 'enemy', targetId: enemy.id, x: enemy.position.x, z: enemy.position.z });
+    if (enemy.elite.includes('volatile')) {
+      spawnHazard(state, {
+        kind: 'volatile',
+        x: enemy.position.x,
+        z: enemy.position.z,
+        radius: 2.8,
+        fuse: 1.0,
+        damage: 18,
+        sourceName: `${getEnemy(enemy.defId).name} (Volatile)`,
+        color: 0xff7a3d,
+      }, events);
+    }
     onEnemyDeath(state, enemy, events); // XP + loot + flask charges from the central pipeline
   }
 }
@@ -141,7 +154,7 @@ export function canCast(state: GameState, skill: SkillDef): 'ok' | 'mana' | 'coo
     return 'locked';
   }
   if ((p.cooldowns[skill.id] ?? 0) > 0) return 'cooldown';
-  if (p.mana < skill.manaCost) return 'mana';
+  if (p.mana < skillManaCost(state, skill.id)) return 'mana';
   return 'ok';
 }
 
@@ -229,9 +242,10 @@ function startCast(state: GameState, skill: SkillDef, aim: Vec2, events: SimEven
     aim: { x: aim.x, z: aim.z },
     hit: [],
     dashLeft: skill.dash?.distance ?? 0,
+    impactDone: false,
   };
   p.cooldowns[skill.id] = skill.cooldown * skillCooldownMultiplier(state, skill.id);
-  p.mana = Math.max(0, p.mana - skill.manaCost);
+  p.mana = Math.max(0, p.mana - skillManaCost(state, skill.id));
   events.push({ kind: 'attack', sourceId: 'player', skillId: skill.id, x: p.position.x, z: p.position.z, facing });
 }
 
@@ -249,6 +263,17 @@ function stepAttack(state: GameState, dt: number, events: SimEvent[]): void {
   const contactTime = skill.duration * skill.contact;
   if (previous < contactTime && attack.elapsed >= contactTime) {
     resolvePlayerAttack(state, skill, attack, events);
+  }
+
+  // Leap Slam: the landing shockwave fires once when dash travel ends.
+  if (skill.impactRadius && !attack.impactDone) {
+    const landingTime = skill.duration * DASH_WINDOW.end;
+    if (previous < landingTime && attack.elapsed >= landingTime) {
+      attack.impactDone = true;
+      const p = state.player;
+      areaDamage(state, p.position.x, p.position.z, effectiveRadius(state, skill, skill.impactRadius),
+        playerSkillDamage(state, skill), events, skill.color, skill.id, skill.chill);
+    }
   }
   if (attack.elapsed >= skill.duration) p.attack = null;
 }
@@ -278,6 +303,9 @@ function stepDashTravel(
   resolveCircleCollisions(p.position, p.velocity, p.radius, state.colliders);
   clampCircleToBounds(p.position, p.velocity, p.radius, state.bounds);
 
+  // Leap Slam uses one landing shockwave instead of path damage.
+  if (skill.impactRadius) return;
+
   const reach = (skill.radius ?? 1.2) + 0;
   for (const enemy of state.enemies) {
     if (enemy.dead || attack.hit.includes(enemy.id)) continue;
@@ -286,6 +314,37 @@ function stepDashTravel(
     attack.hit.push(enemy.id);
     damageEnemy(state, enemy, playerSkillDamage(state, skill), events);
   }
+}
+
+/** Rune area scaling lives here so every delivery reads the same value. */
+function effectiveRadius(state: GameState, skill: SkillDef, base: number): number {
+  return base * skillAreaMultiplier(state, skill.id);
+}
+
+function effectiveArc(state: GameState, skill: SkillDef, base: number): number {
+  return base * skillAreaMultiplier(state, skill.id);
+}
+
+/** Apply one pre-rolled hit to every enemy inside a circle, with optional chill. */
+function areaDamage(
+  state: GameState,
+  x: number,
+  z: number,
+  radius: number,
+  damage: number,
+  events: SimEvent[],
+  color: number,
+  skillId: SkillId,
+  chill = 0,
+): void {
+  for (const enemy of state.enemies) {
+    if (enemy.dead) continue;
+    const dist = Math.hypot(enemy.position.x - x, enemy.position.z - z);
+    if (dist > radius + enemy.radius) continue;
+    damageEnemy(state, enemy, damage, events);
+    if (chill > 0) enemy.chillTime = Math.max(enemy.chillTime, chill);
+  }
+  events.push({ kind: 'burst', skillId, x, z, radius, color });
 }
 
 function resolvePlayerAttack(
@@ -297,7 +356,7 @@ function resolvePlayerAttack(
   const p = state.player;
   switch (skill.delivery) {
     case 'melee-arc': {
-      const halfArc = ((skill.arcDeg ?? 360) / 2) * (Math.PI / 180);
+      const halfArc = (effectiveArc(state, skill, skill.arcDeg ?? 360) / 2) * (Math.PI / 180);
       for (const enemy of state.enemies) {
         if (enemy.dead) continue;
         const ex = enemy.position.x - p.position.x;
@@ -314,7 +373,7 @@ function resolvePlayerAttack(
       break;
     case 'spread': {
       const count = skill.count ?? 3;
-      const spread = ((skill.spreadDeg ?? 20) * Math.PI) / 180;
+      const spread = ((effectiveArc(state, skill, skill.spreadDeg ?? 20)) * Math.PI) / 180;
       for (let i = 0; i < count; i++) {
         const offset = count === 1 ? 0 : (i / (count - 1) - 0.5) * spread;
         spawnProjectile(state, skill, attack.facing + offset);
@@ -322,20 +381,9 @@ function resolvePlayerAttack(
       break;
     }
     case 'nova': {
-      for (const enemy of state.enemies) {
-        if (enemy.dead) continue;
-        const dist = Math.hypot(enemy.position.x - p.position.x, enemy.position.z - p.position.z);
-        if (dist > (skill.radius ?? 0) + enemy.radius) continue;
-        damageEnemy(state, enemy, playerSkillDamage(state, skill), events);
-      }
-      events.push({
-        kind: 'burst',
-        skillId: skill.id,
-        x: p.position.x,
-        z: p.position.z,
-        radius: skill.radius ?? 0,
-        color: skill.color,
-      });
+      const radius = effectiveRadius(state, skill, skill.radius ?? 0);
+      areaDamage(state, p.position.x, p.position.z, radius, playerSkillDamage(state, skill),
+        events, skill.color, skill.id, skill.chill);
       break;
     }
     case 'ground': {
@@ -344,7 +392,7 @@ function resolvePlayerAttack(
         skillId: skill.id,
         x: attack.aim.x,
         z: attack.aim.z,
-        radius: skill.radius ?? 3,
+        radius: effectiveRadius(state, skill, skill.radius ?? 3),
         fuse: skill.fuse ?? 0.5,
         damage: playerSkillDamage(state, skill),
         color: skill.color,
@@ -371,12 +419,14 @@ function spawnProjectile(state: GameState, skill: SkillDef, facing: number): voi
     y: 1.25,
     velocity: { x: Math.sin(facing) * spec.speed, z: Math.cos(facing) * spec.speed },
     damage: playerSkillDamage(state, skill),
-    radius: spec.radius,
+    radius: effectiveRadius(state, skill, spec.radius),
     ttl: spec.ttl,
     color: skill.color,
     visual: spec.visual,
     damageClass: skill.damageClass,
     age: 0,
+    ...(skill.explodeRadius ? { explodeRadius: effectiveRadius(state, skill, skill.explodeRadius) } : {}),
+    ...(skill.chill ? { chill: skill.chill } : {}),
   });
 }
 
@@ -431,7 +481,13 @@ export function stepProjectiles(state: GameState, dt: number, events: SimEvent[]
           if (enemy.dead) continue;
           const dist = Math.hypot(enemy.position.x - proj.position.x, enemy.position.z - proj.position.z);
           if (dist > proj.radius + enemy.radius) continue;
-          damageEnemy(state, enemy, proj.damage, events);
+          if (proj.explodeRadius) {
+            areaDamage(state, proj.position.x, proj.position.z, proj.explodeRadius, proj.damage,
+              events, proj.color, proj.skillId as SkillId, proj.chill ?? 0);
+          } else {
+            damageEnemy(state, enemy, proj.damage, events);
+            if (proj.chill) enemy.chillTime = Math.max(enemy.chillTime, proj.chill);
+          }
           consumed = true;
           break;
         }

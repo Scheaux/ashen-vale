@@ -74,6 +74,7 @@ export const ELITE_MODIFIERS: Record<EliteModifier, { label: string; color: numb
   vital: { label: 'Vital', color: 0xff5c4d, cssColor: '#ff5c4d' },
   savage: { label: 'Savage', color: 0xffb347, cssColor: '#ffb347' },
   swift: { label: 'Swift', color: 0x4dd2ff, cssColor: '#4dd2ff' },
+  volatile: { label: 'Volatile', color: 0xff7a3d, cssColor: '#ff7a3d' },
 };
 
 export const ENEMIES: readonly EnemyDef[] = [

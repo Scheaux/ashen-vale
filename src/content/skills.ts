@@ -52,6 +52,12 @@ export interface SkillDef {
   spreadDeg?: number;
   /** dash: travel budget and speed during the active window. */
   dash?: { distance: number; speed: number };
+  /** dash landing shockwave radius (Leap Slam). */
+  impactRadius?: number;
+  /** projectile impact explosion radius (Blast Shot). */
+  explodeRadius?: number;
+  /** nova/projectile chill application in seconds (Frost Nova). */
+  chill?: number;
   projectile?: {
     speed: number;
     radius: number;
@@ -330,6 +336,74 @@ export const SKILLS: readonly SkillDef[] = [
     color: 0xff9d4d,
     cssColor: '#ff9d4d',
     glyph: '☄',
+  },
+  // ---------- Post-release fourth actives ----------
+  {
+    id: 'leap-slam',
+    name: 'Leap Slam',
+    classId: 'marauder',
+    damageClass: 'attack',
+    role: 'active',
+    unlockLevel: 6,
+    description: 'Leap toward the target and shatter the ground on landing.',
+    delivery: 'dash',
+    damage: { min: 24, max: 34 },
+    cooldown: 10,
+    manaCost: 26,
+    duration: 0.75,
+    contact: 0.3,
+    range: 7,
+    pursueRange: 7,
+    radius: 1.5,
+    dash: { distance: 7, speed: 18 },
+    impactRadius: 3.4,
+    color: 0xffc266,
+    cssColor: '#ffc266',
+    glyph: '⇓',
+  },
+  {
+    id: 'blast-shot',
+    name: 'Blast Shot',
+    classId: 'ranger',
+    damageClass: 'attack',
+    role: 'active',
+    unlockLevel: 6,
+    description: 'A heavy arrow that bursts on impact, striking everything nearby.',
+    delivery: 'projectile',
+    damage: { min: 20, max: 28 },
+    cooldown: 8,
+    manaCost: 22,
+    duration: 0.5,
+    contact: BASIC_ATTACK_CONTACT.projectile,
+    range: 26,
+    pursueRange: 11,
+    explodeRadius: 2.6,
+    projectile: { speed: 24, radius: 0.32, ttl: 1.1, visual: 'arrow' },
+    color: 0xffbd6a,
+    cssColor: '#ffbd6a',
+    glyph: '✸',
+  },
+  {
+    id: 'frost-nova',
+    name: 'Frost Nova',
+    classId: 'witch',
+    damageClass: 'spell',
+    role: 'active',
+    unlockLevel: 6,
+    description: 'A ring of frost that chills nearby enemies, slowing them.',
+    delivery: 'nova',
+    damage: { min: 14, max: 20 },
+    cooldown: 7,
+    manaCost: 24,
+    duration: 0.5,
+    contact: 0.45,
+    range: 4.3,
+    pursueRange: 3.8,
+    radius: 4.3,
+    chill: 2.4,
+    color: 0x8fdcff,
+    cssColor: '#8fdcff',
+    glyph: '❄',
   },
 ] as const;
 

@@ -1,5 +1,6 @@
 import { CLASSES } from '../content/classes';
 import type { SkillDef } from '../content/skills';
+import type { RuneDef } from '../content/runes';
 import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId } from '../content/types';
 import type { FlaskKind } from '../systems/flasks';
 import './styles.css';
@@ -35,6 +36,8 @@ export interface LoadoutEntry {
   minDamage: number;
   maxDamage: number;
   cooldown: number;
+  manaCost: number;
+  rune: RuneDef | null;
 }
 
 /** Title-screen checkpoint summary (slice 8). */
@@ -234,8 +237,8 @@ export class Ui {
 
   private updatePauseSave(): void {
     this.pauseSave.textContent = this.activeSlot === null
-      ? 'Ashen Vale v1.2 · autosave off — save manually'
-      : `Ashen Vale v1.2 · autosave slot ${this.activeSlot + 1}`;
+      ? 'Ashen Vale v1.3 · autosave off — save manually'
+      : `Ashen Vale v1.3 · autosave slot ${this.activeSlot + 1}`;
   }
 
   /** Red/blue edge pulse for health or shield damage (readability, not motion). */
@@ -395,11 +398,12 @@ export class Ui {
           <span class="slot__art"><span class="slot__glyph">${skill.glyph}</span></span>
           <span class="slot__key">${SLOT_KEYS[slot]}</span>
           ${entry.rank > 1 ? `<span class="slot__rank">R${entry.rank}</span>` : ''}
-          <span class="slot__cost">${skill.manaCost}</span>
+          ${entry.rune ? `<span class="slot__rune" style="color:${entry.rune.cssColor}">${entry.rune.glyph}</span>` : ''}
+          <span class="slot__cost">${entry.manaCost}</span>
           <span class="slot__sweep" data-sweep></span>
           <span class="slot__tip">
-            <span class="slot__tip-name">${skill.name}${entry.rank > 1 ? ` · Rank ${entry.rank}` : ''}</span>
-            <span class="slot__tip-line">${entry.minDamage}-${entry.maxDamage} damage · ${skill.manaCost > 0 ? `${skill.manaCost} mana` : 'free'} · ${entry.cooldown}s cooldown</span>
+            <span class="slot__tip-name">${skill.name}${entry.rank > 1 ? ` · Rank ${entry.rank}` : ''}${entry.rune ? ` · ${entry.rune.name}` : ''}</span>
+            <span class="slot__tip-line">${entry.minDamage}-${entry.maxDamage} damage · ${entry.manaCost > 0 ? `${entry.manaCost} mana` : 'free'} · ${entry.cooldown}s cooldown</span>
             <span class="slot__tip-desc">${skill.description}</span>
           </span>
         </button>`;
@@ -413,7 +417,7 @@ export class Ui {
         root: el,
         sweep: el.querySelector('[data-sweep]') as HTMLElement,
         cooldown: entry.cooldown,
-        manaCost: entry.skill?.manaCost ?? 0,
+        manaCost: entry.manaCost,
         skillId: entry.skill?.id ?? null,
       });
       el.addEventListener('click', () => this.callbacks.onOpenSkillPicker(slot));

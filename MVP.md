@@ -157,9 +157,9 @@ limitations, deploy steps and rollback to `af7b052` are in
 ## Content scope (deliberately thin — depth from data, not breadth)
 
 - **Classes (3):** Marauder (melee, strength), Ranger (projectile, dexterity),
-  Witch (projectile, intelligence) — one free left-click basic plus three
-  skill-point actives per class, loaded into a six-slot RMB + Q/W/E/R/F bar
-  (post-release 1.2).
+  Witch (projectile, intelligence) — one free left-click basic plus four
+  skill-point actives per class, loaded into a six-slot RMB + Q/W/E/R/F bar,
+  with one level-gated rune per active (post-release 1.3).
 - **Enemies (3 + elites):** Ashen Husk (melee charger), ranged caster, fast swarm —
   elite modifiers from slice 3.
 - **Loot:** 4 rarity tiers, 6 equipment slots, ~24 affixes in plain stat
@@ -224,10 +224,24 @@ progression the MVP bar left out:
 - **QA:** post-release suite covers grounding, fixed camera/zoom, HUD declutter,
   skill unlock/upgrade/equip, RMB/QWERF casts and save/reload.
 
+## Post-release 1.3.0
+
+The combat-depth slice:
+
+- Fourth active per class at level 6: **Leap Slam** (dash + landing shockwave),
+  **Blast Shot** (exploding projectile), **Frost Nova** (chill/slow).
+- **Runes**: one per active skill, level-gated at 3/5/7 and free to swap —
+  Cruel (+damage/mana), Wide (+area/−damage), Swift (−cooldown/−damage).
+- **Volatile** elite modifier: a telegraphed death blast.
+- **Warden cinder pools**: phase-2 slams leave a lingering damage pool.
+- **Camera occlusion**: tall props fade between the camera and hero; far elite
+  silhouettes keep their modifier aura.
+- Save schema **v5** adds runes (v4→v5 preserves ranks/loadout).
+
 ## Release
 
-**v1.2.0** is the current release; **v1.0.0** is the completed MVP baseline. The
-deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.0.0`
-(`b3091c1`). Save schema v4 is not readable by v1.0.0, so export/remove v4 slot
-data before rolling back. Full verification evidence, known limitations and the
-release checklist live in [docs/release-notes.md](./docs/release-notes.md).
+**v1.3.0** is the current release; **v1.0.0** is the completed MVP baseline. The
+deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.2.0`.
+Save schema v5 is not readable by v1.2.0, so export/remove v5 slot data before
+rolling back. Full verification evidence, known limitations and the release
+checklist live in [docs/release-notes.md](./docs/release-notes.md).

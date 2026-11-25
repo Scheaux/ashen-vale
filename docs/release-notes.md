@@ -1,5 +1,62 @@
 # Ashen Vale — Release Notes
 
+## v1.3.0 — 2026-11-25
+
+The combat-depth slice: a fourth active for every class, a rune modifier layer,
+volatile elites, Warden cinder pools and camera occlusion.
+
+### What ships
+
+- **Fourth actives (unlock level 6):**
+  - **Marauder — Leap Slam:** travels to the target and fires one landing
+    shockwave instead of path damage.
+  - **Ranger — Blast Shot:** a heavy arrow that explodes on impact, hitting
+    every enemy inside its radius.
+  - **Witch — Frost Nova:** a frost ring that chills enemies for 2.4s, slowing
+    their chase speed by 35% and tinting them cold.
+- **Rune layer:** one rune per active skill, free to swap once its level gate is
+  met. **Cruel** (+25% damage, +15% mana), **Wide** (+30% area/arc, −10% damage)
+  and **Swift** (−20% cooldown, −10% damage). Runes are chosen in the skill
+  picker; the hotbar shows a rune glyph and the tooltip shows effective numbers.
+- **Elite Volatile:** a new elite modifier that leaves a telegraphed death blast
+  after the elite falls. The warning uses the same ground-hazard language as the
+  boss.
+- **Warden cinder pools:** the phase-2 slam now leaves a burning crater for 2.6s
+  that ticks spell damage, so dodging the slam is not the end of the pattern.
+- **Camera occlusion:** tall props between the camera and the hero fade out
+  smoothly, and far elite silhouettes keep a modifier-colored aura ring.
+- **Save schema v5:** persists ranks, loadout and runes; v1–v4 saves migrate
+  (v4 keeps its ranks/loadout and gains empty runes).
+
+### Verification evidence
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm test` | **221 tests** across 25 files |
+| `npm run build` | production build in `dist/` |
+| `npm run qa` | **263 browser checks** across targeting, slices, post-release, v1.3, stats, passives and release; no console errors |
+| `qa/verify-v13.mjs` | **14/14** fourth-skill, rune, hazard and occlusion checks |
+| `qa/verify-release.mjs` | **33/33** full-loop, budget, high-DPI and reduced-motion checks |
+| Render budget | camp fights stay under 320 calls / 260K triangles |
+| Save migration | v1→v5, v2→v5, v3→v5 and v4→v5 covered |
+
+### Rollback
+
+Rollback target: **tag `v1.2.0`**.
+
+```bash
+git checkout v1.2.0
+npm ci
+npm run build
+```
+
+**Save compatibility caveat:** v1.3 writes schema v5. v1.2.0 only understands
+schema v4 and will reject v5 slot data. Export or remove v5 slots before a
+rollback, or keep a v1.2-era save backup.
+
+---
+
 ## v1.2.0 — 2026-11-25
 
 The first post-release patch fixes the launch feedback and adds skill-point

@@ -119,7 +119,7 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
     { id: 'cinder-cultist', weight: 0.3 },
     { id: 'mire-skitterer', weight: 0.25 },
   ];
-  const elitePool: EliteModifier[] = ['vital', 'savage', 'swift'];
+  const elitePool: EliteModifier[] = ['vital', 'savage', 'swift', 'volatile'];
 
   const pickArchetype = (): EnemyId => {
     let roll = rng() * archetypeWeights.reduce((s, a) => s + a.weight, 0);
