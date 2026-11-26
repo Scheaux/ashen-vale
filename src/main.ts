@@ -75,6 +75,7 @@ import {
   type CraftAction,
 } from './systems/crafting';
 import { grantXp } from './systems/progression';
+import { salvageItem } from './systems/salvage';
 import { evadeChance, getPlayerStats } from './systems/stats';
 import { CraftingPanel } from './ui/crafting';
 import { FloatingTextLayer } from './ui/floatingText';
@@ -378,6 +379,7 @@ class Game {
     });
     this.craftingPanel = new CraftingPanel(uiRoot, {
       onCraft: (action, uid) => this.handleCraft(action, uid),
+      onSalvage: (uid) => this.handleSalvage(uid),
       onClose: () => this.craftingPanel.close(),
     });
     this.savePanel = new SaveSlotsPanel(uiRoot, {
@@ -1107,6 +1109,22 @@ class Game {
       this.ui.showToast(result.reason ?? 'Crafting failed', '#ff8577');
     } else {
       this.ui.showToast(result.detail ?? 'Crafted', '#e8c877');
+      this.saveCheckpoint();
+    }
+    if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
+    this.craftingPanel.sync(state);
+    this.ui.setPlayerHp(state.player.hp, state.player.maxHp);
+    this.ui.setPlayerEs(state.player.energyShield, state.player.maxEnergyShield);
+  }
+
+  private handleSalvage(uid: string): void {
+    const state = this.state;
+    if (!state) return;
+    const result = salvageItem(state, uid);
+    if (!result.ok) {
+      this.ui.showToast(result.reason, '#ff8577');
+    } else {
+      this.ui.showToast(`Salvaged for ${result.value} Ember Dust`, '#e8c877');
       this.saveCheckpoint();
     }
     if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);

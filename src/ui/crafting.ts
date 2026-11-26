@@ -1,6 +1,5 @@
 import { RARITY_COLORS, type ItemSlot } from '../content/items';
 import type { GameState } from '../sim/state';
-import type { ItemInstance } from '../sim/items';
 import { affixLine, effectiveItemValue } from '../sim/items';
 import {
   CRAFT_COSTS,
@@ -8,10 +7,13 @@ import {
   findOwnedItem,
   ownedItems,
   type CraftAction,
+  type OwnedItem,
 } from '../systems/crafting';
+import { salvageValue } from '../systems/salvage';
 
 export interface CraftingCallbacks {
   onCraft(action: CraftAction, uid: string): void;
+  onSalvage(uid: string): void;
   onClose(): void;
 }
 
@@ -42,6 +44,7 @@ export class CraftingPanel {
   private readonly detailEl: HTMLElement;
   private readonly closeBtn: HTMLElement;
   private selectedUid: string | null = null;
+  private pendingSalvageUid: string | null = null;
   private lastSignature = '';
   visible = false;
 
@@ -84,6 +87,7 @@ export class CraftingPanel {
 
   close(): void {
     this.visible = false;
+    this.pendingSalvageUid = null;
     this.root.classList.add('hidden');
   }
 
@@ -97,12 +101,19 @@ export class CraftingPanel {
     const owned = ownedItems(state);
     if (this.selectedUid && !findOwnedItem(state, this.selectedUid)) this.selectedUid = null;
     if (!this.selectedUid) this.selectedUid = owned[0]?.item.uid ?? null;
+    if (this.pendingSalvageUid) {
+      const pending = findOwnedItem(state, this.pendingSalvageUid);
+      if (!pending || pending.equipped || this.pendingSalvageUid !== this.selectedUid) {
+        this.pendingSalvageUid = null;
+      }
+    }
 
     const signature = [
       state.currency.dust,
       state.currency.rune,
       state.currency.quality,
       this.selectedUid ?? '-',
+      this.pendingSalvageUid ?? '-',
       ...owned.map(({ item, equipped }) =>
         `${item.uid}:${equipped ? 1 : 0}:${item.rarity}:${item.quality}:${item.implicit?.value ?? '-'}:${item.affixes.map((a) => `${a.id}:${a.value}`).join(',')}`),
     ].join('|');
@@ -122,6 +133,7 @@ export class CraftingPanel {
       (button.querySelector('.craft-item__meta') as HTMLElement).textContent =
         `${item.rarity}${item.quality > 0 ? ` · ${item.quality}%` : ''}${equipped ? ' · equipped' : ''}`;
       button.addEventListener('click', () => {
+        if (this.selectedUid !== item.uid) this.pendingSalvageUid = null;
         this.selectedUid = item.uid;
         this.lastSignature = '';
         this.sync(state);
@@ -129,14 +141,15 @@ export class CraftingPanel {
       this.listEl.appendChild(button);
     }
 
-    this.renderDetail(state, owned.find(({ item }) => item.uid === this.selectedUid)?.item ?? null);
+    this.renderDetail(state, owned.find(({ item }) => item.uid === this.selectedUid) ?? null);
   }
 
-  private renderDetail(state: GameState, item: ItemInstance | null): void {
-    if (!item) {
+  private renderDetail(state: GameState, entry: OwnedItem | null): void {
+    if (!entry) {
       this.detailEl.innerHTML = '<p class="craft-empty">No gear to craft. Find or equip an item first.</p>';
       return;
     }
+    const { item, equipped } = entry;
     const color = RARITY_COLORS[item.rarity].cssColor;
     const implicit = item.implicit
       ? `<li class="tt-implicit">${affixLine({ id: item.implicit.id, value: Math.round(effectiveItemValue(item, item.implicit.value)) })} <em>implicit</em></li>`
@@ -165,5 +178,51 @@ export class CraftingPanel {
       button.addEventListener('click', () => this.callbacks.onCraft(action, item.uid));
       actions.appendChild(button);
     }
+
+    const salvage = document.createElement('div');
+    salvage.className = 'craft-salvage';
+    if (equipped) {
+      const hint = document.createElement('p');
+      hint.className = 'craft-salvage-hint';
+      hint.textContent = 'Unequip to salvage';
+      salvage.appendChild(hint);
+    } else {
+      const value = salvageValue(item);
+      if (this.pendingSalvageUid === item.uid) {
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'skill-btn';
+        confirmBtn.dataset.craftSalvageConfirm = '';
+        confirmBtn.textContent = `Confirm salvage · ${value} Dust`;
+        confirmBtn.addEventListener('click', (event) => {
+          if (event.detail > 1) return;
+          this.pendingSalvageUid = null;
+          this.lastSignature = '';
+          this.sync(state);
+          this.callbacks.onSalvage(item.uid);
+        });
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'skill-btn skill-btn--quiet';
+        cancelBtn.dataset.craftSalvageCancel = '';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+          this.pendingSalvageUid = null;
+          this.lastSignature = '';
+          this.sync(state);
+        });
+        salvage.append(confirmBtn, cancelBtn);
+      } else {
+        const button = document.createElement('button');
+        button.className = 'skill-btn';
+        button.dataset.craftSalvage = '';
+        button.textContent = `Salvage · ${value} Dust`;
+        button.addEventListener('click', () => {
+          this.pendingSalvageUid = item.uid;
+          this.lastSignature = '';
+          this.sync(state);
+        });
+        salvage.appendChild(button);
+      }
+    }
+    this.detailEl.appendChild(salvage);
   }
 }

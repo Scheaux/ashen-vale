@@ -2010,6 +2010,24 @@ kbd {
   margin-top: 0.9rem;
 }
 
+.craft-salvage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(200, 162, 74, 0.18);
+}
+
+.craft-salvage-hint {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--muted);
+}
+
 .craft-empty {
   margin: 1rem 0;
   color: var(--muted);
