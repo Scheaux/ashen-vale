@@ -5,6 +5,8 @@ import type { ZoneBounds } from '../content/types';
 export interface EmberField {
   points: THREE.Points;
   update(dt: number): void;
+  /** Detach the points and release the one geometry/material pair it owns. */
+  dispose(): void;
 }
 
 /**
@@ -68,5 +70,11 @@ export function createEmbers(bounds: ZoneBounds, seed = 7717): EmberField {
     pos.needsUpdate = true;
   }
 
-  return { points, update };
+  function dispose(): void {
+    geo.dispose();
+    mat.dispose();
+    points.removeFromParent();
+  }
+
+  return { points, update, dispose };
 }

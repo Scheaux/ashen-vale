@@ -1,6 +1,7 @@
 /** Shared content contracts: authored data stays separate from runtime state. */
 
 export type ClassId = 'marauder' | 'ranger' | 'witch';
+export type ZoneId = 'ashen-moor' | 'drowned-ossuary';
 export type EnemyId = 'ashen-husk' | 'cinder-cultist' | 'mire-skitterer' | 'ashen-warden';
 export type SkillId =
   | 'cleave'

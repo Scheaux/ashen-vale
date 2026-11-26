@@ -1,20 +1,17 @@
 import * as THREE from 'three';
+import type { ZoneId } from '../content/types';
 import { noise2D, smoothstep } from '../core/noise';
 import { detailNormal } from './materials';
 import { createGroundTexture } from './textures';
 import { TerrainSurface } from './terrainSurface';
 
-/**
- * Dark-fantasy ground: flat in the walkable area, rising into ridged hills
- * outside the play bounds so the zone edge reads as a natural wall.
- */
-export function createTerrain(size = 170): { mesh: THREE.Mesh; surface: TerrainSurface } {
-  const segments = 128;
-  const geo = new THREE.PlaneGeometry(size, size, segments, segments);
-  geo.rotateX(-Math.PI / 2);
+/** Bump when the heightfield or vertex-colour recipe changes. */
+export const TERRAIN_VERSION = 1;
 
-  const pos = geo.attributes.position as THREE.BufferAttribute;
-  const colors = new Float32Array(pos.count * 3);
+const SEGMENTS = 128;
+
+/** Moor height/colour recipe; must stay byte-for-byte the shipped look. */
+function shapeMoor(pos: THREE.BufferAttribute, colors: Float32Array): void {
   const cMoss = new THREE.Color('#2c3225');
   const cEarth = new THREE.Color('#362b1d');
   const cDirt = new THREE.Color('#4a4230');
@@ -38,12 +35,24 @@ export function createTerrain(size = 170): { mesh: THREE.Mesh; surface: TerrainS
     colors[i * 3 + 1] = tmp.g;
     colors[i * 3 + 2] = tmp.b;
   }
+}
 
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geo.computeVertexNormals();
+function shapeZone(zoneId: ZoneId, pos: THREE.BufferAttribute, colors: Float32Array): void {
+  switch (zoneId) {
+    case 'drowned-ossuary':
+      // 5.0c replaces this stub with the analytic rim/terrace/crypt profile.
+      // 5.0a has no second-zone gameplay, so the moor shape is the safe fallback.
+      shapeMoor(pos, colors);
+      break;
+    case 'ashen-moor':
+      shapeMoor(pos, colors);
+      break;
+  }
+}
 
+function createMoorMaterial(): THREE.MeshStandardMaterial {
   const detail = detailNormal('stone', 46, 0.55);
-  const mat = new THREE.MeshStandardMaterial({
+  return new THREE.MeshStandardMaterial({
     map: createGroundTexture(),
     normalMap: detail.map,
     normalScale: detail.scale,
@@ -51,8 +60,35 @@ export function createTerrain(size = 170): { mesh: THREE.Mesh; surface: TerrainS
     roughness: 0.96,
     metalness: 0,
   });
+}
 
+/**
+ * Dark-fantasy ground: flat in the walkable area, rising into ridged hills
+ * outside the play bounds so the zone edge reads as a natural wall.
+ *
+ * Passing `reuse` rebuilds the mesh/material/vertex colours while rewriting the
+ * same TerrainSurface source, so existing view layers keep a live sampler.
+ */
+export function createTerrain(
+  zoneId: ZoneId = 'ashen-moor',
+  reuse?: TerrainSurface,
+  size = 170,
+): { mesh: THREE.Mesh; surface: TerrainSurface } {
+  const geo = new THREE.PlaneGeometry(size, size, SEGMENTS, SEGMENTS);
+  geo.rotateX(-Math.PI / 2);
+
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const colors = new Float32Array(pos.count * 3);
+  shapeZone(zoneId, pos, colors);
+
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+
+  const mat = createMoorMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
-  return { mesh, surface: new TerrainSurface(pos, size, segments) };
+
+  const surface = reuse ?? new TerrainSurface(pos, size, SEGMENTS);
+  if (reuse) reuse.setSource(pos, size, SEGMENTS);
+  return { mesh, surface };
 }

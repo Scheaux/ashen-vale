@@ -24,19 +24,45 @@ function clipEdge(polygon: Point[], a: Point, b: Point): Point[] {
   return out;
 }
 
+/** Render-only height lookup shared by every ground-anchored view. */
+export interface GroundSampler {
+  heightAt(x: number, z: number): number;
+}
+
 /**
  * Projection on the actual triangles of the horizontal PlaneGeometry grid.
  * Split the overlay at every terrain edge instead of bridging rises with long triangles.
+ *
+ * One instance survives zone rebuilds: setSource() rewrites the heightfield it
+ * samples, so every view layer keeps a live reference across a remount.
  */
-export class TerrainSurface {
-  private readonly step: number;
-  private readonly min: number;
-  private readonly row: number;
+export class TerrainSurface implements GroundSampler {
+  private position: THREE.BufferAttribute;
+  private step = 0;
+  private min = 0;
+  private row = 0;
+  private segments = 0;
 
-  constructor(private readonly position: THREE.BufferAttribute, size: number, private readonly segments: number) {
+  constructor(position: THREE.BufferAttribute, size: number, segments: number) {
+    this.position = position;
+    this.setSource(position, size, segments);
+  }
+
+  /** Point this sampler at a rebuilt heightfield without changing identity. */
+  setSource(position: THREE.BufferAttribute, size: number, segments: number): void {
+    this.position = position;
+    this.segments = segments;
     this.step = size / segments;
     this.min = -size / 2;
     this.row = segments + 1;
+  }
+
+  /** Normalized surface normal from central differences of the heightfield. */
+  normalAt(x: number, z: number, target = new THREE.Vector3()): THREE.Vector3 {
+    const e = 0.5;
+    const dhdx = (this.heightAt(x + e, z) - this.heightAt(x - e, z)) / (2 * e);
+    const dhdz = (this.heightAt(x, z + e) - this.heightAt(x, z - e)) / (2 * e);
+    return target.set(-dhdx, 1, -dhdz).normalize();
   }
 
   heightAt(x: number, z: number): number {

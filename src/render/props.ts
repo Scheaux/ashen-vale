@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { noise2D } from '../core/noise';
 import type { PropKind, PropPlacement, ZoneLayout } from '../content/types';
+import { disposeMeshTree } from './dispose';
 import { rockGeometry, sweptBranch, sweptTube, sweptTrunk, latheProfile } from './geo';
 import { barkMaterial, stoneMaterial } from './materials';
 import type { TerrainSurface } from './terrainSurface';
@@ -133,6 +134,8 @@ export interface PropsView {
   /** Fade tall props that sit between the camera and the hero. */
   update(camera: THREE.Camera, playerX: number, playerZ: number, dt: number): void;
   readonly occludedCount: number;
+  /** Detach the scenery group and release its geometries, materials and textures. */
+  dispose(): void;
 }
 
 const OCCLUSION_PADDING = 1.1;
@@ -245,6 +248,9 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
   return {
     group,
     update,
+    dispose() {
+      disposeMeshTree(group);
+    },
     get occludedCount() {
       return occludedCount;
     },

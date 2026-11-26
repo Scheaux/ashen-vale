@@ -5,7 +5,7 @@ import { getClass } from './content/classes';
 import { RARITY_COLORS, type ItemSlot } from './content/items';
 import { getSkill } from './content/skills';
 import { getRune, type RuneId } from './content/runes';
-import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId, type ZoneLayout } from './content/types';
+import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId, type ZoneId, type ZoneLayout } from './content/types';
 import type { Rarity } from './content/items';
 import { rollItem, type ItemInstance } from './sim/items';
 import { generateZoneLayout } from './content/zone';
@@ -21,7 +21,7 @@ import { ProjectileViews } from './render/projectiles';
 import { SkillVfxLayer } from './render/skillVfx';
 import { TelegraphLayer } from './render/telegraphs';
 import { createProps, type PropsView } from './render/props';
-import { createWorldScene, type WorldScene } from './render/scene';
+import { applyZoneAtmosphere, createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
 import type { TerrainSurface } from './render/terrainSurface';
 import { createGameState, drainEvents, type GameState } from './sim/state';
@@ -198,6 +198,8 @@ export interface AshenDebug {
   teleportPlayer(x: number, z: number): void;
   /** Review fixture: terrain height at a world point. */
   terrainHeightAt(x: number, z: number): number;
+  /** Debug-only: remount a zone without touching the run or writing a save. */
+  remountZone(zoneId: ZoneId): void;
   /** Review fixture: nearest scenery points to the hero (picking checks). */
   sceneryPoints(): Array<{ x: number; z: number }>;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
@@ -260,7 +262,7 @@ export interface AshenDebug {
 class Game {
   private readonly world: WorldScene;
   private readonly scene: THREE.Scene;
-  private readonly propsView: PropsView;
+  private propsView: PropsView;
   private readonly rig: CameraRig;
   private readonly enemyViews: EnemyViews;
   private readonly projectileViews: ProjectileViews;
@@ -268,7 +270,7 @@ class Game {
   private readonly skillVfx: SkillVfxLayer;
   private readonly hazardLayer: HazardLayer;
   private readonly lootViews: LootViews;
-  private readonly embers: EmberField;
+  private embers: EmberField;
   private readonly cursor: CursorMarker;
   private readonly floatingText: FloatingTextLayer;
   private readonly nameplates: NameplateLayer;
@@ -285,13 +287,14 @@ class Game {
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly terrainSurface: TerrainSurface;
+  private terrainMesh: THREE.Mesh;
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly tmpVec = new THREE.Vector3();
   private readonly viewport = new THREE.Vector2();
   private pointerInside = false;
   private hoverTargetId: string | null = null;
 
-  private readonly layout: ZoneLayout;
+  private layout: ZoneLayout;
   private state: GameState | null = null;
   private playerView: PlayerView | null = null;
   private classDef: ClassDef = getClass('marauder');
@@ -328,7 +331,8 @@ class Game {
     this.persistentSaves = browserStorage !== null;
     this.storage = browserStorage ?? createMemoryStorage();
 
-    const terrain = createTerrain();
+    const terrain = createTerrain('ashen-moor');
+    this.terrainMesh = terrain.mesh;
     this.terrainSurface = terrain.surface;
     this.scene.add(terrain.mesh);
     this.propsView = createProps(this.layout, terrain.surface);
@@ -523,6 +527,54 @@ class Game {
     this.advertisedAttacks.clear();
     this.cursor.setDestination(null);
     this.destinationActive = false;
+  }
+
+  /**
+   * Rebuild the surface-bound scenery. The TerrainSurface instance is reused so
+   * every view layer keeps a live sampler; the old terrain mesh, props and
+   * embers are disposed first so geometry/material/texture counts stay flat.
+   */
+  private mountZone(layout: ZoneLayout, zoneId: ZoneId = 'ashen-moor'): void {
+    this.layout = layout;
+
+    // Terrain owns its geometry, material, ground map and normal-map clone.
+    disposeMeshTree(this.terrainMesh);
+    const terrain = createTerrain(zoneId, this.terrainSurface);
+    this.terrainMesh = terrain.mesh;
+    this.scene.add(terrain.mesh);
+
+    // Props own merged geometries plus cloned normal/roughness textures.
+    this.propsView.dispose();
+    this.propsView = createProps(layout, this.terrainSurface);
+    this.scene.add(this.propsView.group);
+
+    // Embers own one geometry and one points material.
+    this.embers.dispose();
+    this.embers = createEmbers(layout.bounds);
+    this.scene.add(this.embers.points);
+
+    applyZoneAtmosphere(this.world, zoneId);
+  }
+
+  /**
+   * Debug-only remount: keep the live run (state, position, HP, inventory,
+   * objectives, RNG) and rebuild only render-side scenery. Views that baked the
+   * old heightfield into geometry or DOM are cleared before the swap. Never saves.
+   */
+  remountZone(zoneId: ZoneId): void {
+    this.clearCombatViews();
+    this.lootViews.clear();
+    this.nameplates.clear();
+    this.setHoverTarget(null);
+    this.cursor.setHover(null);
+
+    const layout = generateZoneLayout();
+    this.mountZone(layout, zoneId);
+
+    const state = this.state;
+    const x = state ? state.player.position.x : layout.spawn.x;
+    const z = state ? state.player.position.z : layout.spawn.z;
+    this.rig.snapTo(x, z, this.terrainSurface.heightAt(x, z));
   }
 
   private respawn(): void {
@@ -1623,6 +1675,7 @@ const game = new Game(canvas, uiRoot);
   hurtEnemy: (id, amount) => game.hurtEnemy(id, amount),
   teleportPlayer: (x, z) => game.teleportPlayer(x, z),
   terrainHeightAt: (x, z) => game.terrainHeightAt(x, z),
+  remountZone: (zoneId) => game.remountZone(zoneId),
   sceneryPoints: () => game.sceneryPoints(),
   exportSave: () => game.exportSave(),
   saves: () => game.saves(),
