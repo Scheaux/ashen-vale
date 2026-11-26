@@ -176,6 +176,7 @@ export interface AshenDebug {
       drawCalls: number;
       geometries: number;
       textures: number;
+      mountEpoch: number;
       pixelRatio: number;
       pixelRatioCap: number;
       shadows: boolean;
@@ -301,6 +302,8 @@ class Game {
   private hoverTargetId: string | null = null;
 
   private layout: ZoneLayout;
+  /** Read-only QA counter: how many times the surface mount has run. */
+  private mountEpoch = 0;
   private state: GameState | null = null;
   private playerView: PlayerView | null = null;
   private classDef: ClassDef = getClass('marauder');
@@ -543,6 +546,7 @@ class Game {
    */
   private mountZone(layout: ZoneLayout, zoneId: ZoneId = 'ashen-moor'): void {
     this.layout = layout;
+    this.mountEpoch += 1;
 
     // Terrain owns its geometry, material, ground map and normal-map clone.
     disposeMeshTree(this.terrainMesh);
@@ -1486,6 +1490,7 @@ class Game {
         drawCalls: this.world.renderer.info.render.calls,
         geometries: this.world.renderer.info.memory.geometries,
         textures: this.world.renderer.info.memory.textures,
+        mountEpoch: this.mountEpoch,
         pixelRatio: this.world.renderer.getPixelRatio(),
         pixelRatioCap: this.qualityCap,
         shadows: this.world.renderer.shadowMap.enabled,
