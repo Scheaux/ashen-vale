@@ -286,7 +286,7 @@ class Game {
   private readonly persistentSaves: boolean;
 
   private readonly raycaster = new THREE.Raycaster();
-  private readonly terrainSurface: TerrainSurface;
+  private terrainSurface: TerrainSurface;
   private terrainMesh: THREE.Mesh;
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly tmpVec = new THREE.Vector3();
@@ -541,6 +541,9 @@ class Game {
     disposeMeshTree(this.terrainMesh);
     const terrain = createTerrain(zoneId, this.terrainSurface);
     this.terrainMesh = terrain.mesh;
+    // Reuse should always return the same sampler; keep the owner aligned with
+    // the returned object so a future change cannot split brain the mount.
+    this.terrainSurface = terrain.surface;
     this.scene.add(terrain.mesh);
 
     // Props own merged geometries plus cloned normal/roughness textures.
@@ -568,7 +571,16 @@ class Game {
     this.setHoverTarget(null);
     this.cursor.setHover(null);
 
-    const layout = generateZoneLayout();
+    // Debug remount is a transient input reset: a move order or attack target
+    // from the old surface/marker must not survive the swap.
+    if (this.state) {
+      this.state.player.moveTarget = null;
+      this.state.player.attackTargetId = null;
+    }
+
+    // Keep the live layout seed even though mountZone replaces this.layout.
+    const seed = this.layout.seed;
+    const layout = generateZoneLayout(seed);
     this.mountZone(layout, zoneId);
 
     const state = this.state;

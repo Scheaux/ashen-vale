@@ -59,7 +59,10 @@ export class TerrainSurface implements GroundSampler {
 
   /** Normalized surface normal from central differences of the heightfield. */
   normalAt(x: number, z: number, target = new THREE.Vector3()): THREE.Vector3 {
-    const e = 0.5;
+    // Half a grid cell, capped at 0.5 world units. The default moor grid
+    // (170/128 ≈ 1.33) keeps the original stable 0.5-unit span; finer
+    // heightfields sample within one cell instead of bridging several.
+    const e = Math.max(1e-3, Math.min(0.5, this.step * 0.5));
     const dhdx = (this.heightAt(x + e, z) - this.heightAt(x - e, z)) / (2 * e);
     const dhdz = (this.heightAt(x, z + e) - this.heightAt(x, z - e)) / (2 * e);
     return target.set(-dhdx, 1, -dhdz).normalize();

@@ -1,6 +1,20 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createTerrain } from './terrain';
 import { TerrainSurface } from './terrainSurface';
+
+// createTerrain builds procedural canvas textures; keep this contract test
+// headless with cheap texture stand-ins.
+vi.mock('./materials', async () => {
+  const three = await import('three');
+  return {
+    detailNormal: () => ({ map: new three.Texture(), scale: new three.Vector2(0.55, 0.55) }),
+  };
+});
+vi.mock('./textures', async () => {
+  const three = await import('three');
+  return { createGroundTexture: () => new three.Texture() };
+});
 
 function build(size: number, segments: number, height: (x: number, z: number) => number) {
   const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
@@ -54,5 +68,24 @@ describe('TerrainSurface', () => {
     expect(surface.normalAt(2, 2).x).toBeLessThan(0);
     flat.geometry.dispose();
     slope.geometry.dispose();
+  });
+
+  it('reuses the surface when createTerrain rebuilds with a different grid size', () => {
+    const { geometry, positions } = build(20, 20, (x) => x * 0.25);
+    const surface = new TerrainSurface(positions, 20, 20);
+    const oldHeight = surface.heightAt(4, 4);
+
+    const { mesh, surface: rebuilt } = createTerrain('ashen-moor', surface, 30);
+
+    expect(rebuilt).toBe(surface);
+    expect(mesh.geometry).not.toBe(geometry);
+    // The 30-unit/128-segment moor rewrite is flat at the centre, unlike the
+    // old 20-unit/20-segment slope.
+    expect(surface.heightAt(4, 4)).not.toBeCloseTo(oldHeight, 6);
+    expect(Number.isFinite(surface.heightAt(14.9, 14.9))).toBe(true);
+    expect(surface.normalAt(4, 4).length()).toBeCloseTo(1, 6);
+    mesh.geometry.dispose();
+    (mesh.material as THREE.Material).dispose();
+    geometry.dispose();
   });
 });
