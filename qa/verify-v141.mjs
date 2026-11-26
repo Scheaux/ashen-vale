@@ -132,9 +132,10 @@ async function main() {
     check('new game reaches play', s.mode === 'playing' && !s.dead, `${s.mode}, hp ${s.playerHp}`);
     check('no console errors after new game', errors.length === 0, errors.slice(0, 3).join(' | '));
 
-    // --- Deterministic rare item, zero granted currency, open bench ---
+    // --- Deterministic rare item; record the starting balances for deltas ---
+    // New runs do not have to start at zero, so the baseline is logged rather
+    // than asserted as a shape check; the sales below use deltas from it.
     const uid = await page.evaluate(() => window.__ashen.grantItem('rare'));
-    await page.evaluate(() => window.__ashen.grantCurrency(0, 0, 0));
     s = await snapshot(page);
     const baseline = {
       dust: s.currency.dust,
@@ -145,9 +146,7 @@ async function main() {
     const item = s.items.find((entry) => entry.uid === uid);
     check('granted rare item is in the bag', !!item && item.rarity === 'rare' && item.equipped === false,
       `uid ${uid}, ${item?.rarity ?? 'missing'}`);
-    check('new-run dust baseline recorded for delta checks',
-      Number.isInteger(baseline.dust) && baseline.dust >= 0,
-      `${baseline.dust} dust (informational; new games need not start at 0)`);
+    console.log(`INFO  new-run baseline: ${baseline.dust} dust, ${baseline.bags} bag item(s), ${baseline.equipped} equipped`);
 
     await openBench(page);
     check('C opens the crafting bench', await page.locator('.craft-screen').isVisible());
@@ -216,13 +215,19 @@ async function main() {
       `dust ${beforeDouble.currency.dust} → ${afterDouble.currency.dust}, bags ${beforeDouble.bagCount} → ${afterDouble.bagCount}`);
     await page.screenshot({ path: `${SHOTS}v141-salvage-dblclick.png` });
 
-    const doubleArmed = (await page.locator('[data-craft-salvage-cancel]').count()) > 0;
+    const doubleConfirmCount = await page.locator('[data-craft-salvage-confirm]').count();
+    const doubleCancelCount = await page.locator('[data-craft-salvage-cancel]').count();
+    const doubleArmed = doubleConfirmCount === 1 && doubleCancelCount === 1;
+    check('real double-click arms exactly one confirmation row',
+      doubleArmed,
+      `${doubleConfirmCount} confirm, ${doubleCancelCount} cancel`);
     await cancelPendingSalvage(page);
     check('the double-click armed state cancels cleanly',
+      doubleArmed &&
       (await page.locator('[data-craft-salvage-confirm]').count()) === 0 &&
       (await page.locator('[data-craft-salvage-cancel]').count()) === 0 &&
       (await snapshot(page)).items.some((entry) => entry.uid === uid),
-      doubleArmed ? 'pending row was present and cancelled' : 'second click cancelled or left no row');
+      doubleArmed ? 'pending row was present and cancelled' : 'first click did not arm the confirmation row');
 
     // --- Fast legitimate Confirm: arm, parse the re-armed label, click promptly ---
     const rearmSalvage = page.locator('[data-craft-salvage]');
@@ -365,6 +370,11 @@ async function main() {
     await page.locator('[data-craft-salvage-confirm]').waitFor({ state: 'visible' });
     await closeBench(page);
     await openBench(page);
+    const reopenedConfirmCount = await page.locator('[data-craft-salvage-confirm]').count();
+    const reopenedCancelCount = await page.locator('[data-craft-salvage-cancel]').count();
+    check('reopening the bench clears the pending row before any selection',
+      reopenedConfirmCount === 0 && reopenedCancelCount === 0,
+      `${reopenedConfirmCount} confirm, ${reopenedCancelCount} cancel`);
     await page.locator(`[data-craft-item="${pendingUid}"]`).click();
     await sleep(150);
     check('closing and reopening the bench drops any pending confirmation',
@@ -374,11 +384,16 @@ async function main() {
       (await snapshot(page)).items.some((entry) => entry.uid === pendingUid));
     await page.screenshot({ path: `${SHOTS}v141-salvage-pending-cleared.png` });
 
-    // Equip through the real inventory UI while a confirmation is armed.
+    // Pressing I closes the bench before the inventory opens, so this covers
+    // the close-via-inventory path, not equip-driven invalidation while open.
     await page.locator('[data-craft-salvage]').click();
     await page.locator('[data-craft-salvage-confirm]').waitFor({ state: 'visible' });
     await page.keyboard.press('i');
     await page.locator('.inventory-panel').waitFor({ state: 'visible' });
+    check('pressing I closes the bench and hides the pending row',
+      !(await page.locator('.craft-screen').isVisible()) &&
+      !(await page.locator('[data-craft-salvage-confirm]').isVisible()) &&
+      !(await page.locator('[data-craft-salvage-cancel]').isVisible()));
     await page.locator(`[data-item-uid="${pendingUid}"]`).click();
     await page.waitForFunction(
       (id) => window.__ashen.snapshot().items.some((entry) => entry.uid === id && entry.equipped),
@@ -388,7 +403,7 @@ async function main() {
     await openBench(page);
     const pendingHint = page.locator('.craft-salvage-hint');
     await pendingHint.waitFor({ state: 'visible' });
-    check('equipping a pending item clears the row and shows the unequip hint',
+    check('reopened bench after inventory equip shows the hint and no pending row',
       (await pendingHint.innerText()).toLowerCase().includes('unequip') &&
       (await page.locator('[data-craft-salvage-confirm]').count()) === 0 &&
       (await page.locator('[data-craft-salvage-cancel]').count()) === 0);
@@ -426,15 +441,16 @@ async function main() {
       scrollMetrics.scrollHeight > scrollMetrics.clientHeight + 50,
       `${scrollMetrics.clientHeight}px visible of ${scrollMetrics.scrollHeight}px`);
 
-    // Put the Salvage button's center ~24px above the panel's bottom edge.
-    // The reserved confirmation row then sits below the clip, so a default
-    // focus() scroll would move it; preventScroll must keep scrollTop fixed.
+    // Put the Salvage button's center ~23px above the panel's bottom edge,
+    // within the 24px target while keeping the reserved confirmation row below
+    // the clip. A default focus() scroll would move it; preventScroll must keep
+    // scrollTop fixed.
     await scrollPage.evaluate(() => {
       const craftPanel = document.querySelector('.craft-panel');
       const button = document.querySelector('[data-craft-salvage]');
       const panelRect = craftPanel.getBoundingClientRect();
       const buttonRect = button.getBoundingClientRect();
-      const desiredTop = panelRect.bottom - 24 - buttonRect.height / 2;
+      const desiredTop = panelRect.bottom - 23 - buttonRect.height / 2;
       craftPanel.scrollTop += buttonRect.top - desiredTop;
     });
     await sleep(150);
@@ -444,24 +460,37 @@ async function main() {
     const scrollPanelBox = await panel.boundingBox();
     if (!scrollSalvageBox || !scrollPanelBox) throw new Error('Scrolled panel geometry missing');
     const scrollSalvageCenter = boxCenter(scrollSalvageBox);
-    const scrollFraction = (scrollSalvageCenter.y - scrollPanelBox.y) / scrollPanelBox.height;
-    check('short viewport: Salvage sits near the bottom edge',
-      scrollFraction > 0.85 &&
-      scrollSalvageCenter.y < scrollPanelBox.y + scrollPanelBox.height &&
+    const panelBottom = scrollPanelBox.y + scrollPanelBox.height;
+    const salvageGap = panelBottom - scrollSalvageCenter.y;
+    check('short viewport: Salvage center is anchored ~24px above the panel bottom',
+      Math.abs(salvageGap - 24) <= 2 &&
+      scrollSalvageCenter.y < panelBottom &&
       scrollBefore > 0,
-      `center ${scrollSalvageCenter.y.toFixed(1)}px, panel ${scrollPanelBox.y.toFixed(1)}–${(scrollPanelBox.y + scrollPanelBox.height).toFixed(1)}, scrollTop ${scrollBefore}`);
+      `gap ${salvageGap.toFixed(2)}px, center ${scrollSalvageCenter.y.toFixed(1)}px, panel bottom ${panelBottom.toFixed(1)}px, scrollTop ${scrollBefore}`);
 
     const beforeScrolledDouble = await snapshot(scrollPage);
     await scrollPage.mouse.dblclick(scrollSalvageCenter.x, scrollSalvageCenter.y);
     await sleep(250);
     const afterScrolledDouble = await snapshot(scrollPage);
     const scrollAfter = await panel.evaluate((el) => el.scrollTop);
+    const scrolledConfirmBox = await scrollPage.locator('[data-craft-salvage-confirm]').boundingBox();
+    const scrollPanelAfterBox = await panel.boundingBox();
+    const panelBottomAfter = scrollPanelAfterBox
+      ? scrollPanelAfterBox.y + scrollPanelAfterBox.height
+      : panelBottom;
     check('short/scrolled double-click salvages nothing',
       afterScrolledDouble.items.some((entry) => entry.uid === scrollUids[0]) &&
       afterScrolledDouble.currency.dust === beforeScrolledDouble.currency.dust &&
       afterScrolledDouble.bagCount === beforeScrolledDouble.bagCount &&
       afterScrolledDouble.items.length === beforeScrolledDouble.items.length,
       `dust ${beforeScrolledDouble.currency.dust} → ${afterScrolledDouble.currency.dust}, bags ${beforeScrolledDouble.bagCount} → ${afterScrolledDouble.bagCount}`);
+    check('short/scrolled Confirm stays clipped at or below the panel bottom after arming',
+      !!scrolledConfirmBox &&
+      scrolledConfirmBox.y >= panelBottomAfter &&
+      scrolledConfirmBox.y + scrolledConfirmBox.height > panelBottomAfter + 10,
+      scrolledConfirmBox
+        ? `confirm top ${scrolledConfirmBox.y.toFixed(1)}px, panel bottom ${panelBottomAfter.toFixed(1)}px`
+        : 'confirm row missing');
     check('short/scrolled double-click does not focus-scroll the panel',
       Math.abs(scrollAfter - scrollBefore) < 1,
       `scrollTop ${scrollBefore} → ${scrollAfter}`);
@@ -518,8 +547,10 @@ async function main() {
       afterFallback.bagCount === 1);
     await fallbackPage.screenshot({ path: `${SHOTS}v141-salvage-fallback.png` });
 
-    // Confirm must not be gated on click count: a rapid detail=2 click on a
-    // freshly armed control is still a legitimate sale and runs exactly once.
+    // A real page.mouse.click(..., { clickCount: 2 }) delivers detail 1 to
+    // Confirm because the first click removes the control (verified locally),
+    // so this dispatched detail=2 event pins the handler-level absence of a
+    // click-count guard. The normal fast Confirm path above uses a real click.
     const survivorValue = displayedDust((await fallbackPage.locator('[data-craft-salvage]').innerText()).trim());
     await fallbackPage.locator('[data-craft-salvage]').click();
     await fallbackPage.locator('[data-craft-salvage-confirm]').waitFor({ state: 'visible' });
@@ -534,7 +565,7 @@ async function main() {
     );
     await sleep(150);
     const afterFastConfirm = await snapshot(fallbackPage);
-    check('fast detail=2 Confirm sells exactly once (no click-count guard)',
+    check('handler-level detail=2 Confirm click sells exactly once',
       afterFastConfirm.currency.dust - afterFallback.currency.dust === survivorValue &&
       afterFastConfirm.bagCount === 0,
       `dust ${afterFallback.currency.dust} → ${afterFastConfirm.currency.dust} (+${survivorValue}), bags ${afterFastConfirm.bagCount}`);
