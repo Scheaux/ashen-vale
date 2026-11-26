@@ -240,9 +240,9 @@ The combat-depth slice:
   silhouettes keep their modifier aura.
 - Save schema **v5** adds runes (v4→v5 preserves ranks/loadout).
 
-## Post-release 1.4.0
+## Post-release 1.4.1
 
-The itemization/economy slice:
+The itemization/economy slice, hardened:
 
 - 20 item bases with item-level **implicit** stats and 29 affixes; five uniques
   including Cinderbrand, Warden's Bulwark and Windstep.
@@ -250,12 +250,15 @@ The itemization/economy slice:
 - **Crafting Bench** (C): reforge one affix (Ember Dust), add an affix (Ashen
   Rune), or raise quality (Quality Ember), via atomic validated transactions.
 - Currency from kills/elites/boss; the victory screen reports crafting stock.
+- **Salvage** bag items for Ember Dust; equipped gear must be unequipped first.
+  The two-step confirmation resists double-clicks and the bench keeps focus.
 - Save schema **v6** persists quality/implicits/currency with v1–v5 migrations.
 
 ## Release
 
-**v1.4.0** is the current release; **v1.0.0** is the completed MVP baseline. The
-deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.3.0`.
-Save schema v6 is not readable by v1.3.0, so export/remove v6 slot data before
-rolling back. Full verification evidence, known limitations and the release
-checklist live in [docs/release-notes.md](./docs/release-notes.md).
+**v1.4.1** is the current release; **v1.0.0** is the completed MVP baseline. The
+deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.4.0`.
+Save schema v6 is unchanged in v1.4.1; v1.3.0 cannot read v6, so export/remove
+v6 slot data before rolling back further. Full verification evidence, known
+limitations and the release checklist live in
+[docs/release-notes.md](./docs/release-notes.md).

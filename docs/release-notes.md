@@ -1,5 +1,52 @@
 # Ashen Vale — Release Notes
 
+## v1.4.1 — 2026-11-27
+
+The salvage hardening release: the Ember Dust item sink is now gesture-safe,
+keyboard-focused, and covered end to end.
+
+### What ships
+
+- **Gesture safety:** the confirmation prompt takes the old Salvage button's
+  position, so a double-click at that point cannot confirm. The arm handler
+  ignores the tail of a multi-click; Confirm deliberately has no click-count
+  guard, so a fast legitimate confirm still sells exactly once.
+- **Focus and scrolling:** pointer focus uses `preventScroll`, so a short or
+  scrolled bench cannot shift Confirm under the old pointer. Keyboard focus
+  still scrolls the control into view. Focus moves to Confirm after arming,
+  to Salvage after Cancel, and to the next Salvage or Close after confirming.
+- **Transaction defense:** `salvageItem` checks equipment before bags. Any
+  equipped uid is refused with `Unequip the item before salvaging`, even in a
+  duplicate-uid state; an unknown uid still returns `Item is no longer owned`.
+- **Browser coverage:** `qa/verify-v141.mjs` now has 50 checks, including a
+  real double-click, a 900×600 scrolled-panel regression, fast Confirm,
+  pending invalidation on selection/close/inventory, fallback selection, and
+  save/reload after salvage. The volatile-blast fixture also stands on the
+  live hazard center, removing a pre-existing QA flake.
+- **Version:** 1.4.1. README controls and the itemization section mention
+  salvage.
+
+### Verification evidence
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm test` | **234 tests** across 27 files |
+| `npm run build` | production build in `dist/` |
+| `npm run qa` | **328 browser checks** across the full chain; `verify-v141` **50/50** |
+| Render budget | unchanged; the change is DOM/UI and transaction logic only |
+
+### Rollback
+
+Rollback target: tag **v1.4.0**. Save schema v6 is unchanged, so v1.4.0 can read
+v1.4.1 saves. `v1.3.0` cannot read v6.
+
+```bash
+git checkout v1.4.0
+npm ci
+npm run build
+```
+
 ## v1.4.0 — 2026-11-26
 
 The itemization and economy slice: base implicits, item quality, more bases and

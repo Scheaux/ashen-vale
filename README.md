@@ -1,7 +1,7 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG in TypeScript + three.js, released as
-**v1.4.0**. Built in vertical slices; the completed MVP covers scaffold,
+**v1.4.1**. Built in vertical slices; the completed MVP covers scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
 (mana, flasks and the death → checkpoint retry flow), a passive skill tree, the
 zone objective loop — clear the camps, then end the Ashen Warden in its arena —
@@ -14,7 +14,10 @@ Q/W/E/R/F), a skill library with unlock/upgrade ranks, and click-to-swap hotbar
 slots. v1.3 added the **fourth active per class**, a **rune modifier layer**,
 **volatile elite death blasts**, **Warden cinder pools** and **camera
 occlusion**. v1.4 adds **item base implicits and quality**, expanded
-bases/affixes/uniques, and a **crafting bench/economy**. See [MVP.md](./MVP.md)
+bases/affixes/uniques, and a **crafting bench/economy**. v1.4.1 hardens
+**salvage** with a double-click-resistant confirmation, pointer focus that
+never scrolls the panel, equipment-first refusal and expanded browser coverage.
+See [MVP.md](./MVP.md)
 for the roadmap,
 [the post-release plan](./docs/post-release-plan.md) for the next phases, and
 [release notes](./docs/release-notes.md) for verification evidence, known
@@ -167,11 +170,11 @@ npm run qa:release # production build + the full-loop release suite only
   and the device cap. Release QA gates camp fights at **≤320 draw calls /
   ≤260K triangles** (measured 121–280 calls and 165–193K triangles in headless
   Chromium)
-- **Release:** v1.4.0 with a full-loop browser suite (fresh start → feedback →
+- **Release:** v1.4.1 with a full-loop browser suite (fresh start → feedback →
   camps → boss phases → victory → save → reload → Continue), high-DPI adaptive
   quality and reduced-motion checks, plus post-release QA for grounding, the
   fixed camera, HUD declutter, skill points/loadouts, fourth actives, runes,
-  hazards, camera occlusion and item crafting; see
+  hazards, camera occlusion, item crafting and salvage; see
   [release notes](./docs/release-notes.md) for evidence and rollback
 
 ## Architecture
@@ -221,8 +224,8 @@ Loading rebuilds the zone from those flags and the deterministic layout.
 
 ## Release
 
-- **Version:** 1.4.0
+- **Version:** 1.4.1
 - **Build:** static `dist/` bundle; `npm run build`, then serve `dist/`
-- **Rollback target:** tag `v1.3.0`. Save schema v6 is not readable by v1.3.0;
-  export/remove v6 slots before rolling back.
+- **Rollback target:** tag `v1.4.0`. Save schema v6 is unchanged in v1.4.1;
+  v1.3.0 cannot read v6, so export/remove v6 slots before rolling back further.
 - **Evidence:** see [docs/release-notes.md](./docs/release-notes.md)

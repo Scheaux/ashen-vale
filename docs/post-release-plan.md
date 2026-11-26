@@ -1,9 +1,10 @@
 # Ashen Vale — Post-Release Polish & Expansion Plan
 
 Baseline: **v1.0.0** (`b3091c1`, tag `v1.0.0`).
-Status: **v1.4.0 ships the itemization/economy scope** (base implicits, quality,
-expanded bases/affixes/uniques, crafting bench and currency). It passed 229 unit
-tests and 279 browser checks. The next planned slice is v1.5 world expansion.
+Status: **v1.4.1 ships the itemization/economy scope plus salvage hardening**
+(base implicits, quality, expanded bases/affixes/uniques, crafting bench and
+currency, gesture-safe salvage). It passed 234 unit tests and 328 browser
+checks. The next planned slice is v1.5 world expansion.
 
 This plan starts with correctness and UX debt found in the shipped build, then
 expands the game in vertical slices. Every release keeps the same gates:
@@ -305,6 +306,10 @@ Sizes are relative slices, not calendar estimates.
 - Currency earned from kills/elites/boss and shown on victory; save schema v6.
 - Acceptance met: identity conservation tested, migration tested, every craft
   action has UI and refusal states.
+- **v1.4.1 salvage hardening:** bag items salvage into Ember Dust; the two-step
+  confirmation resists double-clicks, pointer focus never scrolls the panel,
+  equipment is refused before the bag lookup, and the browser suite covers
+  double-click, scrolled-panel, pending-invalidation and save/reload paths.
 
 ### v1.5 — World expansion (L) — next
 - Second zone with a new camp/arena layout, new enemy archetypes and a new boss.
@@ -385,5 +390,5 @@ placed in Q. Clicking any slot opens the skill picker with that slot selected.
 ## 9. Execution order
 
 v1.1/v1.2 shipped as **v1.2.0**; v1.3 shipped as **v1.3.0**; v1.4
-(itemization, crafting and currency) shipped as **v1.4.0**. The next slice is
-**v1.5 world expansion**.
+(itemization, crafting and currency) shipped as **v1.4.0**; v1.4.1 hardens
+salvage and its browser coverage. The next slice is **v1.5 world expansion**.
