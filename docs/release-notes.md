@@ -1,5 +1,59 @@
 # Ashen Vale — Release Notes
 
+## v1.4.0 — 2026-11-26
+
+The itemization and economy slice: base implicits, item quality, more bases and
+affixes, build-defining uniques, and a crafting bench.
+
+### What ships
+
+- **Item bases with implicits:** 20 bases across six slots now carry innate
+  stats (weapon damage, armour, evasion, energy shield, life/mana, movement or
+  attributes) rolled with item level. Implicits show separately in tooltips.
+- **29 affixes** (including greater attribute/mana/movement variants) and five
+  uniques: Ashen Visage, Embergrasp, **Cinderbrand**, **Warden's Bulwark** and
+  **Windstep**.
+- **Item quality:** 0–20% in 5% steps. Quality scales both the base implicit and
+  every affix value, so it is useful on every slot.
+- **Crafting bench (C):** select any bag or equipped item and spend materials:
+  - **Reforge affix** — 1 Ember Dust, rerolls one affix value.
+  - **Add affix** — 1 Ashen Rune; normal items become magic, up to the rarity cap.
+  - **Quality +5%** — 1 Quality Ember, capped at 20%.
+- **Currency economy:** every kill grants Ember Dust; elites grant an Ashen
+  Rune; the Warden grants two Runes and a Quality Ember. The victory screen
+  shows the current crafting stock.
+- **Save schema v6:** persists item quality/implicits and currency; v1–v5 saves
+  migrate (old items gain 0% quality and no implicit).
+- All crafting actions are validated transactions with identity conservation.
+
+### Verification evidence
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm test` | **229 tests** across 26 files |
+| `npm run build` | production build in `dist/` |
+| `npm run qa` | **279 browser checks** across all suites, no console errors |
+| `qa/verify-v14.mjs` | **16/16** item implicit, craft, quality, currency and save v6 checks |
+| `qa/verify-release.mjs` | **33/33** full-loop, budget, high-DPI and reduced-motion checks |
+| Render budget | camp fights stay under 320 calls / 260K triangles |
+
+### Rollback
+
+Rollback target: **tag `v1.3.0`**.
+
+```bash
+git checkout v1.3.0
+npm ci
+npm run build
+```
+
+**Save compatibility caveat:** v1.4 writes schema v6. v1.3.0 only understands
+schema v5 and will reject v6 slot data. Export or remove v6 slots before a
+rollback, or keep a v1.3-era save backup.
+
+---
+
 ## v1.3.0 — 2026-11-25
 
 The combat-depth slice: a fourth active for every class, a rune modifier layer,

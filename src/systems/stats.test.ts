@@ -149,6 +149,8 @@ describe('flat and increased modifiers', () => {
         rarity: 'magic',
         name: 'Padded Vest',
         itemLevel: 1,
+    quality: 0,
+    implicit: null,
         affixes: [{ id: 'increased-armour', value: 50 }],
       },
     });
@@ -168,6 +170,8 @@ describe('flat and increased modifiers', () => {
         rarity: 'rare',
         name: 'Padded Vest',
         itemLevel: 1,
+    quality: 0,
+    implicit: null,
         affixes: [
           { id: 'armour-greater', value: 100 },
           { id: 'increased-armour', value: 50 },
@@ -187,6 +191,8 @@ describe('flat and increased modifiers', () => {
       rarity: 'magic',
       name: 'Rusted Axe',
       itemLevel: 1,
+    quality: 0,
+    implicit: null,
       affixes: [{ id: 'attack-damage', value: 10 }],
     });
     expect(equipItem(state, 'axe').ok).toBe(true);

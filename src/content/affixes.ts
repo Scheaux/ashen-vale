@@ -43,6 +43,7 @@ export const AFFIXES: readonly AffixDef[] = [
   { id: 'life', stat: 'maxHp', min: 8, max: 14, perLevel: 2, slots: ['helm', 'chest', 'gloves', 'boots', 'amulet'], weight: 100 },
   { id: 'life-greater', stat: 'maxHp', min: 16, max: 26, perLevel: 3, slots: ['chest', 'helm'], weight: 60 },
   { id: 'mana', stat: 'maxMana', min: 8, max: 14, perLevel: 2, slots: ['helm', 'amulet'], weight: 70 },
+  { id: 'mana-greater', stat: 'maxMana', min: 18, max: 28, perLevel: 3, slots: ['amulet'], weight: 45 },
   { id: 'armour', stat: 'armour', min: 15, max: 30, perLevel: 4, slots: ['chest', 'helm', 'gloves'], weight: 70 },
   { id: 'armour-greater', stat: 'armour', min: 40, max: 70, perLevel: 8, slots: ['chest'], weight: 40 },
   { id: 'evasion', stat: 'evasion', min: 15, max: 30, perLevel: 4, slots: ['gloves', 'boots', 'helm'], weight: 70 },
@@ -54,8 +55,11 @@ export const AFFIXES: readonly AffixDef[] = [
   { id: 'spell-damage', stat: 'spellDamage', min: 2, max: 4, perLevel: 0.4, slots: ['weapon', 'helm', 'amulet'], weight: 90 },
   { id: 'spell-damage-greater', stat: 'spellDamage', min: 5, max: 8, perLevel: 0.6, slots: ['weapon'], weight: 45 },
   { id: 'strength', stat: 'strength', min: 2, max: 5, perLevel: 0.6, slots: ['weapon', 'chest', 'helm'], weight: 80 },
+  { id: 'strength-greater', stat: 'strength', min: 6, max: 10, perLevel: 0.8, slots: ['chest', 'helm'], weight: 45 },
   { id: 'dexterity', stat: 'dexterity', min: 2, max: 5, perLevel: 0.6, slots: ['gloves', 'boots', 'amulet'], weight: 80 },
+  { id: 'dexterity-greater', stat: 'dexterity', min: 6, max: 10, perLevel: 0.8, slots: ['gloves', 'boots'], weight: 45 },
   { id: 'intelligence', stat: 'intelligence', min: 2, max: 5, perLevel: 0.6, slots: ['helm', 'amulet', 'weapon'], weight: 80 },
+  { id: 'intelligence-greater', stat: 'intelligence', min: 6, max: 10, perLevel: 0.8, slots: ['helm', 'amulet'], weight: 45 },
   // Percentage increases: "X% increased Stat"
   { id: 'increased-armour', stat: 'armourIncPct', min: 8, max: 15, perLevel: 1, slots: ['chest', 'helm'], weight: 55 },
   { id: 'increased-evasion', stat: 'evasionIncPct', min: 8, max: 15, perLevel: 1, slots: ['boots', 'gloves'], weight: 55 },
@@ -65,6 +69,7 @@ export const AFFIXES: readonly AffixDef[] = [
   { id: 'increased-spell-damage', stat: 'spellDamagePct', min: 4, max: 8, perLevel: 1, slots: ['weapon', 'helm', 'amulet'], weight: 90 },
   { id: 'increased-spell-damage-greater', stat: 'spellDamagePct', min: 9, max: 15, perLevel: 1.5, slots: ['weapon'], weight: 45 },
   { id: 'increased-movement-speed', stat: 'moveSpeedPct', min: 2, max: 4, perLevel: 0.4, slots: ['boots', 'amulet'], weight: 70 },
+  { id: 'increased-movement-speed-greater', stat: 'moveSpeedPct', min: 5, max: 8, perLevel: 0.5, slots: ['boots'], weight: 40 },
 ] as const;
 
 export function getAffix(id: string): AffixDef {

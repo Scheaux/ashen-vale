@@ -2,7 +2,7 @@ import type { ItemSlot } from '../content/items';
 import { RARITY_COLORS } from '../content/items';
 import type { GameState } from '../sim/state';
 import type { ItemInstance } from '../sim/items';
-import { affixLine } from '../sim/items';
+import { affixLine, effectiveItemValue } from '../sim/items';
 import { getPlayerStats } from '../systems/stats';
 import { BAG_CAP } from '../systems/inventory';
 
@@ -100,8 +100,10 @@ export class InventoryPanel {
 
     // Re-render item lists only when inventory contents change — rebuilding
     // them every frame would destroy hovered elements and flicker tooltips.
-    const signature = `${state.inventory.bags.map((i) => i.uid).join(',')}|${Object.values(state.inventory.equipment)
-      .map((i) => i?.uid ?? '-')
+    const itemSignature = (item: ItemInstance) =>
+      `${item.uid}:${item.quality}:${item.implicit?.value ?? '-'}:${item.affixes.map((affix) => affix.value).join(',')}`;
+    const signature = `${state.inventory.bags.map(itemSignature).join('|')}|${Object.values(state.inventory.equipment)
+      .map((item) => (item ? itemSignature(item) : '-'))
       .join(',')}`;
     if (signature === this.lastSignature) return;
     this.lastSignature = signature;
@@ -132,6 +134,7 @@ export class InventoryPanel {
     for (const item of state.inventory.bags) {
       const cell = document.createElement('button');
       cell.className = 'item-cell';
+      cell.dataset.itemUid = item.uid;
       cell.style.borderColor = RARITY_COLORS[item.rarity].cssColor;
       cell.textContent = item.name;
       cell.addEventListener('click', () => this.callbacks.onEquip(item.uid));
@@ -143,11 +146,17 @@ export class InventoryPanel {
 
   private showTooltip(item: ItemInstance, event: MouseEvent): void {
     const color = RARITY_COLORS[item.rarity].cssColor;
-    const lines = item.affixes.map((a) => `<li>${affixLine(a)}</li>`).join('');
+    const implicit = item.implicit
+      ? `<li class="tt-implicit">${affixLine({ id: item.implicit.id, value: Math.round(effectiveItemValue(item, item.implicit.value)) })} <em>implicit</em></li>`
+      : '';
+    const lines = item.affixes
+      .map((a) => `<li>${affixLine({ id: a.id, value: Math.round(effectiveItemValue(item, a.value)) })}</li>`)
+      .join('');
+    const quality = item.quality > 0 ? ` · ${item.quality}% quality` : '';
     this.tooltip.innerHTML = `
       <div class="tt-name" style="color:${color}"></div>
-      <div class="tt-meta">${item.rarity.toUpperCase()} ${SLOT_LABELS[item.slot]} · ilvl ${item.itemLevel}</div>
-      <ul class="tt-affixes">${lines || '<li class="tt-empty">no properties</li>'}</ul>`;
+      <div class="tt-meta">${item.rarity.toUpperCase()} ${SLOT_LABELS[item.slot]} · ilvl ${item.itemLevel}${quality}</div>
+      <ul class="tt-affixes">${implicit}${lines || (implicit ? '' : '<li class="tt-empty">no properties</li>')}</ul>`;
     this.tooltip.querySelector('.tt-name')!.textContent = item.name;
     this.tooltip.classList.remove('hidden');
     const x = Math.min(window.innerWidth - 260, event.clientX + 16);

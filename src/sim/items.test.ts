@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AFFIXES, formatStatBonus } from '../content/affixes';
+import { AFFIXES, formatStatBonus, getAffix } from '../content/affixes';
+import { ITEM_BASES, UNIQUES } from '../content/items';
 import { affixLine, type ItemAffix } from './items';
 
 describe('affix stat lines (plain-language rework)', () => {
@@ -30,6 +31,16 @@ describe('affix stat lines (plain-language rework)', () => {
       expect(line).toMatch(/^(\+\d+ to [A-Za-z ]+|\d+% increased [A-Za-z ]+)$/);
     }
     expect(formatStatBonus('maxHp', 18)).toBe('+18 to Life');
+  });
+
+  it('references only known affixes from bases and uniques', () => {
+    for (const base of ITEM_BASES) {
+      const implicit = base.implicit;
+      if (implicit) expect(() => getAffix(implicit.id)).not.toThrow();
+    }
+    for (const unique of UNIQUES) {
+      for (const affix of unique.affixes) expect(() => getAffix(affix.id)).not.toThrow();
+    }
   });
 
   it('rolls items whose lines all read as stat modifiers', () => {

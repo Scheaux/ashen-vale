@@ -25,6 +25,8 @@ export interface UiCallbacks {
   onOpenSkillPicker(slot: LoadoutSlot): void;
   /** The pause menu's Skills button. */
   onOpenSkills(): void;
+  /** The pause menu's Crafting button. */
+  onOpenCrafting(): void;
   onUseFlask(kind: FlaskKind): void;
 }
 
@@ -75,6 +77,7 @@ export interface VictoryRecap {
   damageTaken: number;
   seconds: number;
   level: number;
+  currency: { dust: number; rune: number; quality: number };
 }
 
 interface SlotView {
@@ -237,8 +240,8 @@ export class Ui {
 
   private updatePauseSave(): void {
     this.pauseSave.textContent = this.activeSlot === null
-      ? 'Ashen Vale v1.3 · autosave off — save manually'
-      : `Ashen Vale v1.3 · autosave slot ${this.activeSlot + 1}`;
+      ? 'Ashen Vale v1.4 · autosave off — save manually'
+      : `Ashen Vale v1.4 · autosave slot ${this.activeSlot + 1}`;
   }
 
   /** Red/blue edge pulse for health or shield damage (readability, not motion). */
@@ -365,6 +368,8 @@ export class Ui {
     (this.victoryScreen.querySelector('[data-victory-time]') as HTMLElement).textContent =
       `${minutes}:${String(seconds).padStart(2, '0')}`;
     (this.victoryScreen.querySelector('[data-victory-level]') as HTMLElement).textContent = String(recap.level);
+    (this.victoryScreen.querySelector('[data-victory-currency]') as HTMLElement).textContent =
+      `${recap.currency.dust} Dust · ${recap.currency.rune} Runes · ${recap.currency.quality} Embers`;
     this.victoryScreen.classList.remove('hidden');
   }
 
@@ -450,6 +455,9 @@ export class Ui {
         break;
       case 'skills':
         this.callbacks.onOpenSkills();
+        break;
+      case 'crafting':
+        this.callbacks.onOpenCrafting();
         break;
       case 'back':
         this.callbacks.onBack();
@@ -597,6 +605,7 @@ export class Ui {
             <div class="recap__row"><span class="recap__label">Damage taken</span><span class="recap__value" data-victory-damage>0</span></div>
             <div class="recap__row"><span class="recap__label">Time survived</span><span class="recap__value" data-victory-time>0:00</span></div>
             <div class="recap__row"><span class="recap__label">Level reached</span><span class="recap__value" data-victory-level>1</span></div>
+            <div class="recap__row"><span class="recap__label">Crafting stock</span><span class="recap__value" data-victory-currency>0 Dust · 0 Runes · 0 Embers</span></div>
           </div>
           <div class="pause-actions">
             <button class="btn btn--primary" data-action="continue">Continue</button>
@@ -614,6 +623,7 @@ export class Ui {
           <div class="pause-actions">
             <button class="btn btn--primary" data-action="resume">Resume</button>
             <button class="btn" data-action="skills">Skills</button>
+            <button class="btn" data-action="crafting">Crafting</button>
             <button class="btn" data-action="save-slots">Save Game</button>
             <button class="btn" data-action="load-slots">Load Game</button>
             <button class="btn" data-action="restart">Restart Run</button>
@@ -628,6 +638,7 @@ export class Ui {
               <span><kbd>1 / 2</kbd> flasks</span>
               <span><kbd>P</kbd> passives</span>
               <span><kbd>K</kbd> skills</span>
+              <span><kbd>C</kbd> crafting</span>
               <span><kbd>I</kbd> inventory</span>
               <span><kbd>Scroll</kbd> zoom</span>
               <span><kbd>Esc</kbd> pause / close</span>

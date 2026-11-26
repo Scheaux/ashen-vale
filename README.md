@@ -1,7 +1,7 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG in TypeScript + three.js, released as
-**v1.3.0**. Built in vertical slices; the completed MVP covers scaffold,
+**v1.4.0**. Built in vertical slices; the completed MVP covers scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
 (mana, flasks and the death → checkpoint retry flow), a passive skill tree, the
 zone objective loop — clear the camps, then end the Ashen Warden in its arena —
@@ -11,9 +11,11 @@ combat readability, VFX, performance LOD and adaptive resolution).
 
 v1.2 added a **skill-point progression and six-slot loadout system** (RMB +
 Q/W/E/R/F), a skill library with unlock/upgrade ranks, and click-to-swap hotbar
-slots. v1.3 adds the **fourth active per class**, a **rune modifier layer**,
+slots. v1.3 added the **fourth active per class**, a **rune modifier layer**,
 **volatile elite death blasts**, **Warden cinder pools** and **camera
-occlusion**. See [MVP.md](./MVP.md) for the roadmap,
+occlusion**. v1.4 adds **item base implicits and quality**, expanded
+bases/affixes/uniques, and a **crafting bench/economy**. See [MVP.md](./MVP.md)
+for the roadmap,
 [the post-release plan](./docs/post-release-plan.md) for the next phases, and
 [release notes](./docs/release-notes.md) for verification evidence, known
 limitations and rollback steps.
@@ -42,6 +44,7 @@ npm run qa:release # production build + the full-loop release suite only
 | 1 / 2 | Drink the health / mana flask |
 | P | Open or close the passive skill tree |
 | K | Open or close the skill library/loadout picker |
+| C | Open or close the crafting bench |
 | Scroll | Zoom (close range, 12–21 units) |
 | I | Open or close inventory |
 | Esc | Pause / resume (and back out of menus) |
@@ -88,6 +91,15 @@ npm run qa:release # production build + the full-loop release suite only
   `+3 to Attack Damage`, `50% increased Armour` — in flat and increased
   forms, with no flavour naming. Transactions are loss-tested
   (identity conservation)
+- **Itemization & crafting:** 20 bases with item-level **implicit** stats,
+  29 affixes and five build-defining uniques. Items roll **0–20% quality**
+  (5% steps) that scales both the implicit and every affix. The **Crafting
+  Bench** (C) selects any bag/equipped item and spends **Ember Dust** to
+  reforge one affix, **Ashen Runes** to add an affix (upgrading normal to
+  magic), and **Quality Embers** for +5% quality. Every kill earns Dust,
+  elites earn Runes, the Warden earns two Runes plus a Quality Ember; the
+  victory screen reports the crafting stock. All craft actions are atomic,
+  validated transactions and save v6 persists quality, implicits and currency
 - **Combat stats:** three primary attributes (strength / dexterity /
   intelligence) each drive offence and defence — STR → life, armour and
   attack damage; DEX → evasion, move speed and attack damage; INT → mana,
@@ -138,9 +150,10 @@ npm run qa:release # production build + the full-loop release suite only
   flasks, **skill ranks and six-slot loadout**, position and camp/boss flags —
   with cleared camps left empty and a live boss fight restarting at its arena
   spawn. Every write keeps the previous body as a backup; torn writes recover,
-  and corrupt slots are reported and deletable. Schema **v5** adds per-skill
-  runes, with tested v1→v5, v2→v5, v3→v5 and v4→v5 migrations; legacy saves
-  pre-spend the active kit available at their level
+  and corrupt slots are reported and deletable. Schema **v6** adds item
+  implicits/quality and crafting currency, with tested v1→v6, v2→v6, v3→v6,
+  v4→v6 and v5→v6 migrations; legacy saves pre-spend the active kit available
+  at their level and gain 0% quality/no implicit
   (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
 - **Combat readability:** layered ground telegraphs (dark stain, rising fill,
   bright rim), one instanced health-bar draw call pair for all enemies, heavy-hit
@@ -152,11 +165,11 @@ npm run qa:release # production build + the full-loop release suite only
   and the device cap. Release QA gates camp fights at **≤320 draw calls /
   ≤260K triangles** (measured 121–280 calls and 165–193K triangles in headless
   Chromium)
-- **Release:** v1.3.0 with a full-loop browser suite (fresh start → feedback →
+- **Release:** v1.4.0 with a full-loop browser suite (fresh start → feedback →
   camps → boss phases → victory → save → reload → Continue), high-DPI adaptive
   quality and reduced-motion checks, plus post-release QA for grounding, the
   fixed camera, HUD declutter, skill points/loadouts, fourth actives, runes,
-  hazards and camera occlusion; see
+  hazards, camera occlusion and item crafting; see
   [release notes](./docs/release-notes.md) for evidence and rollback
 
 ## Architecture
@@ -169,19 +182,20 @@ src/
   sim/       pure deterministic game state + authoritative combat events (no three.js imports),
              including hazard state
   systems/   movement, centralized combat pipeline (skills, cooldowns, mana, area strikes),
-             enemy AI machine, hazard ticks, flasks, passive tree rules,
-             skill-point/loadout/rune rules, inventory transactions, stats derivation
-             (attributes, armour/evasion/energy shield, attack vs spell damage),
-             progression (XP), loot
+             enemy AI machine, hazard ticks, crafting transactions and currency costs,
+             flasks, passive tree rules, skill-point/loadout/rune rules, inventory
+             transactions, stats derivation (attributes, armour/evasion/energy shield,
+             attack vs spell damage), progression (XP), loot
   render/    three.js scene, terrain, props with camera occlusion, character rigs, enemies,
              projectiles, telegraphs, skill/hazard VFX, loot drops, camera, cursor;
              anim.ts holds the animation curves, materials.ts procedural normal/roughness
              maps, geo.ts bevel/lathe/sweep/rock toolkit
   ui/        DOM-overlay screens (title, class select, HUD with six-slot loadout/flasks,
-             passive tree, skill library/loadout picker, pause with controls, death
-             recap, inventory), floating combat text, nameplates
-  save/      versioned schema (v5) + migrations, localStorage slots with backups,
-             checkpoint restore (rebuilds zone progress, ranks, runes and loadout)
+             passive tree, skill library/loadout picker, crafting bench, pause with
+             controls, death recap, inventory), floating combat text, nameplates
+  save/      versioned schema (v6) + migrations, localStorage slots with backups,
+             checkpoint restore (rebuilds zone progress, ranks, runes, loadout and
+             crafting stock)
 ```
 
 Procedural detail follows the three-scale model: silhouettes get curve
@@ -205,8 +219,8 @@ Loading rebuilds the zone from those flags and the deterministic layout.
 
 ## Release
 
-- **Version:** 1.3.0
+- **Version:** 1.4.0
 - **Build:** static `dist/` bundle; `npm run build`, then serve `dist/`
-- **Rollback target:** tag `v1.2.0`. Save schema v5 is not readable by v1.2.0;
-  export/remove v5 slots before rolling back.
+- **Rollback target:** tag `v1.3.0`. Save schema v6 is not readable by v1.3.0;
+  export/remove v6 slots before rolling back.
 - **Evidence:** see [docs/release-notes.md](./docs/release-notes.md)

@@ -57,13 +57,13 @@ function validSkills(classId: 'marauder' | 'ranger' | 'witch', level = 1) {
   return { ranks, loadout, runes: {} };
 }
 
-describe('save schema v5', () => {
+describe('save schema v6', () => {
   it('round-trips through serialize/deserialize', () => {
     const state = createGameState(getClass('witch'), emptyLayout());
     state.player.hp = 77;
     const save = createSave(state, 123456);
     expect(save.zoneSeed).toBe(7);
-    expect(save.version).toBe(5);
+    expect(save.version).toBe(6);
     const restored = deserializeSave(serializeSave(save));
     expect(restored).toEqual(save);
   });
@@ -80,6 +80,8 @@ describe('save schema v5', () => {
     const actives = activeSkillsFor('marauder');
     state.skills.ranks[actives[1].id] = 1;
     state.skills.loadout[LOADOUT_SLOTS.indexOf('w')] = actives[1].id;
+    state.currency.dust = 4;
+    item.quality = 10;
 
     const save = createSave(state);
     expect(save.version).toBe(SAVE_VERSION);
@@ -93,6 +95,8 @@ describe('save schema v5', () => {
     expect(save.skills.loadout[LOADOUT_SLOTS.indexOf('q')]).toBe(actives[0].id);
     expect(save.skills.loadout[LOADOUT_SLOTS.indexOf('w')]).toBe(actives[1].id);
     expect(save.skills.runes).toEqual({});
+    expect(save.currency).toEqual({ dust: 4, rune: 0, quality: 0 });
+    expect(save.inventory.bags[0].quality).toBe(10);
   });
 
   it('rejects invalid JSON and non-objects', () => {
@@ -106,7 +110,7 @@ describe('save schema v5', () => {
   });
 
   it('rejects incomplete records', () => {
-    expect(() => migrateSave({ version: 5, classId: 'witch' })).toThrow(/missing required fields/);
+    expect(() => migrateSave({ version: 6, classId: 'witch' })).toThrow(/missing required fields/);
   });
 
   it('defensively copies nested save data', () => {
@@ -126,6 +130,7 @@ describe('save schema v5', () => {
     expect(restored.objectives.campsCleared).not.toBe(save.objectives.campsCleared);
     expect(restored.skills.loadout).not.toBe(save.skills.loadout);
     restored.inventory.bags[0].uid = 'tampered';
+    restored.inventory.bags[0].quality = 20;
     restored.inventory.bags.pop();
     restored.passives.push('u2');
     restored.objectives.campsCleared[0] = false;
@@ -139,6 +144,7 @@ describe('save schema v5', () => {
     expect(save.skills.loadout[LOADOUT_SLOTS.indexOf('w')]).toBe(actives[1].id);
     expect(save.skills.ranks[actives[1].id]).toBe(1);
     expect(save.skills.runes[actives[0].id]).toBe('cruel');
+    expect(save.inventory.bags[0].quality).toBe(0);
   });
 
   it('rejects unknown classes, invalid numbers, and impossible progression', () => {
@@ -258,7 +264,7 @@ describe('save schema v5', () => {
   });
 });
 
-describe('migration v1 -> v5', () => {
+describe('migration v1 -> v6', () => {
   const v1 = {
     version: 1,
     classId: 'ranger',
@@ -271,7 +277,7 @@ describe('migration v1 -> v5', () => {
 
   it('upgrades v1 with progression, inventory and skill defaults', () => {
     const migrated = migrateSave(v1);
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.classId).toBe('ranger');
     expect(migrated.hp).toBe(55);
     expect(migrated.level).toBe(1);
@@ -280,6 +286,7 @@ describe('migration v1 -> v5', () => {
     expect(migrated.passives).toEqual(['root']);
     expect(migrated.objectives).toEqual({ campsCleared: [], bossSpawned: false, bossDefeated: false });
     expect(migrated.flasks).toEqual({ health: FLASK_MAX_CHARGES, mana: FLASK_MAX_CHARGES });
+    expect(migrated.currency).toEqual({ dust: 0, rune: 0, quality: 0 });
     expect(migrated.skills.ranks).toEqual({ [signatureId('ranger')]: 1 });
     expect(migrated.skills.loadout[LOADOUT_SLOTS.indexOf('q')]).toBe(signatureId('ranger'));
     expect(migrated.savedAt).toBe(999);
@@ -290,13 +297,13 @@ describe('migration v1 -> v5', () => {
     expect(() => migrateSave({ ...v1, position: { x: 'a', z: 2 } })).toThrow(/missing required fields/);
   });
 
-  it('migrated v1 saves pass the v5 validator', () => {
+  it('migrated v1 saves pass the v6 validator', () => {
     const migrated = migrateSave(v1);
     expect(() => migrateSave(JSON.parse(JSON.stringify(migrated)))).not.toThrow();
   });
 });
 
-describe('migration v2 -> v5', () => {
+describe('migration v2 -> v6', () => {
   const v2 = {
     version: 2,
     classId: 'witch',
@@ -312,7 +319,7 @@ describe('migration v2 -> v5', () => {
 
   it('preserves progression and inventory while adding skill defaults', () => {
     const migrated = migrateSave(v2);
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.level).toBe(3);
     expect(migrated.xp).toBe(12);
     expect(migrated.passives).toEqual(['root']);
@@ -328,13 +335,13 @@ describe('migration v2 -> v5', () => {
     expect(() => migrateSave({ ...v2, inventory: undefined })).toThrow(/invalid inventory/);
   });
 
-  it('migrated v2 saves pass the v5 validator', () => {
+  it('migrated v2 saves pass the v6 validator', () => {
     const migrated = migrateSave(v2);
     expect(() => migrateSave(JSON.parse(JSON.stringify(migrated)))).not.toThrow();
   });
 });
 
-describe('migration v4 -> v5', () => {
+describe('migration v4 -> v6', () => {
   const skills = validSkills('marauder', 4);
   const { runes: _runes, ...v4Skills } = skills;
   const v4 = {
@@ -354,21 +361,58 @@ describe('migration v4 -> v5', () => {
     savedAt: 555,
   };
 
-  it('preserves the v4 ranks and loadout and adds empty runes', () => {
+  it('preserves the v4 ranks and loadout and adds empty runes and currency', () => {
     const migrated = migrateSave(v4);
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.skills.ranks).toEqual(skills.ranks);
     expect(migrated.skills.loadout).toEqual(skills.loadout);
     expect(migrated.skills.runes).toEqual({});
+    expect(migrated.currency).toEqual({ dust: 0, rune: 0, quality: 0 });
   });
 
-  it('migrated v4 saves pass the v5 validator', () => {
+  it('migrated v4 saves pass the v6 validator', () => {
     const migrated = migrateSave(v4);
     expect(() => migrateSave(JSON.parse(JSON.stringify(migrated)))).not.toThrow();
   });
 });
 
-describe('migration v3 -> v5', () => {
+describe('migration v5 -> v6', () => {
+  const skills = validSkills('marauder', 4);
+  const item = rollItem(createRng(9), 3, 'rare');
+  const { quality: _quality, implicit: _implicit, ...legacyItem } = item;
+  const v5 = {
+    version: 5,
+    classId: 'marauder',
+    hp: 90,
+    maxHp: 120,
+    position: { x: 1, z: 5 },
+    zoneSeed: 7,
+    level: 4,
+    xp: 12,
+    inventory: { bags: [legacyItem], equipment: emptyEquipment() },
+    passives: ['root', 'o1'],
+    objectives: { campsCleared: [true, false, false], bossSpawned: false, bossDefeated: false },
+    flasks: { health: 2, mana: 3 },
+    skills: { ...skills, runes: { [activeSkillsFor('marauder')[0].id]: 'cruel' } },
+    savedAt: 555,
+  };
+
+  it('defaults legacy item quality/implicit and currency', () => {
+    const migrated = migrateSave(v5);
+    expect(migrated.version).toBe(6);
+    expect(migrated.inventory.bags[0].quality).toBe(0);
+    expect(migrated.inventory.bags[0].implicit).toBeNull();
+    expect(migrated.currency).toEqual({ dust: 0, rune: 0, quality: 0 });
+    expect(Object.values(migrated.skills.runes)).toEqual(['cruel']);
+  });
+
+  it('migrated v5 saves pass the v6 validator', () => {
+    const migrated = migrateSave(v5);
+    expect(() => migrateSave(JSON.parse(JSON.stringify(migrated)))).not.toThrow();
+  });
+});
+
+describe('migration v3 -> v6', () => {
   const v3 = {
     version: 3,
     classId: 'marauder',
@@ -387,7 +431,7 @@ describe('migration v3 -> v5', () => {
 
   it('preserves v3 progress and pre-spends the legacy active kit', () => {
     const migrated = migrateSave(v3);
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(6);
     expect(migrated.level).toBe(4);
     expect(migrated.passives).toEqual(['root', 'o1']);
     expect(migrated.objectives.campsCleared).toEqual([true, false, false]);
@@ -403,7 +447,7 @@ describe('migration v3 -> v5', () => {
     expect(migrated.skills.loadout[LOADOUT_SLOTS.indexOf('e')]).toBe(actives[2].id);
   });
 
-  it('migrated v3 saves pass the v5 validator', () => {
+  it('migrated v3 saves pass the v6 validator', () => {
     const migrated = migrateSave(v3);
     expect(() => migrateSave(JSON.parse(JSON.stringify(migrated)))).not.toThrow();
   });

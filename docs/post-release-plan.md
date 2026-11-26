@@ -1,9 +1,9 @@
 # Ashen Vale — Post-Release Polish & Expansion Plan
 
 Baseline: **v1.0.0** (`b3091c1`, tag `v1.0.0`).
-Status: **v1.3.0 ships the v1.3 combat-depth scope** (fourth actives, runes,
-volatile elites, Warden cinder pools, camera occlusion). It passed 221 unit tests
-and 263 browser checks. The next planned slice is v1.4 itemization & economy.
+Status: **v1.4.0 ships the itemization/economy scope** (base implicits, quality,
+expanded bases/affixes/uniques, crafting bench and currency). It passed 229 unit
+tests and 279 browser checks. The next planned slice is v1.5 world expansion.
 
 This plan starts with correctness and UX debt found in the shipped build, then
 expands the game in vertical slices. Every release keeps the same gates:
@@ -282,7 +282,7 @@ Effort: **M** (one larger slice).
 
 ---
 
-## 6. Expansion roadmap (after v1.3)
+## 6. Expansion roadmap (after v1.4)
 
 Sizes are relative slices, not calendar estimates.
 
@@ -297,14 +297,16 @@ Sizes are relative slices, not calendar estimates.
 - Acceptance met: four actives per class; runes data-only and tested; hazards
   covered by unit and browser QA; save schema v5.
 
-### v1.4 — Itemization & economy (L) — next
-- Expand bases/affixes and add a few build-defining uniques.
-- Add a simple currency/crafting loop (re-roll one affix, add one affix, quality)
-  with loss-tested inventory transactions.
-- Add a vendor/stash or a post-run reward screen.
-- Acceptance: no item duplication/loss; save migration; UI for every transaction.
+### v1.4 — Itemization & economy ✅ (shipped in v1.4.0)
+- 20 bases with implicit stats, 29 affixes and five uniques.
+- 0–20% item quality scaling implicit and affix values.
+- Crafting bench: reforge an affix (Dust), add an affix (Rune), +5% quality
+  (Ember), all atomic validated transactions.
+- Currency earned from kills/elites/boss and shown on victory; save schema v6.
+- Acceptance met: identity conservation tested, migration tested, every craft
+  action has UI and refusal states.
 
-### v1.5 — World expansion (L)
+### v1.5 — World expansion (L) — next
 - Second zone with a new camp/arena layout, new enemy archetypes and a new boss.
 - Waypoints/zone transitions and a quest/objective spine.
 - Real terrain elevation (now safe because grounding is a render contract).
@@ -382,6 +384,6 @@ placed in Q. Clicking any slot opens the skill picker with that slot selected.
 
 ## 9. Execution order
 
-v1.1/v1.2 shipped as **v1.2.0**; v1.3 (fourth actives, runes, volatile elites,
-Warden cinder pools and camera occlusion) shipped as **v1.3.0**. The next slice
-is **v1.4 itemization & economy**.
+v1.1/v1.2 shipped as **v1.2.0**; v1.3 shipped as **v1.3.0**; v1.4
+(itemization, crafting and currency) shipped as **v1.4.0**. The next slice is
+**v1.5 world expansion**.

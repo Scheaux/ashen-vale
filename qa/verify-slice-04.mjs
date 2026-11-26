@@ -171,7 +171,7 @@ async function main() {
 
   // --- Save shape (current schema) ---
   const save = await page.evaluate(() => JSON.parse(window.__ashen.exportSave()));
-  check('save serializes at the current schema version', save.version === 5, `version ${save.version}`);
+  check('save serializes at the current schema version', save.version === 6, `version ${save.version}`);
   check('save carries progression + inventory', save.level >= 2 && Array.isArray(save.inventory.bags));
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

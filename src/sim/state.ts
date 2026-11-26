@@ -206,6 +206,13 @@ export interface LootDrop {
   z: number;
 }
 
+/** Crafting currency earned from kills; spent at the bench. */
+export interface CurrencyState {
+  dust: number;
+  rune: number;
+  quality: number;
+}
+
 /** Zone objective tracking (slice 7): camps, then the Ashen Warden. */
 export interface ObjectiveState {
   campsTotal: number;
@@ -311,6 +318,8 @@ export interface GameState {
   objectives: ObjectiveState;
   inventory: InventoryState;
   loot: LootDrop[];
+  /** Ember Dust, Ashen Runes and Quality Embers. */
+  currency: CurrencyState;
   /** Passive skill tree allocation (slice 6). */
   passives: PassivesState;
   /** Active-skill ranks and the RMB/Q/W/E/R/F loadout. */
@@ -460,6 +469,7 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       equipment: { weapon: null, helm: null, chest: null, gloves: null, boots: null, amulet: null },
     },
     loot: [],
+    currency: { dust: 0, rune: 0, quality: 0 },
     passives: { allocated: [PASSIVE_ROOT] },
     skills: {
       ranks: { [startingSkill.id]: 1 },

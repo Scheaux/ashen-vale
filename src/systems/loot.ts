@@ -15,8 +15,18 @@ const PICKUP_RADIUS = 1.5;
 
 /** Called from the central damage pipeline on every enemy death. */
 export function onEnemyDeath(state: GameState, enemy: EnemyState, events: SimEvent[]): void {
-  grantXp(state, getEnemy(enemy.defId).xp, events);
+  const def = getEnemy(enemy.defId);
+  grantXp(state, def.xp, events);
   refillFlasksOnKill(state);
+
+  // Crafting economy: every kill gives dust, elites give a rune, the boss
+  // awards a rune and a quality ember.
+  state.currency.dust += 1;
+  if (enemy.elite.length > 0) state.currency.rune += 1;
+  if (def.boss) {
+    state.currency.rune += 2;
+    state.currency.quality += 1;
+  }
 
   if (state.rng() > DROP_CHANCE) return;
   const itemLevel = Math.max(1, Math.round(state.level * 0.8 + 1 + state.rng() * 2));

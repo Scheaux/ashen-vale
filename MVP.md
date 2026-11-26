@@ -162,9 +162,11 @@ limitations, deploy steps and rollback to `af7b052` are in
   with one level-gated rune per active (post-release 1.3).
 - **Enemies (3 + elites):** Ashen Husk (melee charger), ranged caster, fast swarm —
   elite modifiers from slice 3.
-- **Loot:** 4 rarity tiers, 6 equipment slots, ~24 affixes in plain stat
-  language — flat `+X to Stat` and `X% increased Stat` forms across life/mana,
-  armour, evasion, energy shield, attack/spell damage, movement and attributes.
+- **Loot:** 4 rarity tiers, 6 equipment slots, 20 bases with implicit stats,
+  29 affixes in plain stat language — flat `+X to Stat` and `X% increased Stat`
+  forms across life/mana, armour, evasion, energy shield, attack/spell damage,
+  movement and attributes — five uniques, 0–20% item quality, and a crafting
+  bench with three currency actions.
 - **Zone (1):** fixed handcrafted layout with seeded prop/enemy population,
   three camps guarding a pillar-ringed boss arena at the far end.
 - **Passive tree:** ~30 nodes with clusters.
@@ -238,10 +240,22 @@ The combat-depth slice:
   silhouettes keep their modifier aura.
 - Save schema **v5** adds runes (v4→v5 preserves ranks/loadout).
 
+## Post-release 1.4.0
+
+The itemization/economy slice:
+
+- 20 item bases with item-level **implicit** stats and 29 affixes; five uniques
+  including Cinderbrand, Warden's Bulwark and Windstep.
+- **Item quality** 0–20% (5% steps) scaling implicits and affixes.
+- **Crafting Bench** (C): reforge one affix (Ember Dust), add an affix (Ashen
+  Rune), or raise quality (Quality Ember), via atomic validated transactions.
+- Currency from kills/elites/boss; the victory screen reports crafting stock.
+- Save schema **v6** persists quality/implicits/currency with v1–v5 migrations.
+
 ## Release
 
-**v1.3.0** is the current release; **v1.0.0** is the completed MVP baseline. The
-deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.2.0`.
-Save schema v5 is not readable by v1.2.0, so export/remove v5 slot data before
+**v1.4.0** is the current release; **v1.0.0** is the completed MVP baseline. The
+deployable artifact is the static `dist/` bundle. Rollback target: tag `v1.3.0`.
+Save schema v6 is not readable by v1.3.0, so export/remove v6 slot data before
 rolling back. Full verification evidence, known limitations and the release
 checklist live in [docs/release-notes.md](./docs/release-notes.md).

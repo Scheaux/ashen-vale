@@ -21,8 +21,9 @@ import { defaultSkillState, MAX_SKILL_RANK } from '../systems/loadout';
  * v2 -> v3 added passive allocations, zone objective progress, and flask charges.
  * v3 -> v4 added skill ranks, the six-slot loadout, and the skill-point economy.
  * v4 -> v5 added per-skill runes.
+ * v5 -> v6 added item implicits/quality and the crafting economy.
  */
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 export interface SaveInventory {
   bags: ItemInstance[];
@@ -46,7 +47,7 @@ export interface SaveSkills {
 }
 
 export interface SaveGame {
-  version: 5;
+  version: 6;
   classId: ClassId;
   hp: number;
   maxHp: number;
@@ -60,6 +61,7 @@ export interface SaveGame {
   objectives: SaveObjectives;
   flasks: { health: number; mana: number };
   skills: SaveSkills;
+  currency: { dust: number; rune: number; quality: number };
   /** Epoch milliseconds; excluded from equality checks. */
   savedAt: number;
 }
@@ -78,6 +80,8 @@ const FULL_FLASKS = (): SaveGame['flasks'] => ({
   mana: FLASK_MAX_CHARGES,
 });
 
+const EMPTY_CURRENCY = (): SaveGame['currency'] => ({ dust: 0, rune: 0, quality: 0 });
+
 export function createSave(state: GameState, savedAt = 0): SaveGame {
   return {
     version: SAVE_VERSION,
@@ -89,11 +93,17 @@ export function createSave(state: GameState, savedAt = 0): SaveGame {
     level: state.level,
     xp: state.xp,
     inventory: {
-      bags: state.inventory.bags.map((i) => ({ ...i, affixes: i.affixes.map((a) => ({ ...a })) })),
+      bags: state.inventory.bags.map((item) => ({
+        ...item,
+        implicit: item.implicit ? { ...item.implicit } : null,
+        affixes: item.affixes.map((a) => ({ ...a })),
+      })),
       equipment: Object.fromEntries(
         Object.entries(state.inventory.equipment).map(([slot, item]) => [
           slot,
-          item ? { ...item, affixes: item.affixes.map((a) => ({ ...a })) } : null,
+          item
+            ? { ...item, implicit: item.implicit ? { ...item.implicit } : null, affixes: item.affixes.map((a) => ({ ...a })) }
+            : null,
         ]),
       ) as SaveInventory['equipment'],
     },
@@ -112,6 +122,7 @@ export function createSave(state: GameState, savedAt = 0): SaveGame {
       loadout: [...state.skills.loadout],
       runes: { ...state.skills.runes },
     },
+    currency: { ...state.currency },
     savedAt,
   };
 }
@@ -146,14 +157,14 @@ export function deserializeSave(raw: string): SaveGame {
 }
 
 /**
- * Migration hook: upgrades v1–v3 saves to v4 with conservative defaults, passes
- * validated v4 saves through, and rejects unknown versions rather than silently
+ * Migration hook: upgrades v1–v5 saves to v6 with conservative defaults, passes
+ * validated v6 saves through, and rejects unknown versions rather than silently
  * misreading them.
  */
 export function migrateSave(data: unknown): SaveGame {
   if (!isRecord(data)) throw new Error('Save data is not an object');
   if (data.version !== 1 && data.version !== 2 && data.version !== 3 &&
-    data.version !== 4 && data.version !== SAVE_VERSION) {
+    data.version !== 4 && data.version !== 5 && data.version !== SAVE_VERSION) {
     throw new Error(`Unsupported save version: ${String(data.version)}`);
   }
 
@@ -183,6 +194,7 @@ export function migrateSave(data: unknown): SaveGame {
       objectives: { campsCleared: [], bossSpawned: false, bossDefeated: false },
       flasks: FULL_FLASKS(),
       skills: defaultSkillState(playerClass.id, 1, true),
+      currency: EMPTY_CURRENCY(),
       savedAt: integerAtLeast(data.savedAt, 0) ? data.savedAt : 0,
     };
   }
@@ -194,7 +206,7 @@ export function migrateSave(data: unknown): SaveGame {
   const progression = {
     level,
     xp,
-    inventory: parseInventory(data.inventory),
+    inventory: parseInventory(data.inventory, data.version < 6),
     savedAt,
   } as const;
 
@@ -206,6 +218,7 @@ export function migrateSave(data: unknown): SaveGame {
       objectives: { campsCleared: [], bossSpawned: false, bossDefeated: false },
       flasks: FULL_FLASKS(),
       skills: defaultSkillState(playerClass.id, level, true),
+      currency: EMPTY_CURRENCY(),
     };
   }
 
@@ -217,6 +230,7 @@ export function migrateSave(data: unknown): SaveGame {
       objectives: parseObjectives(data.objectives),
       flasks: parseFlasks(data.flasks),
       skills: defaultSkillState(playerClass.id, level, true),
+      currency: EMPTY_CURRENCY(),
     };
   }
 
@@ -228,6 +242,19 @@ export function migrateSave(data: unknown): SaveGame {
       objectives: parseObjectives(data.objectives),
       flasks: parseFlasks(data.flasks),
       skills: parseSkills(data.skills, playerClass.id, level, true),
+      currency: EMPTY_CURRENCY(),
+    };
+  }
+
+  if (data.version === 5) {
+    return {
+      ...core,
+      ...progression,
+      passives: parsePassives(data.passives, level),
+      objectives: parseObjectives(data.objectives),
+      flasks: parseFlasks(data.flasks),
+      skills: parseSkills(data.skills, playerClass.id, level, false),
+      currency: EMPTY_CURRENCY(),
     };
   }
 
@@ -238,6 +265,7 @@ export function migrateSave(data: unknown): SaveGame {
     objectives: parseObjectives(data.objectives),
     flasks: parseFlasks(data.flasks),
     skills: parseSkills(data.skills, playerClass.id, level, false),
+    currency: parseCurrency(data.currency),
   };
 }
 
@@ -366,7 +394,15 @@ function parseSkills(value: unknown, classId: ClassId, level: number, legacyNoRu
   return { ranks, loadout, runes };
 }
 
-function parseInventory(value: unknown): SaveInventory {
+function parseCurrency(value: unknown): SaveGame['currency'] {
+  if (!isRecord(value) || !integerAtLeast(value.dust, 0) || !integerAtLeast(value.rune, 0) ||
+    !integerAtLeast(value.quality, 0)) {
+    throw new Error('Save data has invalid crafting currency');
+  }
+  return { dust: value.dust, rune: value.rune, quality: value.quality };
+}
+
+function parseInventory(value: unknown, legacyItems = false): SaveInventory {
   if (!isRecord(value) || !Array.isArray(value.bags) || value.bags.length > BAG_CAP || !isRecord(value.equipment)) {
     throw new Error('Save data has invalid inventory');
   }
@@ -374,7 +410,7 @@ function parseInventory(value: unknown): SaveInventory {
   const seen = new Set<string>();
   function parseItem(raw: unknown): ItemInstance {
     if (!isRecord(raw)) throw new Error('Save data has an invalid item');
-    const { uid, baseId, slot, rarity, name, itemLevel, affixes } = raw;
+    const { uid, baseId, slot, rarity, name, itemLevel, affixes, quality, implicit } = raw;
     if (typeof uid !== 'string' || !uid || seen.has(uid) || typeof rarity !== 'string' ||
       !Object.hasOwn(RARITY_COLORS, rarity) || typeof name !== 'string' || !name ||
       !integerAtLeast(itemLevel, 1) || !Array.isArray(affixes)) {
@@ -383,6 +419,21 @@ function parseInventory(value: unknown): SaveInventory {
     const base = (rarity === 'unique' ? UNIQUES : ITEM_BASES).find((entry) => entry.id === baseId);
     if (!base || base.slot !== slot) throw new Error('Save data has an invalid item base or slot');
     seen.add(uid);
+
+    const parsedQuality = legacyItems ? 0 : quality;
+    if (!integerAtLeast(parsedQuality, 0) || parsedQuality > 20) {
+      throw new Error('Save data has invalid item quality');
+    }
+    let parsedImplicit: ItemInstance['implicit'] = null;
+    if (!legacyItems && implicit !== null && implicit !== undefined) {
+      if (!isRecord(implicit) || typeof implicit.id !== 'string' ||
+        !AFFIXES.some((def) => def.id === implicit.id) || !integerAtLeast(implicit.value, 0)) {
+        throw new Error('Save data has an invalid item implicit');
+      }
+      parsedImplicit = { id: implicit.id, value: implicit.value };
+    }
+    if (rarity === 'unique' && parsedImplicit) throw new Error('Uniques cannot carry implicits');
+
     const seenAffixes = new Set<string>();
     const parsedAffixes = affixes.map((affix: unknown) => {
       if (!isRecord(affix) || typeof affix.id !== 'string' || !AFFIXES.some((def) => def.id === affix.id) ||
@@ -392,7 +443,17 @@ function parseInventory(value: unknown): SaveInventory {
       seenAffixes.add(affix.id);
       return { id: affix.id, value: affix.value };
     });
-    return { uid, baseId: base.id, slot: base.slot, rarity: rarity as Rarity, name, itemLevel, affixes: parsedAffixes };
+    return {
+      uid,
+      baseId: base.id,
+      slot: base.slot,
+      rarity: rarity as Rarity,
+      name,
+      itemLevel,
+      quality: parsedQuality,
+      implicit: parsedImplicit,
+      affixes: parsedAffixes,
+    };
   }
 
   const bags = value.bags.map(parseItem);

@@ -6,6 +6,8 @@ import { RARITY_COLORS, type ItemSlot } from './content/items';
 import { getSkill } from './content/skills';
 import { getRune, type RuneId } from './content/runes';
 import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type SkillId, type ZoneLayout } from './content/types';
+import type { Rarity } from './content/items';
+import { rollItem, type ItemInstance } from './sim/items';
 import { generateZoneLayout } from './content/zone';
 import { createPlayerView, type PlayerView } from './render/player';
 import { CameraRig } from './render/camera';
@@ -66,8 +68,15 @@ import {
   unlockSkill,
   upgradeSkill,
 } from './systems/loadout';
+import {
+  addAffix,
+  improveQuality,
+  reforgeAffix,
+  type CraftAction,
+} from './systems/crafting';
 import { grantXp } from './systems/progression';
 import { evadeChance, getPlayerStats } from './systems/stats';
+import { CraftingPanel } from './ui/crafting';
 import { FloatingTextLayer } from './ui/floatingText';
 import { InventoryPanel } from './ui/inventory';
 import { NameplateLayer } from './ui/nameplates';
@@ -152,6 +161,8 @@ export interface AshenDebug {
     equippedCount: number;
     drops: number;
     dropPositions: Array<{ x: number; z: number }>;
+    currency: { dust: number; rune: number; quality: number };
+    items: Array<ItemInstance & { equipped: boolean }>;
     tellOrder: { telegraphs: number; playerDamages: number; damageBeforeTelegraph: boolean };
     render: {
       triangles: number;
@@ -205,6 +216,10 @@ export interface AshenDebug {
   equipSkill(slot: LoadoutSlot, id: SkillId): boolean;
   /** Review fixture: mark an existing enemy Volatile for hazard testing. */
   makeVolatile(id: string): boolean;
+  /** Review fixture: top up crafting currency. */
+  grantCurrency(dust: number, rune: number, quality: number): void;
+  /** Review fixture: add a rolled item to the bag and return its uid. */
+  grantItem(rarity: Rarity): string;
   /** Review fixture: serialize the current save (for save-shape checks). */
   exportSave(): string;
   /** Review fixture: save-slot inventory and the run's bound autosave slot. */
@@ -250,6 +265,7 @@ class Game {
   private readonly inventoryPanel: InventoryPanel;
   private readonly passivePanel: PassiveTreePanel;
   private readonly skillPanel: SkillPanel;
+  private readonly craftingPanel: CraftingPanel;
   private readonly savePanel: SaveSlotsPanel;
   private readonly ui: Ui;
   private readonly loop: GameLoop;
@@ -339,6 +355,7 @@ class Game {
       onOpenSlots: (mode) => this.openSlots(mode),
       onOpenSkillPicker: (slot) => this.openSkillPicker(slot),
       onOpenSkills: () => this.openSkills(),
+      onOpenCrafting: () => this.openCrafting(),
       onUseFlask: (kind) => this.handleUseFlask(kind),
     });
     // Created after Ui: the Ui constructor replaces #ui's innerHTML.
@@ -358,6 +375,10 @@ class Game {
       onUpgrade: (id) => this.handleUpgradeSkill(id),
       onRune: (id, rune) => this.handleSetRune(id, rune),
       onClose: () => this.skillPanel.close(),
+    });
+    this.craftingPanel = new CraftingPanel(uiRoot, {
+      onCraft: (action, uid) => this.handleCraft(action, uid),
+      onClose: () => this.craftingPanel.close(),
     });
     this.savePanel = new SaveSlotsPanel(uiRoot, {
       onChoose: (slot) => this.chooseSlot(slot),
@@ -471,6 +492,7 @@ class Game {
     this.inventoryPanel.close();
     this.passivePanel.close();
     this.skillPanel.close();
+    this.craftingPanel.close();
     this.savePanel.close();
     this.dead = false;
     this.tellTelegraphs = 0;
@@ -510,6 +532,7 @@ class Game {
     this.inventoryPanel.close();
     this.passivePanel.close();
     this.skillPanel.close();
+    this.craftingPanel.close();
     this.loop.setRunning(false);
     const stats = this.state?.runStats;
     this.ui.showDeath({
@@ -531,6 +554,7 @@ class Game {
       damageTaken: state.runStats.damageTaken,
       seconds: state.runStats.seconds,
       level: state.level,
+      currency: { ...state.currency },
     });
   }
 
@@ -749,6 +773,7 @@ class Game {
       });
       if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
       if (this.passivePanel.visible) this.passivePanel.sync(state);
+      if (this.craftingPanel.visible) this.craftingPanel.sync(state);
       this.ui.setPoints(passivePointsAvailable(state), skillPointsAvailable(state));
       this.ui.setObjectives({
         campsCleared: state.objectives.campCleared.filter(Boolean).length,
@@ -917,6 +942,7 @@ class Game {
         if (this.mode !== 'playing' || this.dead || e.repeat) return;
         e.preventDefault();
         this.skillPanel.close();
+        this.craftingPanel.close();
         this.inventoryPanel.toggle();
         if (this.inventoryPanel.visible && this.state) this.inventoryPanel.sync(this.state);
         return;
@@ -925,8 +951,19 @@ class Game {
         if (this.mode !== 'playing' || this.dead || e.repeat) return;
         e.preventDefault();
         this.skillPanel.close();
+        this.craftingPanel.close();
         this.passivePanel.toggle();
         if (this.passivePanel.visible && this.state) this.passivePanel.sync(this.state);
+        return;
+      }
+      if (key === 'c' || key === 'C') {
+        if (this.mode !== 'playing' || this.dead || e.repeat || !this.state) return;
+        e.preventDefault();
+        this.skillPanel.close();
+        this.inventoryPanel.close();
+        this.passivePanel.close();
+        if (this.craftingPanel.visible) this.craftingPanel.close();
+        else this.craftingPanel.open(this.state);
         return;
       }
       if (key === 'k' || key === 'K') {
@@ -939,6 +976,10 @@ class Game {
       if (e.key !== 'Escape') return;
       if (this.savePanel.visible) {
         this.savePanel.close();
+        return;
+      }
+      if (this.craftingPanel.visible) {
+        this.craftingPanel.close();
         return;
       }
       if (this.skillPanel.visible) {
@@ -1031,6 +1072,7 @@ class Game {
     if (!state || this.dead) return;
     this.inventoryPanel.close();
     this.passivePanel.close();
+    this.craftingPanel.close();
     this.skillPanel.open(slot, state);
   }
 
@@ -1040,7 +1082,37 @@ class Game {
     const empty = LOADOUT_SLOTS.find((slot) => skillInSlot(state, slot) === null);
     this.inventoryPanel.close();
     this.passivePanel.close();
+    this.craftingPanel.close();
     this.skillPanel.open(empty ?? 'q', state);
+  }
+
+  private openCrafting(): void {
+    const state = this.state;
+    if (!state) return;
+    this.inventoryPanel.close();
+    this.passivePanel.close();
+    this.skillPanel.close();
+    this.craftingPanel.open(state);
+  }
+
+  private handleCraft(action: CraftAction, uid: string): void {
+    const state = this.state;
+    if (!state) return;
+    const result = action === 'reforge'
+      ? reforgeAffix(state, uid)
+      : action === 'add'
+        ? addAffix(state, uid)
+        : improveQuality(state, uid);
+    if (!result.ok) {
+      this.ui.showToast(result.reason ?? 'Crafting failed', '#ff8577');
+    } else {
+      this.ui.showToast(result.detail ?? 'Crafted', '#e8c877');
+      this.saveCheckpoint();
+    }
+    if (this.inventoryPanel.visible) this.inventoryPanel.sync(state);
+    this.craftingPanel.sync(state);
+    this.ui.setPlayerHp(state.player.hp, state.player.maxHp);
+    this.ui.setPlayerEs(state.player.energyShield, state.player.maxEnergyShield);
   }
 
   private handleAssignSkill(slot: LoadoutSlot, id: SkillId | null): void {
@@ -1281,6 +1353,15 @@ class Game {
       equippedCount: state ? Object.values(state.inventory.equipment).filter(Boolean).length : 0,
       drops: state?.loot.length ?? 0,
       dropPositions: state?.loot.map((d) => ({ x: d.x, z: d.z })) ?? [],
+      currency: state ? { ...state.currency } : { dust: 0, rune: 0, quality: 0 },
+      items: state
+        ? [
+          ...state.inventory.bags.map((item) => ({ ...item, equipped: false })),
+          ...(Object.values(state.inventory.equipment)
+            .filter((item): item is ItemInstance => item !== null)
+            .map((item) => ({ ...item, equipped: true }))),
+        ]
+        : [],
       tellOrder: {
         telegraphs: this.tellTelegraphs,
         playerDamages: this.tellPlayerDamages,
@@ -1431,6 +1512,22 @@ class Game {
     return true;
   }
 
+  grantCurrency(dust: number, rune: number, quality: number): void {
+    if (!this.state) return;
+    this.state.currency.dust += Math.max(0, Math.floor(dust));
+    this.state.currency.rune += Math.max(0, Math.floor(rune));
+    this.state.currency.quality += Math.max(0, Math.floor(quality));
+  }
+
+  grantItem(rarity: Rarity): string {
+    if (!this.state) throw new Error('no active state');
+    const item = rollItem(this.state.rng, this.state.level, rarity);
+    this.state.inventory.bags.push(item);
+    if (this.inventoryPanel.visible) this.inventoryPanel.sync(this.state);
+    if (this.craftingPanel.visible) this.craftingPanel.sync(this.state);
+    return item.uid;
+  }
+
   exportSave(): string {
     if (!this.state) throw new Error('no active state');
     return serializeSave(createCheckpointSave(this.state, this.layout.spawn));
@@ -1474,6 +1571,8 @@ const game = new Game(canvas, uiRoot);
   unlockSkill: (id) => game.unlockSkill(id),
   equipSkill: (slot, id) => game.equipSkill(slot, id),
   makeVolatile: (id) => game.makeVolatile(id),
+  grantCurrency: (dust, rune, quality) => game.grantCurrency(dust, rune, quality),
+  grantItem: (rarity) => game.grantItem(rarity),
   setDefences: (armour, evasion) => game.setDefences(armour, evasion),
   clearEnemies: () => game.clearEnemies(),
   clearCamps: () => game.clearCamps(),

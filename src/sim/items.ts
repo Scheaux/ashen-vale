@@ -26,6 +26,10 @@ export interface ItemInstance {
   rarity: Rarity;
   name: string;
   itemLevel: number;
+  /** Crafting quality 0–20%; scales the base implicit and affix values. */
+  quality: number;
+  /** Innate base stat (weapons, armour, boots or amulet). */
+  implicit: ItemAffix | null;
   affixes: ItemAffix[];
 }
 
@@ -52,27 +56,53 @@ export function rollRarity(rng: Rng): Rarity {
   return 'normal';
 }
 
-function rollAffixValue(rng: Rng, def: AffixDef, itemLevel: number): number {
+export function rollAffixValue(rng: Rng, def: AffixDef, itemLevel: number): number {
   return Math.round(def.min + rng() * (def.max - def.min) + def.perLevel * itemLevel);
 }
 
-function pickAffixes(rng: Rng, slot: ItemSlot, count: number, itemLevel: number): ItemAffix[] {
-  const pool = AFFIXES.filter((a) => a.slots.includes(slot));
+/** Roll one weighted legal affix for a slot; used by drops and crafting. */
+export function rollAffixForSlot(
+  rng: Rng,
+  slot: ItemSlot,
+  itemLevel: number,
+  exclude: ReadonlySet<string> = new Set(),
+): ItemAffix | null {
+  const pool = AFFIXES.filter((affix) => affix.slots.includes(slot) && !exclude.has(affix.id));
+  if (pool.length === 0) return null;
+  let roll = rng() * pool.reduce((sum, affix) => sum + affix.weight, 0);
+  for (const def of pool) {
+    roll -= def.weight;
+    if (roll <= 0) return { id: def.id, value: rollAffixValue(rng, def, itemLevel) };
+  }
+  return { id: pool[pool.length - 1].id, value: rollAffixValue(rng, pool[pool.length - 1], itemLevel) };
+}
+
+function pickAffixes(
+  rng: Rng,
+  slot: ItemSlot,
+  count: number,
+  itemLevel: number,
+  exclude: ReadonlySet<string>,
+): ItemAffix[] {
   const affixes: ItemAffix[] = [];
-  const used = new Set<string>();
-  while (affixes.length < count && used.size < pool.length) {
-    let roll = rng() * pool.filter((a) => !used.has(a.id)).reduce((s, a) => s + a.weight, 0);
-    for (const def of pool) {
-      if (used.has(def.id)) continue;
-      roll -= def.weight;
-      if (roll <= 0) {
-        used.add(def.id);
-        affixes.push({ id: def.id, value: rollAffixValue(rng, def, itemLevel) });
-        break;
-      }
-    }
+  const used = new Set(exclude);
+  while (affixes.length < count) {
+    const affix = rollAffixForSlot(rng, slot, itemLevel, used);
+    if (!affix) break;
+    used.add(affix.id);
+    affixes.push(affix);
   }
   return affixes;
+}
+
+/** Maximum affixes for a rarity; crafting cannot exceed this. */
+export function maxAffixesFor(rarity: Rarity): number {
+  return AFFIX_COUNTS[rarity][1];
+}
+
+/** Quality scales both the base implicit and every affix value. */
+export function effectiveItemValue(item: Pick<ItemInstance, 'quality'>, value: number): number {
+  return value * (1 + item.quality / 100);
 }
 
 function nameFor(rarity: Rarity, baseName: string, uniqueName?: string): string {
@@ -102,6 +132,8 @@ export function rollItem(rng: Rng, itemLevel: number, forcedRarity?: Rarity): It
       rarity,
       name: unique.name,
       itemLevel,
+      quality: 0,
+      implicit: null,
       affixes: unique.affixes.map((a) => ({ ...a })),
     };
   }
@@ -109,6 +141,13 @@ export function rollItem(rng: Rng, itemLevel: number, forcedRarity?: Rarity): It
   const base = ITEM_BASES[Math.floor(rng() * ITEM_BASES.length)];
   const [min, max] = AFFIX_COUNTS[rarity];
   const count = min + Math.floor(rng() * (max - min + 1));
+  const implicit = base.implicit
+    ? {
+      id: base.implicit.id,
+      value: Math.round(base.implicit.min + rng() * (base.implicit.max - base.implicit.min) +
+        base.implicit.perLevel * itemLevel),
+    }
+    : null;
   return {
     uid,
     baseId: base.id,
@@ -116,7 +155,9 @@ export function rollItem(rng: Rng, itemLevel: number, forcedRarity?: Rarity): It
     rarity,
     name: nameFor(rarity, base.name),
     itemLevel,
-    affixes: pickAffixes(rng, base.slot, count, itemLevel),
+    quality: 0,
+    implicit,
+    affixes: pickAffixes(rng, base.slot, count, itemLevel, new Set(implicit ? [implicit.id] : [])),
   };
 }
 

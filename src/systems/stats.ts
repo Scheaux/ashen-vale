@@ -3,6 +3,7 @@ import { getAffix, type AffixStat } from '../content/affixes';
 import type { ClassDef } from '../content/types';
 import type { ItemSlot } from '../content/items';
 import { getPassive } from '../content/passives';
+import { effectiveItemValue } from '../sim/items';
 import type { GameState, InventoryState } from '../sim/state';
 import { PLAYER_MAX_HP, PLAYER_BASE_MANA, SYNERGY, manaRegenFor } from '../sim/state';
 
@@ -138,8 +139,11 @@ export function computeStats(
   for (const slot of Object.keys(equipment) as ItemSlot[]) {
     const item = equipment[slot];
     if (!item) continue;
+    if (item.implicit) {
+      applyStatBonus(stats, getAffix(item.implicit.id).stat, effectiveItemValue(item, item.implicit.value));
+    }
     for (const affix of item.affixes) {
-      applyStatBonus(stats, getAffix(affix.id).stat, affix.value);
+      applyStatBonus(stats, getAffix(affix.id).stat, effectiveItemValue(item, affix.value));
     }
   }
 

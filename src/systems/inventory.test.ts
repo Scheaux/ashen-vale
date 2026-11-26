@@ -40,6 +40,8 @@ function lifeItem(value: number): ItemInstance {
     rarity: 'magic',
     name: 'Padded Vest',
     itemLevel: 1,
+    quality: 0,
+    implicit: null,
     affixes: [{ id: 'life', value }],
   };
 }
