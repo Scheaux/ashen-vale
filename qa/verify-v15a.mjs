@@ -205,6 +205,18 @@ async function saveState(page) {
   });
 }
 
+/** Wait for the current telegraph to end before freezing or sampling. */
+async function waitForTelegraphIdle(page, timeoutMs = 4000, heal = false) {
+  const start = Date.now();
+  let current = await snapshot(page);
+  while (current.probes.telegraph !== null && Date.now() - start < timeoutMs) {
+    if (heal) await page.evaluate(() => window.__ashen.healPlayer(9999));
+    await sleep(100);
+    current = await snapshot(page);
+  }
+  return current;
+}
+
 /** Temporary QA-only hide of the pause overlay for a comparable world shot. */
 async function screenshotWithoutPauseOverlay(page, path) {
   await page.evaluate(() => {
@@ -238,7 +250,7 @@ async function equipItem(page, uid) {
  * One paused remount with the complete persistent-state, epoch, camera,
  * prompt, boss, leak and save assertions. Returns the post-remount snapshot.
  */
-async function pausedRemount(page, label, expectedEpoch, base, baseState, baseRender, baseScreen, baseSaves, warmRender) {
+async function pausedRemount(page, label, expectedEpoch, expectedTerrainId, base, baseState, baseRender, baseScreen, baseSaves, warmRender) {
   await page.evaluate(() => window.__ashen.remountZone('ashen-moor'));
   await sleep(350);
   const after = await snapshot(page);
@@ -249,11 +261,14 @@ async function pausedRemount(page, label, expectedEpoch, base, baseState, baseRe
   check(`${label}: mount epoch increments exactly once`,
     after.render.mountEpoch === expectedEpoch,
     `epoch ${expectedEpoch - 1} -> ${after.render.mountEpoch}, expected ${expectedEpoch}`);
+  check(`${label}: terrain id increments exactly once`,
+    after.render.terrainId === expectedTerrainId,
+    `terrain ${expectedTerrainId - 1} -> ${after.render.terrainId}, expected ${expectedTerrainId}`);
 
-  check(`${label}: destination and hover rings cleared`,
-    after.probes.rings.destination === null && after.probes.rings.hover === null,
-    `destination ${after.probes.rings.destination === null ? 'null' : 'visible'}, `
-    + `hover ${after.probes.rings.hover === null ? 'null' : 'visible'}`);
+  check(`${label}: destination ring cleared`,
+    after.probes.rings.destination === null,
+    `destination ${after.probes.rings.destination === null ? 'null' : 'visible'} `
+    + '(hover clearing is proven on the live path where hover was established first)');
 
   check(`${label}: telegraph view cleared`,
     after.probes.telegraph === null,
@@ -269,10 +284,14 @@ async function pausedRemount(page, label, expectedEpoch, base, baseState, baseRe
     `pose ${after.camera.yaw.toFixed(6)}/${after.camera.pitch}/${after.camera.distance}, `
     + `projection moved ${projectedPixels.toFixed(3)}px`);
 
-  check(`${label}: player ground probe is exact`,
+  const expectedGround = await terrainHeight(page, base.playerPos.x, base.playerPos.z);
+  check(`${label}: player ground probe is exact and sampled from the surface`,
     after.probes.playerGround.y === after.playerRenderY &&
-    after.probes.playerGround.error < 1e-6,
+    after.probes.playerGround.height === expectedGround &&
+    after.probes.playerGround.error < 1e-6 &&
+    Math.abs(expectedGround) > 1e-4,
     `probe y ${after.probes.playerGround.y.toFixed(9)} vs renderY ${after.playerRenderY.toFixed(9)}, `
+    + `height ${after.probes.playerGround.height.toFixed(9)} vs terrainHeightAt ${expectedGround.toFixed(9)}, `
     + `error ${after.probes.playerGround.error.toExponential(3)}`);
 
   check(`${label}: live boss root remains grounded`,
@@ -324,7 +343,8 @@ async function main() {
     check('new game reaches play', warm.mode === 'playing' && !warm.dead && warm.playerHp > 0,
       `mode ${warm.mode}, hp ${warm.playerHp}/${warm.playerMaxHp}, position ${warm.playerPos.x.toFixed(2)},${warm.playerPos.z.toFixed(2)}`);
     console.log(`INFO  warm frame (pristine, informational): ${warm.render.geometries} geo, ${warm.render.textures} tex, `
-      + `${warm.render.drawCalls} calls, ${warm.render.triangles} triangles, epoch ${warm.render.mountEpoch}`);
+      + `${warm.render.drawCalls} calls, ${warm.render.triangles} triangles, `
+      + `epoch ${warm.render.mountEpoch}, terrain ${warm.render.terrainId}`);
 
     // A real slope probe must happen before the Warden spawn: once the boss is
     // live, activeBounds clamps the hero to the arena and the outer hills are
@@ -444,6 +464,12 @@ async function main() {
     );
     if (!wardenBase) throw new Error('clearCamps did not spawn a live Ashen Warden');
 
+    // Do not freeze while a windup telegraph is live: pause would keep the
+    // view active and make the quiet baseline fail for the wrong reason.
+    const quiet = await waitForTelegraphIdle(page, 5000, false);
+    check('baseline quiet wait leaves the hero alive', !quiet.dead,
+      `hp ${quiet.playerHp}/${quiet.playerMaxHp}, telegraph ${quiet.probes.telegraph === null ? 'null' : 'live'}`);
+
     // Set a real destination ring on a clear world point, then pause at once.
     const destination = await page.evaluate(() => {
       const s = window.__ashen.snapshot();
@@ -541,7 +567,8 @@ async function main() {
       + `bossRoot ${base.probes.bossRoot ? `error ${base.probes.bossRoot.error.toExponential(3)}` : 'missing'}`);
     console.log(`INFO  changed baseline: ${stateSummary(baseState)}, `
       + `destination ${destination.x.toFixed(1)},${destination.z.toFixed(1)}, `
-      + `geo ${baseRender.geometries}, tex ${baseRender.textures}, epoch ${base.render.mountEpoch}`);
+      + `geo ${baseRender.geometries}, tex ${baseRender.textures}, `
+      + `epoch ${base.render.mountEpoch}, terrain ${base.render.terrainId}`);
     console.log(`INFO  warm->baseline render delta (informational only): `
       + `${signed(baseRender.geometries - warmRender.geometries)} geo, `
       + `${signed(baseRender.textures - warmRender.textures)} tex`);
@@ -552,11 +579,11 @@ async function main() {
     // 2. Two paused remounts with exact state, epoch, camera and leak checks
     // ------------------------------------------------------------------
     const after1 = await pausedRemount(
-      page, 'paused remount 1', base.render.mountEpoch + 1,
+      page, 'paused remount 1', base.render.mountEpoch + 1, base.render.terrainId + 1,
       base, baseState, baseRender, baseScreen, baseSaves, warmRender,
     );
     const after2 = await pausedRemount(
-      page, 'paused remount 2', base.render.mountEpoch + 2,
+      page, 'paused remount 2', base.render.mountEpoch + 2, base.render.terrainId + 2,
       base, baseState, baseRender, baseScreen, baseSaves, warmRender,
     );
     check('paused remounts are leak-stable against each other',
@@ -610,13 +637,7 @@ async function main() {
     await page.evaluate(() => window.__ashen.healPlayer(9999));
     await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [currentWarden.x, currentWarden.z + 7]);
     await sleep(300);
-    let localBase = await snapshot(page);
-    let quietTries = 0;
-    while (localBase.probes.telegraph !== null && quietTries++ < 20) {
-      await page.evaluate(() => window.__ashen.healPlayer(9999));
-      await sleep(100);
-      localBase = await snapshot(page);
-    }
+    const localBase = await waitForTelegraphIdle(page, 2000, true);
     check('near-Warden quiet baseline is telegraph-free',
       localBase.probes.telegraph === null,
       localBase.probes.telegraph === null ? 'null' : JSON.stringify(localBase.probes.telegraph));
@@ -645,6 +666,54 @@ async function main() {
         telegraph.vertices > 0 && telegraph.maxError >= 0 && telegraph.maxError < PROBE_ERROR,
         `id ${telegraph.id}, ${telegraph.vertices} vertices, maxError ${telegraph.maxError.toExponential(3)}`);
     }
+
+    // Establish a real hover before the live remount. The pointer must be over
+    // clear ground, and the hover must survive into the same before-snapshot
+    // that also carries the destination ring and live telegraph.
+    const hoverCandidates = await page.evaluate(() => {
+      const s = window.__ashen.snapshot();
+      const boss = s.enemies.find((enemy) => enemy.type === 'ashen-warden' && !enemy.dead);
+      let dx = boss ? s.playerPos.x - boss.x : 1;
+      let dz = boss ? s.playerPos.z - boss.z : 0;
+      const length = Math.hypot(dx, dz) || 1;
+      dx /= length;
+      dz /= length;
+      const directions = [
+        { x: -dz, z: dx },
+        { x: dz, z: -dx },
+        { x: dx, z: dz },
+        { x: -dx, z: -dz },
+      ];
+      const candidates = [];
+      for (const direction of directions) {
+        for (const distance of [2, 2.5, 3]) {
+          const x = s.playerPos.x + direction.x * distance;
+          const z = s.playerPos.z + direction.z * distance;
+          if (Math.hypot(x, z) > 41) continue;
+          if (s.enemies.some((enemy) => !enemy.dead && Math.hypot(enemy.x - x, enemy.z - z) < 2)) continue;
+          const height = window.__ashen.terrainHeightAt(x, z);
+          const screen = window.__ashen.worldToScreen(x, z, height);
+          if (screen.x > 24 && screen.x < window.innerWidth - 24
+            && screen.y > 24 && screen.y < window.innerHeight - 24) {
+            candidates.push({ x, z, screen });
+          }
+        }
+      }
+      return candidates;
+    });
+    let hoverSet = null;
+    for (const candidate of hoverCandidates) {
+      await page.mouse.move(candidate.screen.x, candidate.screen.y);
+      await sleep(150);
+      const s = await snapshot(page);
+      if (s.probes.rings.hover !== null) {
+        hoverSet = s;
+        break;
+      }
+    }
+    check('live remount: hover ring is established before the remount',
+      hoverSet !== null,
+      hoverSet ? JSON.stringify(hoverSet.probes.rings.hover) : 'no hover after pointer moves over clear ground');
 
     const live = await page.evaluate(() => {
       const readStorage = () => {
@@ -687,6 +756,7 @@ async function main() {
 
       const marked = window.__ashen.snapshot();
       const destinationSet = marked.probes.rings.destination !== null;
+      const hoverBefore = marked.probes.rings.hover;
       const telegraphBefore = marked.probes.telegraph;
       window.__ashen.remountZone('ashen-moor');
       const after = window.__ashen.snapshot();
@@ -702,6 +772,7 @@ async function main() {
         screenBefore,
         screenAfter,
         destinationSet,
+        hoverBefore,
         telegraphBefore,
         savesBefore,
         savesAfter,
@@ -717,12 +788,17 @@ async function main() {
     check('live remount: mount epoch increments exactly once',
       live.after.render.mountEpoch === live.marked.render.mountEpoch + 1,
       `epoch ${live.marked.render.mountEpoch} -> ${live.after.render.mountEpoch}`);
-    check('live remount: destination and hover rings cleared',
+    check('live remount: terrain id increments exactly once',
+      live.after.render.terrainId === live.marked.render.terrainId + 1,
+      `terrain ${live.marked.render.terrainId} -> ${live.after.render.terrainId}`);
+    check('live remount: destination and hover rings were set, then both cleared',
       live.destinationSet &&
+      live.hoverBefore !== null &&
       live.after.probes.rings.destination === null &&
       live.after.probes.rings.hover === null,
-      `destination was ${live.destinationSet ? 'set' : 'missing'}, `
-      + `now ${live.after.probes.rings.destination === null ? 'null' : 'visible'}`);
+      `before destination ${live.destinationSet ? 'set' : 'missing'}, hover ${live.hoverBefore ? 'set' : 'missing'}; `
+      + `after destination ${live.after.probes.rings.destination === null ? 'null' : 'visible'}, `
+      + `hover ${live.after.probes.rings.hover === null ? 'null' : 'visible'}`);
     check('live remount: active telegraph cleared',
       live.telegraphBefore !== null && live.after.probes.telegraph === null,
       `before ${live.telegraphBefore ? live.telegraphBefore.id : 'null'}, `
@@ -731,10 +807,14 @@ async function main() {
     check('live remount: projected player point unchanged',
       livePixels <= CAMERA_PIXEL_TOLERANCE,
       `projection moved ${livePixels.toFixed(3)}px`);
-    check('live remount: player ground probe is exact',
+    const liveGround = await terrainHeight(page, live.after.playerPos.x, live.after.playerPos.z);
+    check('live remount: player ground probe is exact and sampled from the surface',
       live.after.probes.playerGround.y === live.after.playerRenderY &&
+      live.after.probes.playerGround.height === liveGround &&
       live.after.probes.playerGround.error < 1e-6,
-      `error ${live.after.probes.playerGround.error.toExponential(3)}`);
+      `probe y ${live.after.probes.playerGround.y.toFixed(9)} vs renderY ${live.after.playerRenderY.toFixed(9)}, `
+      + `height ${live.after.probes.playerGround.height.toFixed(9)} vs terrainHeightAt ${liveGround.toFixed(9)}, `
+      + `error ${live.after.probes.playerGround.error.toExponential(3)}`);
     check('live remount: transient render resources do not grow',
       live.after.render.geometries <= localBase.render.geometries &&
       live.after.render.textures <= localBase.render.textures,
