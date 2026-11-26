@@ -2013,11 +2013,17 @@ kbd {
 .craft-salvage {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.4rem;
   margin-top: 1rem;
   padding-top: 0.85rem;
   border-top: 1px solid rgba(200, 162, 74, 0.18);
+}
+
+/* Reserve the prompt + actions row so arming cannot reflow the centered panel
+   and slide Confirm under the old Salvage button. */
+.craft-salvage--reserved {
+  min-height: 4rem;
 }
 
 .craft-salvage-hint {
@@ -2026,6 +2032,24 @@ kbd {
   font-size: 0.78rem;
   font-style: italic;
   color: var(--muted);
+}
+
+.craft-salvage-prompt {
+  flex: 1 0 100%;
+  margin: 0;
+  padding: 0.35rem 0;
+  font-family: var(--serif);
+  font-size: 0.78rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--gold-bright);
+}
+
+.craft-salvage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  width: 100%;
 }
 
 .craft-empty {

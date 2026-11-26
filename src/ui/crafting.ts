@@ -180,7 +180,7 @@ export class CraftingPanel {
     }
 
     const salvage = document.createElement('div');
-    salvage.className = 'craft-salvage';
+    salvage.className = equipped ? 'craft-salvage' : 'craft-salvage craft-salvage--reserved';
     if (equipped) {
       const hint = document.createElement('p');
       hint.className = 'craft-salvage-hint';
@@ -189,16 +189,24 @@ export class CraftingPanel {
     } else {
       const value = salvageValue(item);
       if (this.pendingSalvageUid === item.uid) {
+        const prompt = document.createElement('p');
+        prompt.className = 'craft-salvage-prompt';
+        prompt.setAttribute('role', 'status');
+        prompt.textContent = 'Salvage this item?';
+        const actions = document.createElement('div');
+        actions.className = 'craft-salvage-actions';
         const confirmBtn = document.createElement('button');
         confirmBtn.className = 'skill-btn';
         confirmBtn.dataset.craftSalvageConfirm = '';
         confirmBtn.textContent = `Confirm salvage · ${value} Dust`;
-        confirmBtn.addEventListener('click', (event) => {
-          if (event.detail > 1) return;
+        confirmBtn.addEventListener('click', () => {
           this.pendingSalvageUid = null;
           this.lastSignature = '';
           this.sync(state);
           this.callbacks.onSalvage(item.uid);
+          const nextSalvage = this.detailEl.querySelector<HTMLElement>('[data-craft-salvage]');
+          if (nextSalvage) nextSalvage.focus();
+          else this.closeBtn.focus();
         });
         const cancelBtn = document.createElement('button');
         cancelBtn.className = 'skill-btn skill-btn--quiet';
@@ -208,17 +216,21 @@ export class CraftingPanel {
           this.pendingSalvageUid = null;
           this.lastSignature = '';
           this.sync(state);
+          this.detailEl.querySelector<HTMLElement>('[data-craft-salvage]')?.focus();
         });
-        salvage.append(confirmBtn, cancelBtn);
+        actions.append(confirmBtn, cancelBtn);
+        salvage.append(prompt, actions);
       } else {
         const button = document.createElement('button');
         button.className = 'skill-btn';
         button.dataset.craftSalvage = '';
         button.textContent = `Salvage · ${value} Dust`;
-        button.addEventListener('click', () => {
+        button.addEventListener('click', (event) => {
+          if (event.detail > 1) return;
           this.pendingSalvageUid = item.uid;
           this.lastSignature = '';
           this.sync(state);
+          this.detailEl.querySelector<HTMLElement>('[data-craft-salvage-confirm]')?.focus();
         });
         salvage.appendChild(button);
       }
