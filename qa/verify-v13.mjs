@@ -75,15 +75,33 @@ async function main() {
   await page.evaluate(([id]) => window.__ashen.makeVolatile(id), [victim.id]);
   await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [victim.x + 1, victim.z]);
   await page.evaluate(() => window.__ashen.healPlayer(9999));
-  const beforeBlast = await snap();
-  const beforeTotal = beforeBlast.playerHp + beforeBlast.playerEnergyShield;
   await page.evaluate(([id]) => window.__ashen.hurtEnemy(id, 9999), [victim.id]);
-  await sleep(250);
-  let s = await snap();
-  check('a Volatile elite leaves a telegraphed hazard', s.hazards >= 1, `${s.hazards} hazards`);
+  // The blast is placed at the victim's live position, which can differ from the
+  // snapshot above. Poll the live hazard list and stand at its centre so the fuse
+  // cannot expire around a stale teleport.
+  let hazard = null;
+  for (let i = 0; i < 20 && !hazard; i++) {
+    const hazards = await page.evaluate(() => window.__ashen.hazardPoints());
+    hazard = hazards.find((point) => point.kind === 'volatile') ?? null;
+    if (!hazard) await sleep(50);
+  }
+  check('a Volatile elite leaves a telegraphed hazard', !!hazard,
+    hazard ? `${hazard.id} at ${hazard.x.toFixed(1)}, ${hazard.z.toFixed(1)}, r${hazard.radius}` : 'no volatile hazard');
+  let beforeTotal = 0;
+  if (hazard) {
+    const beforeBlast = await page.evaluate(([x, z]) => {
+      window.__ashen.teleportPlayer(x, z);
+      window.__ashen.healPlayer(9999);
+      return window.__ashen.snapshot();
+    }, [hazard.x, hazard.z]);
+    beforeTotal = beforeBlast.playerHp + beforeBlast.playerEnergyShield;
+  }
   await page.screenshot({ path: `${SHOTS}94-volatile-hazard.png` });
-  await sleep(1000);
-  s = await snap();
+  let s = await snap();
+  for (let i = 0; i < 40 && s.hazards > 0; i++) {
+    await sleep(100);
+    s = await snap();
+  }
   check('the volatile blast resolves and expires', s.hazards === 0,
     `${s.hazards} hazards, life ${s.playerHp}+${s.playerEnergyShield}`);
   check('the volatile blast damages the player at close range',

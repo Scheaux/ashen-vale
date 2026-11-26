@@ -217,6 +217,15 @@ export interface AshenDebug {
   equipSkill(slot: LoadoutSlot, id: SkillId): boolean;
   /** Review fixture: mark an existing enemy Volatile for hazard testing. */
   makeVolatile(id: string): boolean;
+  /** Review fixture: live ground hazards (position, radius, detonation state). */
+  hazardPoints(): Array<{
+    id: string;
+    kind: 'volatile' | 'cinder';
+    x: number;
+    z: number;
+    radius: number;
+    detonated: boolean;
+  }>;
   /** Review fixture: top up crafting currency. */
   grantCurrency(dust: number, rune: number, quality: number): void;
   /** Review fixture: add a rolled item to the bag and return its uid. */
@@ -1462,7 +1471,10 @@ class Game {
     state.player.position.z = z;
     state.player.previousPosition.x = x;
     state.player.previousPosition.z = z;
+    // Fixture teleports stop pursuit: a stale chase would walk the hero off the
+    // spot the check is establishing.
     state.player.moveTarget = null;
+    state.player.attackTargetId = null;
   }
 
   terrainHeightAt(x: number, z: number): number {
@@ -1477,6 +1489,19 @@ class Game {
       .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))
       .slice(0, 8)
       .map((prop) => ({ x: prop.x, z: prop.z }));
+  }
+
+  hazardPoints(): ReturnType<AshenDebug['hazardPoints']> {
+    const state = this.state;
+    if (!state) return [];
+    return state.hazards.map((hazard) => ({
+      id: hazard.id,
+      kind: hazard.kind,
+      x: hazard.x,
+      z: hazard.z,
+      radius: hazard.radius,
+      detonated: hazard.detonated,
+    }));
   }
 
   healPlayer(amount: number): void {
@@ -1589,6 +1614,7 @@ const game = new Game(canvas, uiRoot);
   unlockSkill: (id) => game.unlockSkill(id),
   equipSkill: (slot, id) => game.equipSkill(slot, id),
   makeVolatile: (id) => game.makeVolatile(id),
+  hazardPoints: () => game.hazardPoints(),
   grantCurrency: (dust, rune, quality) => game.grantCurrency(dust, rune, quality),
   grantItem: (rarity) => game.grantItem(rarity),
   setDefences: (armour, evasion) => game.setDefences(armour, evasion),
