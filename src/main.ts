@@ -539,10 +539,13 @@ class Game {
 
     // Terrain owns its geometry, material, ground map and normal-map clone.
     disposeMeshTree(this.terrainMesh);
-    const terrain = createTerrain(zoneId, this.terrainSurface);
+    const previousSurface = this.terrainSurface;
+    const terrain = createTerrain(zoneId, previousSurface);
+    if (terrain.surface !== previousSurface) {
+      throw new Error('createTerrain reuse returned a different TerrainSurface');
+    }
     this.terrainMesh = terrain.mesh;
-    // Reuse should always return the same sampler; keep the owner aligned with
-    // the returned object so a future change cannot split brain the mount.
+    // View layers keep the original sampler, so the owner must agree with it.
     this.terrainSurface = terrain.surface;
     this.scene.add(terrain.mesh);
 
@@ -571,11 +574,12 @@ class Game {
     this.setHoverTarget(null);
     this.cursor.setHover(null);
 
-    // Debug remount is a transient input reset: a move order or attack target
+    // Debug remount is a transient input reset: movement, attack and cast intent
     // from the old surface/marker must not survive the swap.
     if (this.state) {
       this.state.player.moveTarget = null;
       this.state.player.attackTargetId = null;
+      this.state.player.castRequest = null;
     }
 
     // Keep the live layout seed even though mountZone replaces this.layout.

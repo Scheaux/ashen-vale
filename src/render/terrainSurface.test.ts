@@ -71,19 +71,30 @@ describe('TerrainSurface', () => {
   });
 
   it('reuses the surface when createTerrain rebuilds with a different grid size', () => {
-    const { geometry, positions } = build(20, 20, (x) => x * 0.25);
+    // Start from a flat 20-unit/20-segment grid. If setSource only replaced
+    // `position` and left step/min/row/segments stale, the new grid would still
+    // be sampled with the old 20x20 indexing and clamp to a zero-height vertex.
+    const { geometry, positions } = build(20, 20, () => 0);
     const surface = new TerrainSurface(positions, 20, 20);
-    const oldHeight = surface.heightAt(4, 4);
+    expect(surface.heightAt(14.9, 14.9)).toBeCloseTo(0, 6);
 
     const { mesh, surface: rebuilt } = createTerrain('ashen-moor', surface, 30);
 
     expect(rebuilt).toBe(surface);
     expect(mesh.geometry).not.toBe(geometry);
-    // The 30-unit/128-segment moor rewrite is flat at the centre, unlike the
-    // old 20-unit/20-segment slope.
-    expect(surface.heightAt(4, 4)).not.toBeCloseTo(oldHeight, 6);
-    expect(Number.isFinite(surface.heightAt(14.9, 14.9))).toBe(true);
-    expect(surface.normalAt(4, 4).length()).toBeCloseTo(1, 6);
+    // Known values from the rebuilt 30-unit/128-segment moor grid. These are
+    // non-zero near the boundary and would be 0 under stale 20x20 indexing.
+    expect(surface.heightAt(14.9, 14.9)).toBeCloseTo(0.00267683, 5);
+    expect(surface.heightAt(-14.9, 14.9)).toBeCloseTo(0.00491645, 5);
+
+    // A non-up normal at the first sample also proves the rewritten step/min/
+    // row/segments are being used, not just the new position attribute.
+    const normal = surface.normalAt(14.9, 14.9);
+    expect(normal.length()).toBeCloseTo(1, 6);
+    expect(normal.y).toBeLessThan(0.9999999);
+    expect(Math.abs(normal.x)).toBeGreaterThan(1e-4);
+    expect(Math.abs(normal.z)).toBeGreaterThan(1e-4);
+
     mesh.geometry.dispose();
     (mesh.material as THREE.Material).dispose();
     geometry.dispose();
