@@ -158,6 +158,8 @@ export class EnemyViews {
   private readonly boundingSphere = new THREE.Sphere();
   private readonly sphereCenter = new THREE.Vector3();
   private highlightedId: string | null = null;
+  /** Live boss id, tracked from authoritative state for probeBoss(). */
+  private bossId: string | null = null;
 
   constructor(scene: THREE.Scene, private readonly terrain: TerrainSurface) {
     scene.add(this.group);
@@ -259,6 +261,7 @@ export class EnemyViews {
     }
     this.views.clear();
     this.highlightedId = null;
+    this.bossId = null;
     this.barBg.count = 0;
     this.barFill.count = 0;
     this.blob.count = 0;
@@ -319,6 +322,22 @@ export class EnemyViews {
     }
     this.updateBars(state, camera);
     this.updateBlobs(state);
+    this.bossId = state.enemies.find((enemy) => enemy.defId === 'ashen-warden' && !enemy.dead)?.id ?? null;
+  }
+
+  /**
+   * QA probe for the live Warden model root. `y` is the root's world height and
+   * `height` is the sampled terrain height underneath it; `error` is their
+   * absolute difference. Real cast shadows are screenshot-only and not probed.
+   */
+  probeBoss(): { id: string; y: number; height: number; error: number } | null {
+    const id = this.bossId;
+    if (!id) return null;
+    const view = this.views.get(id);
+    if (!view) return null;
+    const root = view.model.root.position;
+    const height = this.terrain.heightAt(root.x, root.z);
+    return { id, y: root.y, height, error: Math.abs(root.y - height) };
   }
 
   private farGeometryFor(defId: EnemyState['defId']): THREE.BufferGeometry {

@@ -17,12 +17,18 @@ interface TelegraphView {
   duration: number;
   /** Fade-out timer once the strike has passed. */
   fade: number;
+  /** True while the tell is a live warning rather than a fading ghost. */
+  active: boolean;
 }
 
 const TELEGRAPH_COLOR = 0xff4a33;
 const RIM_COLOR = 0xffb070;
 const UNDERLAY_COLOR = 0x160405;
 const RIM_WIDTH = 0.1;
+/** Per-layer ground clearance; mirrored by probe() when checking the drape. */
+const UNDERLAY_CLEARANCE = 0.04;
+const FILL_CLEARANCE = 0.05;
+const RIM_CLEARANCE = 0.06;
 
 export function warningFootprints(ev: Extract<SimEvent, { kind: 'telegraph' }>) {
   const sin = Math.sin(ev.facing);
@@ -130,10 +136,10 @@ export class TelegraphLayer {
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
       });
-      const underlay = new THREE.Mesh(this.terrain.drape(footprints, 0.04), underlayMaterial);
-      const fill = new THREE.Mesh(this.terrain.drape(footprints, 0.05), fillMaterial);
+      const underlay = new THREE.Mesh(this.terrain.drape(footprints, UNDERLAY_CLEARANCE), underlayMaterial);
+      const fill = new THREE.Mesh(this.terrain.drape(footprints, FILL_CLEARANCE), fillMaterial);
       const rim = new THREE.Mesh(
-        this.terrain.drape(footprints.flatMap((polygon) => outlineQuads(polygon, RIM_WIDTH)), 0.06),
+        this.terrain.drape(footprints.flatMap((polygon) => outlineQuads(polygon, RIM_WIDTH)), RIM_CLEARANCE),
         rimMaterial,
       );
       underlay.renderOrder = 1;
@@ -150,6 +156,7 @@ export class TelegraphLayer {
         age: 0,
         duration: Math.max(0.15, ev.duration),
         fade: 0,
+        active: true,
       });
     }
   }
@@ -160,6 +167,7 @@ export class TelegraphLayer {
       const enemy = state.enemies.find((e) => e.id === id);
       if (enemy && !enemy.dead && (enemy.phase === 'windup' || enemy.phase === 'active')) {
         view.fade = 0;
+        view.active = true;
         view.age += dt;
         const progress = Math.min(1, view.age / view.duration);
         // A fast pulse layered over a rising fill: urgency without hiding the shape.
@@ -168,6 +176,7 @@ export class TelegraphLayer {
         view.fillMaterial.opacity = 0.12 + 0.2 * progress + 0.05 * pulse * progress;
         view.rimMaterial.opacity = 0.34 + 0.2 * progress + 0.08 * pulse;
       } else {
+        view.active = false;
         view.fade += dt;
         const k = Math.max(0, 1 - view.fade / 0.25);
         view.underlayMaterial.opacity = 0.4 * k;
@@ -179,6 +188,35 @@ export class TelegraphLayer {
         }
       }
     }
+  }
+
+  /**
+   * QA probe: the first live warning's identity, draped vertex count and the
+   * worst vertex-to-heightfield error (should be float noise, far below 0.03).
+   * Fading ghosts are not warnings and return null when none are active.
+   */
+  probe(): { id: string; vertices: number; maxError: number } | null {
+    for (const [id, view] of this.views) {
+      if (!view.active) continue;
+      let vertices = 0;
+      let maxError = 0;
+      const layers: Array<[THREE.Mesh, number]> = [
+        [view.underlay, UNDERLAY_CLEARANCE],
+        [view.fill, FILL_CLEARANCE],
+        [view.rim, RIM_CLEARANCE],
+      ];
+      for (const [mesh, clearance] of layers) {
+        const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+        vertices += position.count;
+        for (let i = 0; i < position.count; i++) {
+          const x = position.getX(i);
+          const z = position.getZ(i);
+          maxError = Math.max(maxError, Math.abs(position.getY(i) - (this.terrain.heightAt(x, z) + clearance)));
+        }
+      }
+      return { id, vertices, maxError };
+    }
+    return null;
   }
 
   private disposeView(view: TelegraphView): void {

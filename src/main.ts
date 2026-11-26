@@ -138,6 +138,12 @@ export interface AshenDebug {
       hover: { x: number; y: number; z: number } | null;
       destination: { x: number; y: number; z: number } | null;
     };
+    probes: {
+      playerGround: { y: number; height: number; error: number };
+      rings: ReturnType<CursorMarker['probe']>;
+      telegraph: ReturnType<TelegraphLayer['probe']>;
+      bossRoot: ReturnType<EnemyViews['probeBoss']>;
+    };
     playerRenderY: number;
     arena: { x: number; z: number; radius: number };
     objectives: { campsCleared: number; campsTotal: number; bossSpawned: boolean; bossDefeated: boolean };
@@ -349,6 +355,7 @@ class Game {
 
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
     this.rig.setReducedMotion(this.reducedMotion);
+    this.rig.setGroundSampler(terrain.surface);
     this.rig.snapTo(
       this.layout.spawn.x,
       this.layout.spawn.z,
@@ -590,6 +597,7 @@ class Game {
     const state = this.state;
     const x = state ? state.player.position.x : layout.spawn.x;
     const z = state ? state.player.position.z : layout.spawn.z;
+    this.rig.setGroundSampler(this.terrainSurface);
     this.rig.snapTo(x, z, this.terrainSurface.heightAt(x, z));
   }
 
@@ -863,7 +871,6 @@ class Game {
       this.rig.follow(
         state.player.position.x,
         state.player.position.z,
-        this.terrainSurface.heightAt(state.player.position.x, state.player.position.z),
         dt,
       );
       this.propsView.update(this.rig.camera, state.player.position.x, state.player.position.z, dt);
@@ -1405,6 +1412,18 @@ class Game {
       hazards: state?.hazards.length ?? 0,
       camera: { yaw: this.rig.yaw, pitch: this.rig.pitch, distance: this.rig.distance },
       markers: this.cursor.probe(),
+      probes: {
+        playerGround: (() => {
+          const view = this.playerView;
+          if (!view) return { y: 0, height: 0, error: 0 };
+          const { x, y, z } = view.group.position;
+          const height = this.terrainSurface.heightAt(x, z);
+          return { y, height, error: Math.abs(y - height) };
+        })(),
+        rings: this.cursor.probe(),
+        telegraph: this.telegraphs.probe(),
+        bossRoot: this.enemyViews.probeBoss(),
+      },
       playerRenderY: this.playerView?.group.position.y ?? 0,
       skills: state
         ? this.loadoutEntries(state).map((entry) => ({

@@ -1,22 +1,30 @@
 import * as THREE from 'three';
 import type { TerrainSurface } from './terrainSurface';
 
+const UP = new THREE.Vector3(0, 1, 0);
+
 function ringGeometry(inner: number, outer: number): THREE.RingGeometry {
   const geo = new THREE.RingGeometry(inner, outer, 48);
   geo.rotateX(-Math.PI / 2);
   return geo;
 }
 
+function flatten(v: THREE.Vector3): { x: number; y: number; z: number } {
+  return { x: v.x, y: v.y, z: v.z };
+}
+
 /**
  * Pointer feedback: a dim ground ring, a warm enemy ring, and a pulsing
- * move destination marker. Every ring samples the terrain height so it never
- * sinks under a rise.
+ * move destination marker. Every ring samples the terrain height and normal so
+ * it never sinks under a rise and lies flush with a slope.
  */
 export class CursorMarker {
   private readonly hoverRing: THREE.Mesh;
   private readonly hoverMaterial: THREE.MeshBasicMaterial;
   private readonly destRing: THREE.Mesh;
   private readonly destMaterial: THREE.MeshBasicMaterial;
+  private readonly hoverNormal = new THREE.Vector3(0, 1, 0);
+  private readonly destNormal = new THREE.Vector3(0, 1, 0);
   private destVisible = false;
 
   constructor(
@@ -51,11 +59,14 @@ export class CursorMarker {
 
   setHover(point: THREE.Vector3 | null, enemyRadius?: number): void {
     if (point) {
+      // Center clearance is unchanged; the ring only tilts to the slope.
       this.hoverRing.position.set(
         point.x,
         this.terrain.heightAt(point.x, point.z) + 0.025,
         point.z,
       );
+      this.terrain.normalAt(point.x, point.z, this.hoverNormal);
+      this.hoverRing.quaternion.setFromUnitVectors(UP, this.hoverNormal);
       this.hoverRing.scale.setScalar(enemyRadius === undefined ? 1 : (enemyRadius + 0.15) / 0.4);
       this.hoverMaterial.color.setHex(enemyRadius === undefined ? this.color : 0xff785e);
       this.hoverMaterial.opacity = enemyRadius === undefined ? 0.32 : 0.82;
@@ -74,6 +85,8 @@ export class CursorMarker {
         this.terrain.heightAt(point.x, point.z) + 0.035,
         point.z,
       );
+      this.terrain.normalAt(point.x, point.z, this.destNormal);
+      this.destRing.quaternion.setFromUnitVectors(UP, this.destNormal);
       this.destRing.visible = true;
       this.destVisible = true;
       this.destMaterial.opacity = 0.85;
@@ -86,10 +99,12 @@ export class CursorMarker {
 
   private destFade = 0;
 
-  /** QA/debug snapshot of the ground-anchored markers. */
+  /** QA/debug snapshot of the ground-anchored markers and their surface normals. */
   probe(): {
     hover: { x: number; y: number; z: number } | null;
     destination: { x: number; y: number; z: number } | null;
+    hoverNormal: { x: number; y: number; z: number } | null;
+    destinationNormal: { x: number; y: number; z: number } | null;
   } {
     return {
       hover: this.hoverRing.visible
@@ -98,6 +113,8 @@ export class CursorMarker {
       destination: this.destVisible
         ? { x: this.destRing.position.x, y: this.destRing.position.y, z: this.destRing.position.z }
         : null,
+      hoverNormal: this.hoverRing.visible ? flatten(this.hoverNormal) : null,
+      destinationNormal: this.destVisible ? flatten(this.destNormal) : null,
     };
   }
 
