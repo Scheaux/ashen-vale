@@ -144,6 +144,15 @@ export class CraftingPanel {
     this.renderDetail(state, owned.find(({ item }) => item.uid === this.selectedUid) ?? null);
   }
 
+  /**
+   * Pointer focus must not scroll the panel: a scroll between the two clicks of
+   * a double-click can move Confirm under the old pointer position. Keyboard
+   * activation (detail 0) may scroll the focused control into view.
+   */
+  private focusFromGesture(el: HTMLElement | null, detail: number): void {
+    el?.focus({ preventScroll: detail > 0 });
+  }
+
   private renderDetail(state: GameState, entry: OwnedItem | null): void {
     if (!entry) {
       this.detailEl.innerHTML = '<p class="craft-empty">No gear to craft. Find or equip an item first.</p>';
@@ -193,33 +202,35 @@ export class CraftingPanel {
         prompt.className = 'craft-salvage-prompt';
         prompt.setAttribute('role', 'status');
         prompt.textContent = 'Salvage this item?';
-        const actions = document.createElement('div');
-        actions.className = 'craft-salvage-actions';
+        const salvageActions = document.createElement('div');
+        salvageActions.className = 'craft-salvage-actions';
         const confirmBtn = document.createElement('button');
         confirmBtn.className = 'skill-btn';
         confirmBtn.dataset.craftSalvageConfirm = '';
         confirmBtn.textContent = `Confirm salvage · ${value} Dust`;
-        confirmBtn.addEventListener('click', () => {
+        confirmBtn.addEventListener('click', (event) => {
           this.pendingSalvageUid = null;
           this.lastSignature = '';
           this.sync(state);
           this.callbacks.onSalvage(item.uid);
-          const nextSalvage = this.detailEl.querySelector<HTMLElement>('[data-craft-salvage]');
-          if (nextSalvage) nextSalvage.focus();
-          else this.closeBtn.focus();
+          const next = this.detailEl.querySelector<HTMLElement>('[data-craft-salvage]') ?? this.closeBtn;
+          this.focusFromGesture(next, event.detail);
         });
         const cancelBtn = document.createElement('button');
         cancelBtn.className = 'skill-btn skill-btn--quiet';
         cancelBtn.dataset.craftSalvageCancel = '';
         cancelBtn.textContent = 'Cancel';
-        cancelBtn.addEventListener('click', () => {
+        cancelBtn.addEventListener('click', (event) => {
           this.pendingSalvageUid = null;
           this.lastSignature = '';
           this.sync(state);
-          this.detailEl.querySelector<HTMLElement>('[data-craft-salvage]')?.focus();
+          this.focusFromGesture(
+            this.detailEl.querySelector<HTMLElement>('[data-craft-salvage]'),
+            event.detail,
+          );
         });
-        actions.append(confirmBtn, cancelBtn);
-        salvage.append(prompt, actions);
+        salvageActions.append(confirmBtn, cancelBtn);
+        salvage.append(prompt, salvageActions);
       } else {
         const button = document.createElement('button');
         button.className = 'skill-btn';
@@ -230,7 +241,10 @@ export class CraftingPanel {
           this.pendingSalvageUid = item.uid;
           this.lastSignature = '';
           this.sync(state);
-          this.detailEl.querySelector<HTMLElement>('[data-craft-salvage-confirm]')?.focus();
+          this.focusFromGesture(
+            this.detailEl.querySelector<HTMLElement>('[data-craft-salvage-confirm]'),
+            event.detail,
+          );
         });
         salvage.appendChild(button);
       }

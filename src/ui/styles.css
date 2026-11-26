@@ -2020,8 +2020,8 @@ kbd {
   border-top: 1px solid rgba(200, 162, 74, 0.18);
 }
 
-/* Reserve the prompt + actions row so arming cannot reflow the centered panel
-   and slide Confirm under the old Salvage button. */
+/* Deliberate no-reflow trade-off: reserve the prompt + actions row so arming
+   cannot shift the centered panel and slide Confirm under the old button. */
 .craft-salvage--reserved {
   min-height: 4rem;
 }
@@ -2050,6 +2050,10 @@ kbd {
   flex-wrap: wrap;
   gap: 0.4rem;
   width: 100%;
+}
+
+.craft-salvage-actions .skill-btn {
+  white-space: nowrap;
 }
 
 .craft-empty {
