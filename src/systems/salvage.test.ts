@@ -108,6 +108,30 @@ describe('salvage transactions', () => {
     expect(cachedPlayerStats(state)).toEqual(statsBefore);
   });
 
+  it('refuses an equipped uid even when a bag copy shares it', () => {
+    const state = createGameState(getClass('marauder'), layout());
+    const bagCopy = item({ uid: 'salvage-duplicate', rarity: 'rare', itemLevel: 10, quality: 10 });
+    const equippedCopy = item({ uid: 'salvage-duplicate', rarity: 'rare', itemLevel: 10, quality: 10 });
+    const bystander = item({ uid: 'salvage-bystander', rarity: 'magic', itemLevel: 5, quality: 0 });
+    state.inventory.bags.push(bagCopy, bystander);
+    state.inventory.equipment.chest = equippedCopy;
+    state.currency = { dust: 4, rune: 1, quality: 2 };
+    const bagsBefore = [...state.inventory.bags];
+    const equipmentBefore = { ...state.inventory.equipment };
+    const currencyBefore = { ...state.currency };
+    const statsBefore = cachedPlayerStats(state);
+
+    const result = salvageItem(state, bagCopy.uid);
+
+    expect(result).toEqual({ ok: false, reason: 'Unequip the item before salvaging' });
+    expect(state.inventory.bags).toEqual(bagsBefore);
+    expect(state.inventory.bags).toHaveLength(2);
+    expect(state.inventory.equipment).toEqual(equipmentBefore);
+    expect(state.inventory.equipment.chest).toBe(equippedCopy);
+    expect(state.currency).toEqual(currencyBefore);
+    expect(cachedPlayerStats(state)).toEqual(statsBefore);
+  });
+
   it('refuses unknown uids without changing inventory, currency or stats', () => {
     const state = createGameState(getClass('ranger'), layout());
     const bagged = item({ uid: 'salvage-bagged', rarity: 'rare', itemLevel: 10, quality: 10 });

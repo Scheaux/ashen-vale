@@ -44,7 +44,7 @@ npm run qa:release # production build + the full-loop release suite only
 | 1 / 2 | Drink the health / mana flask |
 | P | Open or close the passive skill tree |
 | K | Open or close the skill library/loadout picker |
-| C | Open or close the crafting bench |
+| C | Open or close the crafting bench (craft or salvage) |
 | Scroll | Zoom (close range, 12–21 units) |
 | I | Open or close inventory |
 | Esc | Pause / resume (and back out of menus) |
@@ -98,8 +98,10 @@ npm run qa:release # production build + the full-loop release suite only
   reforge one affix, **Ashen Runes** to add an affix (upgrading normal to
   magic), and **Quality Embers** for +5% quality. Every kill earns Dust,
   elites earn Runes, the Warden earns two Runes plus a Quality Ember; the
-  victory screen reports the crafting stock. All craft actions are atomic,
-  validated transactions and save v6 persists quality, implicits and currency
+  victory screen reports the crafting stock. Bag items can be **salvaged**
+  there for Ember Dust; equipped gear must be unequipped first. All craft
+  actions are atomic, validated transactions and save v6 persists quality,
+  implicits and currency
 - **Combat stats:** three primary attributes (strength / dexterity /
   intelligence) each drive offence and defence — STR → life, armour and
   attack damage; DEX → evasion, move speed and attack damage; INT → mana,

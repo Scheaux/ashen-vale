@@ -19,14 +19,15 @@ export function salvageValue(item: ItemInstance): number {
 
 /** Bag-only salvage: removes one bag item and credits Ember Dust. */
 export function salvageItem(state: GameState, uid: string): SalvageResult {
+  const equipped = Object.values(state.inventory.equipment)
+    .some((item) => item?.uid === uid);
+  if (equipped) {
+    return { ok: false, reason: 'Unequip the item before salvaging' };
+  }
+
   const index = state.inventory.bags.findIndex((item) => item.uid === uid);
   if (index < 0) {
-    const equipped = Object.values(state.inventory.equipment)
-      .some((item) => item?.uid === uid);
-    return {
-      ok: false,
-      reason: equipped ? 'Unequip the item before salvaging' : 'Item is no longer owned',
-    };
+    return { ok: false, reason: 'Item is no longer owned' };
   }
 
   const value = salvageValue(state.inventory.bags[index]);
