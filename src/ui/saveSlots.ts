@@ -1,4 +1,5 @@
 import { getClass } from '../content/classes';
+import { campCountForZone, getZoneDef } from '../content/zones';
 import type { SaveSlotInfo } from '../save/slots';
 
 export type SavePanelMode = 'load' | 'save';
@@ -99,16 +100,20 @@ export class SaveSlotsPanel {
     if (filled && info.save) {
       const save = info.save;
       const def = getClass(save.classId);
-      const campsCleared = save.objectives.campsCleared.filter(Boolean).length;
-      const bossLine = save.objectives.bossDefeated
-        ? 'Warden slain'
-        : save.objectives.bossSpawned
-          ? 'Warden awake'
-          : 'Warden sleeping';
+      const zone = getZoneDef(save.zoneId);
+      const progress = save.progress[save.zoneId];
+      const campsCleared = progress.campsCleared.filter(Boolean).length;
+      const bossLine = zone.bossId === null
+        ? 'No warden'
+        : progress.bossDefeated
+          ? 'Warden slain'
+          : progress.bossSpawned
+            ? 'Warden awake'
+            : 'Warden sleeping';
       details = [
         `${def.name} · Level ${save.level}`,
-        `${Math.round(save.hp)} / ${Math.round(save.maxHp)} life · The Ashen Moor`,
-        `Camps ${campsCleared}/${save.objectives.campsCleared.length} · ${bossLine}`,
+        `${Math.round(save.hp)} / ${Math.round(save.maxHp)} life · ${zone.name}`,
+        `Camps ${campsCleared}/${campCountForZone(save.zoneId)} · ${bossLine}`,
       ];
     } else if (corrupt) {
       details = ['The save data is unreadable.', info.error ?? 'Unknown save error.'];

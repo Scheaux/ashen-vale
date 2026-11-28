@@ -5,9 +5,16 @@ import type {
   EliteModifier,
   SkillId,
   ZoneBounds,
+  ZoneId,
   ZoneLayout,
 } from '../content/types';
 import { LOADOUT_SLOTS } from '../content/types';
+import {
+  activeCampsForZone,
+  ZONE_DEFS,
+  ZONE_IDS,
+  type BossTrigger,
+} from '../content/zones';
 import { getEnemy } from '../content/enemies';
 import { startingSkillFor } from '../content/skills';
 import type { RuneId } from '../content/runes';
@@ -213,8 +220,8 @@ export interface CurrencyState {
   quality: number;
 }
 
-/** Zone objective tracking (slice 7): camps, then the Ashen Warden. */
-export interface ObjectiveState {
+/** Per-zone objective tracking (slice 7+): camps, then the zone boss. */
+export interface ZoneProgress {
   campsTotal: number;
   campCleared: boolean[];
   bossSpawned: boolean;
@@ -300,7 +307,14 @@ export type SimEvent =
 
 export interface GameState {
   tick: number;
+  zoneId: ZoneId;
   zoneSeed: number;
+  /** Per-zone progress; only the current zone advances in 5.0. */
+  progress: Record<ZoneId, ZoneProgress>;
+  /** Same object as progress[zoneId]. */
+  objectives: ZoneProgress;
+  bossTrigger: BossTrigger;
+  finalZone: ZoneId;
   player: PlayerState;
   enemies: EnemyState[];
   projectiles: ProjectileState[];
@@ -314,8 +328,6 @@ export interface GameState {
   arena: ZoneBounds;
   /** Where the Ashen Warden waits until the camps are cleared. */
   bossSpawn: EnemySpawn;
-  /** Zone objectives: clear the camps, then slay the Warden. */
-  objectives: ObjectiveState;
   inventory: InventoryState;
   loot: LootDrop[];
   /** Ember Dust, Ashen Runes and Quality Embers. */
@@ -403,7 +415,12 @@ export function createEnemyState(spawn: EnemySpawn, id: string): EnemyState {
   };
 }
 
-export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ffee): GameState {
+export function createGameState(
+  def: ClassDef,
+  layout: ZoneLayout,
+  seed = 0xc0ffee,
+  zoneId: ZoneId = 'ashen-moor',
+): GameState {
   const maxMana = baseManaFor(def.stats.intelligence);
   const maxHp = Math.round(PLAYER_MAX_HP + def.stats.strength * SYNERGY.strength.maxHp);
   const energyShield = Math.round(def.stats.intelligence * SYNERGY.intelligence.energyShield);
@@ -411,9 +428,27 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
   const startingSkill = startingSkillFor(def.id);
   const loadout: Array<SkillId | null> = LOADOUT_SLOTS.map(() => null);
   loadout[LOADOUT_SLOTS.indexOf('q')] = startingSkill.id;
+  const progress = {} as Record<ZoneId, ZoneProgress>;
+  for (const id of ZONE_IDS) {
+    // The live layout supplies the current zone's camp count; inactive zones
+    // hold their authored active-camp slots until a later chapter plays them.
+    const campsTotal = id === zoneId ? camps.size : activeCampsForZone(id);
+    progress[id] = {
+      campsTotal,
+      campCleared: Array.from({ length: campsTotal }, () => false),
+      bossSpawned: false,
+      bossDefeated: false,
+    };
+  }
+  const finalZone = ZONE_IDS.find((id) => ZONE_DEFS[id].final) ?? zoneId;
   return {
     tick: 0,
+    zoneId,
     zoneSeed: layout.seed,
+    progress,
+    objectives: progress[zoneId],
+    bossTrigger: ZONE_DEFS[zoneId].bossTrigger,
+    finalZone,
     player: {
       position: { x: layout.spawn.x, z: layout.spawn.z },
       previousPosition: { x: layout.spawn.x, z: layout.spawn.z },
@@ -458,12 +493,6 @@ export function createGameState(def: ClassDef, layout: ZoneLayout, seed = 0xc0ff
       radius: layout.arena.radius,
     },
     bossSpawn: { ...layout.bossSpawn },
-    objectives: {
-      campsTotal: camps.size,
-      campCleared: Array.from({ length: camps.size }, () => false),
-      bossSpawned: false,
-      bossDefeated: false,
-    },
     inventory: {
       bags: [],
       equipment: { weapon: null, helm: null, chest: null, gloves: null, boots: null, amulet: null },

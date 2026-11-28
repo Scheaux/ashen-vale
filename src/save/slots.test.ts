@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
 import type { ZoneLayout } from '../content/types';
 import { createGameState } from '../sim/state';
-import { createSave } from './schema';
+import { createSave, SAVE_VERSION } from './schema';
 import {
   createMemoryStorage,
   deleteSaveSlot,
@@ -55,7 +55,13 @@ describe('save slots', () => {
     expect(writeSaveSlot(storage, 1, save)).toEqual({ ok: true });
     const reloaded = readSaveSlot(storage, 1);
     expect(reloaded).toMatchObject({ ok: true, recovered: false });
-    if (reloaded.ok) expect(reloaded.save).toEqual(save);
+    if (reloaded.ok) {
+      expect(reloaded.save).toEqual(save);
+      expect(reloaded.save.version).toBe(SAVE_VERSION);
+      expect(reloaded.save.zoneId).toBe('ashen-moor');
+      expect(reloaded.save.progress['ashen-moor'].campsCleared).toHaveLength(3);
+      expect(reloaded.save.progress['drowned-ossuary'].campsCleared).toHaveLength(3);
+    }
 
     const slots = listSaveSlots(storage);
     expect(slots[1].status).toBe('ok');

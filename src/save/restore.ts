@@ -1,6 +1,8 @@
 import { getClass } from '../content/classes';
 import type { ZoneLayout } from '../content/types';
+import { getZoneDef } from '../content/zones';
 import { createEnemyState, createGameState, type GameState } from '../sim/state';
+import { respawnPointFor } from '../systems/movement';
 import { syncPlayerStats } from '../systems/stats';
 import { restoredXpToNext, type SaveGame } from './schema';
 
@@ -8,13 +10,17 @@ import { restoredXpToNext, type SaveGame } from './schema';
  * Rebuild a live GameState from a character checkpoint. Saves are milestone
  * snapshots, not replay state: the live layout rebuilds the zone, cleared
  * camps stay cleared, and a boss fight that was live restarts from its spawn.
+ * 5.0b only knows the moor; ossuary saves stay on disk until 5.0d.
  */
 export function restoreGameState(save: SaveGame, layout: ZoneLayout): GameState {
+  if (save.zoneId !== 'ashen-moor') {
+    throw new Error(`${getZoneDef(save.zoneId).name} is not available yet`);
+  }
   if (save.zoneSeed !== layout.seed) {
     throw new Error('That save belongs to a different realm');
   }
 
-  const state = createGameState(getClass(save.classId), layout);
+  const state = createGameState(getClass(save.classId), layout, 0xc0ffee, save.zoneId);
   state.level = save.level;
   state.xp = save.xp;
   state.xpToNext = restoredXpToNext(save.level);
@@ -59,15 +65,29 @@ export function restoreGameState(save: SaveGame, layout: ZoneLayout): GameState 
   state.flasks.health.charges = Math.min(save.flasks.health, state.flasks.health.max);
   state.flasks.mana.charges = Math.min(save.flasks.mana, state.flasks.mana.max);
 
-  applyObjectives(state, save);
+  applyProgress(state, save);
+
+  // A live Warden restarts at full health; the hero waits at the arena
+  // threshold rather than at the saved spot (or outside the active bounds).
+  if (state.objectives.bossSpawned && !state.objectives.bossDefeated) {
+    const threshold = respawnPointFor(state, layout);
+    p.position = { ...threshold };
+    p.previousPosition = { ...threshold };
+    const ax = state.arena.center.x - p.position.x;
+    const az = state.arena.center.z - p.position.z;
+    p.facing = Math.hypot(ax, az) > 0.01 ? Math.atan2(ax, az) : Math.PI;
+  }
   return state;
 }
 
-function applyObjectives(state: GameState, save: SaveGame): void {
+function applyProgress(state: GameState, save: SaveGame): void {
+  const saved = save.progress[save.zoneId];
   const o = state.objectives;
-  o.campCleared = Array.from({ length: o.campsTotal }, (_, index) => save.objectives.campsCleared[index] === true);
-  o.bossSpawned = save.objectives.bossSpawned;
-  o.bossDefeated = save.objectives.bossDefeated;
+  // The live layout decides how many camps actually exist; the save is always
+  // the authored slot count and may be longer than a test/legacy layout.
+  o.campCleared = Array.from({ length: o.campsTotal }, (_, index) => saved.campsCleared[index] === true);
+  o.bossSpawned = saved.bossSpawned;
+  o.bossDefeated = saved.bossDefeated;
 
   // A cleared camp leaves no enemies behind, exactly as if they had been slain.
   state.enemies = state.enemies.filter((enemy) => enemy.camp < 0 || !o.campCleared[enemy.camp]);

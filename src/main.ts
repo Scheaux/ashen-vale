@@ -9,6 +9,7 @@ import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type Skil
 import type { Rarity } from './content/items';
 import { rollItem, type ItemInstance } from './sim/items';
 import { generateZoneLayout } from './content/zone';
+import { campCountForZone, getZoneDef } from './content/zones';
 import { createPlayerView, type PlayerView } from './render/player';
 import { CameraRig } from './render/camera';
 import { CursorMarker } from './render/cursor';
@@ -42,7 +43,7 @@ import {
 import { damageEnemy, damagePlayer } from './systems/combat';
 import { useFlask, type FlaskKind } from './systems/flasks';
 import { equipItem, unequipItem } from './systems/inventory';
-import { setMoveTarget } from './systems/movement';
+import { setMoveTarget, respawnPointFor } from './systems/movement';
 import {
   allocatePassive,
   passivePointsAvailable,
@@ -251,6 +252,8 @@ export interface AshenDebug {
       status: 'empty' | 'ok' | 'corrupt';
       classId: string | null;
       level: number | null;
+      zoneId: ZoneId | null;
+      zoneName: string | null;
       campsCleared: number;
       campsTotal: number;
       bossSpawned: boolean;
@@ -612,7 +615,7 @@ class Game {
   private respawn(): void {
     const state = this.state;
     if (!state || !this.dead) return;
-    respawnPlayer(state, this.layout.spawn);
+    respawnPlayer(state, respawnPointFor(state, this.layout));
     this.clearCombatViews();
     this.dead = false;
     this.ui.hideDeath();
@@ -686,7 +689,7 @@ class Game {
     const result = writeSaveSlot(
       this.storage,
       this.activeSlot,
-      createCheckpointSave(state, this.layout.spawn, Date.now()),
+      createCheckpointSave(state, respawnPointFor(state, this.layout), Date.now()),
     );
     if (result.ok) this.ui.flashSave(`Checkpoint · Slot ${this.activeSlot + 1}`);
     else this.ui.showToast(result.error, '#ff8577');
@@ -699,7 +702,7 @@ class Game {
     const result = writeSaveSlot(
       this.storage,
       slot,
-      createCheckpointSave(state, this.layout.spawn, Date.now()),
+      createCheckpointSave(state, respawnPointFor(state, this.layout), Date.now()),
     );
     if (!result.ok) {
       this.ui.showToast(result.error, '#ff8577');
@@ -718,6 +721,13 @@ class Game {
       this.ui.showToast(`Cannot load Slot ${slot + 1}: ${read.error}`, '#ff8577');
       this.savePanel.sync(listSaveSlots(this.storage), this.activeSlot);
       this.refreshTitleSaves();
+      return;
+    }
+    if (read.save.zoneId !== 'ashen-moor') {
+      this.ui.showToast(
+        `That save is in ${getZoneDef(read.save.zoneId).name} — not available yet`,
+        '#ff8577',
+      );
       return;
     }
     if (read.save.zoneSeed !== this.layout.seed) {
@@ -1670,26 +1680,33 @@ class Game {
 
   exportSave(): string {
     if (!this.state) throw new Error('no active state');
-    return serializeSave(createCheckpointSave(this.state, this.layout.spawn));
+    return serializeSave(createCheckpointSave(this.state, respawnPointFor(this.state, this.layout)));
   }
 
   saves(): ReturnType<AshenDebug['saves']> {
     return {
       activeSlot: this.activeSlot,
       persistent: this.persistentSaves,
-      slots: listSaveSlots(this.storage).map((info) => ({
-        slot: info.slot,
-        status: info.status,
-        classId: info.save?.classId ?? null,
-        level: info.save?.level ?? null,
-        campsCleared: info.save ? info.save.objectives.campsCleared.filter(Boolean).length : 0,
-        campsTotal: info.save ? info.save.objectives.campsCleared.length : 0,
-        bossSpawned: info.save?.objectives.bossSpawned ?? false,
-        bossDefeated: info.save?.objectives.bossDefeated ?? false,
-        savedAt: info.save?.savedAt ?? 0,
-        recovered: info.recovered,
-        error: info.error ?? null,
-      })),
+      slots: listSaveSlots(this.storage).map((info) => {
+        const save = info.save;
+        const progress = save ? save.progress[save.zoneId] : null;
+        const zone = save ? getZoneDef(save.zoneId) : null;
+        return {
+          slot: info.slot,
+          status: info.status,
+          classId: save?.classId ?? null,
+          level: save?.level ?? null,
+          zoneId: save?.zoneId ?? null,
+          zoneName: zone?.name ?? null,
+          campsCleared: progress ? progress.campsCleared.filter(Boolean).length : 0,
+          campsTotal: save ? campCountForZone(save.zoneId) : 0,
+          bossSpawned: progress?.bossSpawned ?? false,
+          bossDefeated: progress?.bossDefeated ?? false,
+          savedAt: save?.savedAt ?? 0,
+          recovered: info.recovered,
+          error: info.error ?? null,
+        };
+      }),
     };
   }
 }

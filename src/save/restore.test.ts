@@ -5,6 +5,7 @@ import { createGameState, FLASK_MAX_CHARGES } from '../sim/state';
 import { rollItem } from '../sim/items';
 import { createRng } from '../core/rng';
 import { getPlayerStats } from '../systems/stats';
+import { respawnPointFor } from '../systems/movement';
 import { createSave, restoredXpToNext } from './schema';
 import { restoreGameState } from './restore';
 
@@ -17,11 +18,12 @@ function campLayout(seed = 7): ZoneLayout {
     colliders: [],
     props: [],
     arena: { center: { x: 0, z: -30 }, radius: 8 },
-    bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [] },
+    bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [], camp: -1 },
     enemySpawns: [
       { enemyId: 'ashen-husk', x: 6, z: 6, elite: [], camp: 0 },
       { enemyId: 'cinder-cultist', x: 8, z: 6, elite: [], camp: 0 },
       { enemyId: 'mire-skitterer', x: -6, z: 2, elite: [], camp: 1 },
+      { enemyId: 'ashen-husk', x: 0, z: -8, elite: [], camp: 2 },
     ],
   };
 }
@@ -52,25 +54,43 @@ describe('restoreGameState', () => {
     expect(restored.player.energyShield).toBe(restored.player.maxEnergyShield);
     expect(restored.flasks.health.charges).toBe(2);
     expect(restored.flasks.mana.charges).toBe(FLASK_MAX_CHARGES);
+    expect(restored.objectives).toBe(restored.progress['ashen-moor']);
   });
 
   it('keeps cleared camps clear and removes their enemies', () => {
     const layout = campLayout();
     const state = createGameState(getClass('ranger'), layout);
-    state.objectives.campCleared = [true, false];
+    state.objectives.campCleared = [true, false, false];
     const save = createSave(state);
 
     const restored = restoreGameState(save, layout);
-    expect(restored.objectives.campCleared).toEqual([true, false]);
-    expect(restored.enemies.map((enemy) => enemy.camp)).toEqual([1]);
+    expect(restored.objectives.campCleared).toEqual([true, false, false]);
+    expect(restored.enemies.map((enemy) => enemy.camp)).toEqual([1, 2]);
     expect(restored.enemies.some((enemy) => enemy.camp === 0)).toBe(false);
   });
 
-  it('restarts a live boss fight at the arena spawn', () => {
+  it('slices saved camp slots down to the live layout camp count', () => {
+    const layout = campLayout();
+    const state = createGameState(getClass('ranger'), layout);
+    state.objectives.campCleared = [true, true, false];
+    const save = createSave(state);
+    const shortLayout = {
+      ...campLayout(),
+      enemySpawns: layout.enemySpawns.filter((spawn) => spawn.camp !== 2),
+    };
+
+    const restored = restoreGameState(save, shortLayout);
+    expect(restored.objectives.campsTotal).toBe(2);
+    expect(restored.objectives.campCleared).toEqual([true, true]);
+    expect(restored.enemies).toHaveLength(0);
+  });
+
+  it('restarts a live boss fight at full health with the hero at the arena threshold', () => {
     const layout = campLayout();
     const state = createGameState(getClass('witch'), layout);
-    state.objectives.campCleared = [true, true];
+    state.objectives.campCleared = [true, true, true];
     state.objectives.bossSpawned = true;
+    const expected = respawnPointFor(state, layout);
     const save = createSave(state);
 
     const restored = restoreGameState(save, layout);
@@ -78,12 +98,24 @@ describe('restoreGameState', () => {
     expect(bosses).toHaveLength(1);
     expect(bosses[0].position).toEqual({ x: layout.bossSpawn.x, z: layout.bossSpawn.z });
     expect(bosses[0].hp).toBe(bosses[0].maxHp);
+    expect(restored.player.position).toEqual(expected);
+    expect(restored.player.previousPosition).toEqual(expected);
+    expect(restored.player.position).not.toEqual(layout.spawn);
+
+    const thresholdDistance = Math.hypot(
+      restored.player.position.x - layout.arena.center.x,
+      restored.player.position.z - layout.arena.center.z,
+    );
+    expect(thresholdDistance).toBeLessThan(layout.arena.radius);
+    expect(thresholdDistance).toBeGreaterThan(layout.arena.radius - 2);
+    const zoneDistance = Math.hypot(restored.player.position.x, restored.player.position.z);
+    expect(zoneDistance).toBeLessThanOrEqual(layout.bounds.radius - restored.player.radius);
   });
 
   it('does not respawn a defeated boss', () => {
     const layout = campLayout();
     const state = createGameState(getClass('witch'), layout);
-    state.objectives.campCleared = [true, true];
+    state.objectives.campCleared = [true, true, true];
     state.objectives.bossSpawned = true;
     state.objectives.bossDefeated = true;
     const save = createSave(state);
@@ -91,6 +123,8 @@ describe('restoreGameState', () => {
     const restored = restoreGameState(save, layout);
     expect(restored.objectives.bossDefeated).toBe(true);
     expect(restored.enemies.some((enemy) => enemy.defId === 'ashen-warden')).toBe(false);
+    // The moor spawn is used again once the fight is over.
+    expect(restored.player.position).toEqual(layout.spawn);
   });
 
   it('clamps an out-of-bounds position and revives a zero-hp save defensively', () => {
@@ -112,5 +146,18 @@ describe('restoreGameState', () => {
   it('refuses saves from a different zone seed', () => {
     const save = createSave(createGameState(getClass('marauder'), campLayout(7)));
     expect(() => restoreGameState(save, campLayout(8))).toThrow(/different realm/);
+  });
+
+  it('refuses ossuary saves until 5.0d', () => {
+    const layout = campLayout();
+    const save = createSave(createGameState(getClass('marauder'), layout));
+    save.zoneId = 'drowned-ossuary';
+    save.progress['ashen-moor'] = {
+      campsCleared: [true, true, true],
+      bossSpawned: true,
+      bossDefeated: true,
+    };
+
+    expect(() => restoreGameState(save, layout)).toThrow(/Drowned Ossuary is not available yet/);
   });
 });

@@ -1,5 +1,5 @@
 import { angleLerp } from '../core/math';
-import type { CircleCollider, ZoneBounds } from '../content/types';
+import type { CircleCollider, ZoneBounds, ZoneLayout } from '../content/types';
 import type { GameState, Vec2 } from '../sim/state';
 
 /**
@@ -36,6 +36,41 @@ export function setMoveTarget(state: GameState, target: Vec2): void {
 export function activeBounds(state: GameState): ZoneBounds {
   const o = state.objectives;
   return o.bossSpawned && !o.bossDefeated ? state.arena : state.bounds;
+}
+
+/**
+ * Checkpoint/Continue respawn point: a live boss fight restarts the hero just
+ * inside the arena threshold on the zone-spawn side; otherwise the normal zone
+ * spawn is used. The result is clamped to the walkable zone bounds.
+ */
+export function respawnPointFor(state: GameState, layout: ZoneLayout): Vec2 {
+  const o = state.objectives;
+  if (!o.bossSpawned || o.bossDefeated) {
+    return { x: layout.spawn.x, z: layout.spawn.z };
+  }
+
+  const { center, radius } = state.arena;
+  const inset = Math.min(1, radius / 2);
+  const dx = layout.spawn.x - center.x;
+  const dz = layout.spawn.z - center.z;
+  const dist = Math.hypot(dx, dz);
+  const nx = dist > 1e-6 ? dx / dist : 0;
+  const nz = dist > 1e-6 ? dz / dist : 1;
+  let x = center.x + nx * (radius - inset);
+  let z = center.z + nz * (radius - inset);
+
+  // The arena is inside the zone in normal layouts; keep the threshold legal
+  // even when a fixture places it close to the outer walkable boundary.
+  const bx = x - layout.bounds.center.x;
+  const bz = z - layout.bounds.center.z;
+  const boundDist = Math.hypot(bx, bz);
+  const limit = Math.max(0, layout.bounds.radius - state.player.radius);
+  if (boundDist > limit && boundDist > 0) {
+    const scale = limit / boundDist;
+    x = layout.bounds.center.x + bx * scale;
+    z = layout.bounds.center.z + bz * scale;
+  }
+  return { x, z };
 }
 
 export function cancelMove(state: GameState): void {
