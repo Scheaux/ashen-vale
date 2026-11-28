@@ -58,8 +58,9 @@ describe('save slots', () => {
     if (reloaded.ok) {
       expect(reloaded.save).toEqual(save);
       expect(reloaded.save.version).toBe(SAVE_VERSION);
+      expect(reloaded.save.version).toBe(8);
       expect(reloaded.save.zoneId).toBe('ashen-moor');
-      expect(reloaded.save.progress['ashen-moor'].campsCleared).toHaveLength(3);
+      expect(reloaded.save.progress['ashen-moor'].campsCleared).toHaveLength(16);
       expect(reloaded.save.progress['drowned-ossuary'].campsCleared).toHaveLength(3);
     }
 

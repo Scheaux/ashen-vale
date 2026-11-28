@@ -2,7 +2,7 @@
  * Slice 4 browser QA: rewards & loot. Verifies the full loop — kills award XP,
  * enemies drop rarity-tagged items, walking over a drop fills the bag, the
  * inventory screen equips items atomically, level-ups toast, and the save
- * stub serializes the character state at the current schema (v7).
+ * stub serializes the character state at the current schema (v8).
  *
  * Run: node qa/verify-slice-04.mjs   (starts `vite preview` on :4173 itself)
  */
@@ -171,7 +171,7 @@ async function main() {
 
   // --- Save shape (current schema) ---
   const save = await page.evaluate(() => JSON.parse(window.__ashen.exportSave()));
-  check('save serializes at the current schema version', save.version === 7, `version ${save.version}`);
+  check('save serializes at the current schema version', save.version === 8, `version ${save.version}`);
   check('save carries progression + inventory', save.level >= 2 && Array.isArray(save.inventory.bags));
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

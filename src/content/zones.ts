@@ -2,7 +2,7 @@ import type { EnemyId, ZoneId } from './types';
 
 /**
  * Authored zone identity and progression shape. `campCount` is the number of
- * save slots a zone always stores; `activeCamps` is how many camps the 5.0
+ * save slots a zone always stores; `activeCamps` is how many camps the current
  * build actually plays in that zone.
  */
 export type BossTrigger = 'camps' | 'arena';
@@ -12,7 +12,7 @@ export interface ZoneDef {
   name: string;
   chapter: string;
   seed: number;
-  /** Camp slots persisted for this zone (always 3 in 5.0). */
+  /** Camp slots persisted for this zone. */
   campCount: number;
   /** Camps active in the current chapter; later chapters add more. */
   activeCamps: number;
@@ -27,7 +27,7 @@ export const ZONE_DEFS: Record<ZoneId, ZoneDef> = {
     name: 'The Ashen Moor',
     chapter: 'I',
     seed: 20261122,
-    campCount: 3,
+    campCount: 16,
     activeCamps: 3,
     bossId: 'ashen-warden',
     bossTrigger: 'camps',

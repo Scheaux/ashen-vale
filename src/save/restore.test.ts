@@ -74,6 +74,7 @@ describe('restoreGameState', () => {
     const state = createGameState(getClass('ranger'), layout);
     state.objectives.campCleared = [true, true, false];
     const save = createSave(state);
+    expect(save.progress['ashen-moor'].campsCleared).toHaveLength(16);
     const shortLayout = {
       ...campLayout(),
       enemySpawns: layout.enemySpawns.filter((spawn) => spawn.camp !== 2),
@@ -83,6 +84,19 @@ describe('restoreGameState', () => {
     expect(restored.objectives.campsTotal).toBe(2);
     expect(restored.objectives.campCleared).toEqual([true, true]);
     expect(restored.enemies).toHaveLength(0);
+  });
+
+  it('ignores v8 padding slots beyond the live three-camp layout', () => {
+    const layout = campLayout();
+    const state = createGameState(getClass('ranger'), layout);
+    state.objectives.campCleared = [true, false, true];
+    const save = createSave(state);
+    // A future 16-camp save may carry cleared flags past the live camp count.
+    save.progress['ashen-moor'].campsCleared[10] = true;
+
+    const restored = restoreGameState(save, layout);
+    expect(restored.objectives.campsTotal).toBe(3);
+    expect(restored.objectives.campCleared).toEqual([true, false, true]);
   });
 
   it('restarts a live boss fight at full health with the hero at the arena threshold', () => {
@@ -153,7 +167,7 @@ describe('restoreGameState', () => {
     const save = createSave(createGameState(getClass('marauder'), layout));
     save.zoneId = 'drowned-ossuary';
     save.progress['ashen-moor'] = {
-      campsCleared: [true, true, true],
+      campsCleared: Array.from({ length: 16 }, (_, index) => index < 3),
       bossSpawned: true,
       bossDefeated: true,
     };

@@ -1,5 +1,5 @@
 import { getClass } from '../content/classes';
-import { campCountForZone, getZoneDef } from '../content/zones';
+import { activeCampsForZone, getZoneDef } from '../content/zones';
 import type { SaveSlotInfo } from '../save/slots';
 
 export type SavePanelMode = 'load' | 'save';
@@ -102,7 +102,10 @@ export class SaveSlotsPanel {
       const def = getClass(save.classId);
       const zone = getZoneDef(save.zoneId);
       const progress = save.progress[save.zoneId];
-      const campsCleared = progress.campsCleared.filter(Boolean).length;
+      // The save always stores the authored slot count; the card reports the
+      // camps this build actually plays.
+      const campsTotal = activeCampsForZone(save.zoneId);
+      const campsCleared = progress.campsCleared.slice(0, campsTotal).filter(Boolean).length;
       const bossLine = zone.bossId === null
         ? 'No warden'
         : progress.bossDefeated
@@ -113,7 +116,7 @@ export class SaveSlotsPanel {
       details = [
         `${def.name} · Level ${save.level}`,
         `${Math.round(save.hp)} / ${Math.round(save.maxHp)} life · ${zone.name}`,
-        `Camps ${campsCleared}/${campCountForZone(save.zoneId)} · ${bossLine}`,
+        `Camps ${campsCleared}/${campsTotal} · ${bossLine}`,
       ];
     } else if (corrupt) {
       details = ['The save data is unreadable.', info.error ?? 'Unknown save error.'];

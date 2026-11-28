@@ -9,7 +9,7 @@ import { LOADOUT_SLOTS, type ClassDef, type ClassId, type LoadoutSlot, type Skil
 import type { Rarity } from './content/items';
 import { rollItem, type ItemInstance } from './sim/items';
 import { generateZoneLayout } from './content/zone';
-import { campCountForZone, getZoneDef } from './content/zones';
+import { activeCampsForZone, getZoneDef } from './content/zones';
 import { createPlayerView, type PlayerView } from './render/player';
 import { CameraRig } from './render/camera';
 import { CursorMarker } from './render/cursor';
@@ -1715,6 +1715,9 @@ class Game {
         const save = info.save;
         const progress = save ? save.progress[save.zoneId] : null;
         const zone = save ? getZoneDef(save.zoneId) : null;
+        // Save bodies store all authored slots; reviews should see the camps
+        // this build actually plays (3 for the moor in this slice).
+        const campsTotal = save ? activeCampsForZone(save.zoneId) : 0;
         return {
           slot: info.slot,
           status: info.status,
@@ -1722,8 +1725,8 @@ class Game {
           level: save?.level ?? null,
           zoneId: save?.zoneId ?? null,
           zoneName: zone?.name ?? null,
-          campsCleared: progress ? progress.campsCleared.filter(Boolean).length : 0,
-          campsTotal: save ? campCountForZone(save.zoneId) : 0,
+          campsCleared: progress ? progress.campsCleared.slice(0, campsTotal).filter(Boolean).length : 0,
+          campsTotal,
           bossSpawned: progress?.bossSpawned ?? false,
           bossDefeated: progress?.bossDefeated ?? false,
           savedAt: save?.savedAt ?? 0,
