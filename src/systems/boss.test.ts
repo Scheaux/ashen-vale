@@ -65,6 +65,7 @@ describe('Ashen Warden boss encounter (slice 7)', () => {
       );
     }
     expect(slamTelegraph).toBeDefined();
+    expect(slamTelegraph!.tier).toBe('boss');
     // The slam is announced where the player stood when the windup started.
     expect(Math.hypot(slamTelegraph!.x - boss.strikeTarget.x, slamTelegraph!.z - boss.strikeTarget.z)).toBeLessThan(0.01);
     expect(slamTelegraph!.radius).toBe(getEnemy('ashen-warden').boss!.phases[1].attack.range);

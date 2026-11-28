@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SimEvent } from '../sim/state';
+import type { SimEvent, TelegraphTier } from '../sim/state';
 import { disposeMeshTree } from './dispose';
 import type { TerrainSurface } from './terrainSurface';
 
@@ -12,6 +12,8 @@ interface TelegraphView {
   underlayMaterial: THREE.MeshBasicMaterial;
   fillMaterial: THREE.MeshBasicMaterial;
   rimMaterial: THREE.MeshBasicMaterial;
+  /** Tier that produced this tell (normal tells never reach a view). */
+  tier: TelegraphTier;
   /** Seconds since the tell started, plus its advertised duration. */
   age: number;
   duration: number;
@@ -19,6 +21,15 @@ interface TelegraphView {
   fade: number;
   /** True while the tell is a live warning rather than a fading ghost. */
   active: boolean;
+}
+
+export interface TelegraphCounts {
+  /** Live (non-fading) ground tells currently rendered. */
+  visible: number;
+  /** Normal-tier tells suppressed since the last clear. */
+  hiddenNormal: number;
+  visibleElite: number;
+  visibleBoss: number;
 }
 
 const TELEGRAPH_COLOR = 0xff4a33;
@@ -96,6 +107,7 @@ function outlineQuads(points: ReadonlyArray<{ x: number; z: number }>, width: nu
 export class TelegraphLayer {
   private readonly group = new THREE.Group();
   private readonly views = new Map<string, TelegraphView>();
+  private hiddenNormal = 0;
 
   constructor(scene: THREE.Scene, private readonly terrain: TerrainSurface) {
     scene.add(this.group);
@@ -104,11 +116,36 @@ export class TelegraphLayer {
   clear(): void {
     for (const view of this.views.values()) this.disposeView(view);
     this.views.clear();
+    this.hiddenNormal = 0;
+  }
+
+  /**
+   * Live tells rendered plus the normal tells filtered out since the last
+   * clear. `visible` counts active warnings only, so a fading ghost does not
+   * keep the QA counters busy after its strike has resolved.
+   */
+  counts(): TelegraphCounts {
+    let visible = 0;
+    let visibleElite = 0;
+    let visibleBoss = 0;
+    for (const view of this.views.values()) {
+      if (!view.active) continue;
+      visible++;
+      if (view.tier === 'elite') visibleElite++;
+      else if (view.tier === 'boss') visibleBoss++;
+    }
+    return { visible, hiddenNormal: this.hiddenNormal, visibleElite, visibleBoss };
   }
 
   handleEvents(events: readonly SimEvent[]): void {
     for (const ev of events) {
       if (ev.kind !== 'telegraph') continue;
+      // Normal enemies keep the sim event (fairness/AI tests) but read their
+      // windup from body language and the emissive ramp, not a ground stain.
+      if (ev.tier === 'normal') {
+        this.hiddenNormal++;
+        continue;
+      }
       const existing = this.views.get(ev.enemyId);
       if (existing) this.disposeView(existing);
 
@@ -153,6 +190,7 @@ export class TelegraphLayer {
         underlayMaterial,
         fillMaterial,
         rimMaterial,
+        tier: ev.tier,
         age: 0,
         duration: Math.max(0.15, ev.duration),
         fade: 0,

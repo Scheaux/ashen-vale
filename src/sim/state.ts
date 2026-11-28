@@ -248,6 +248,9 @@ export interface SkillState {
   runes: Partial<Record<SkillId, RuneId>>;
 }
 
+/** Ground-tell importance tier: only elite and boss tells render. */
+export type TelegraphTier = 'normal' | 'elite' | 'boss';
+
 /**
  * Authoritative combat events emitted by the simulation. Rendering and UI
  * consume these; they never infer gameplay outcomes from visual state.
@@ -258,6 +261,8 @@ export type SimEvent =
       kind: 'telegraph';
        enemyId: string;
        attackId: string;
+      /** Elite/boss tells render on the ground; normal tells stay sim-only. */
+      tier: TelegraphTier;
       shape: 'melee-arc' | 'bolt' | 'pounce' | 'slam';
       x: number;
       z: number;

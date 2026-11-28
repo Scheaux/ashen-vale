@@ -134,6 +134,8 @@ export interface AshenDebug {
     projectiles: number;
     strikes: number;
     hazards: number;
+    /** Ground-tell visibility by tier plus filtered normal tells. */
+    telegraphs: ReturnType<TelegraphLayer['counts']>;
     camera: { yaw: number; pitch: number; distance: number };
     markers: {
       hover: { x: number; y: number; z: number } | null;
@@ -1432,6 +1434,7 @@ class Game {
       projectiles: state?.projectiles.length ?? 0,
       strikes: state?.strikes.length ?? 0,
       hazards: state?.hazards.length ?? 0,
+      telegraphs: this.telegraphs.counts(),
       camera: { yaw: this.rig.yaw, pitch: this.rig.pitch, distance: this.rig.distance },
       markers: this.cursor.probe(),
       probes: {

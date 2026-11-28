@@ -395,12 +395,15 @@ async function main() {
     await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z + 3]);
     await page.evaluate(([id]) => window.__ashen.hurtEnemy(id, 300), [boss.id]);
     let sawCinder = false;
+    let sawBossTell = false;
     for (let i = 0; i < 60 && !sawCinder; i++) {
       await page.evaluate(() => window.__ashen.healPlayer(9999));
       await sleep(100);
       const now = await snap();
+      if (now.telegraphs.visibleBoss > 0) sawBossTell = true;
       sawCinder = now.hazards > 0;
     }
+    check('the Warden slam keeps a visible boss ground tell', sawBossTell);
     check('the Warden slam leaves a cinder pool', sawCinder);
     await page.screenshot({ path: `${SHOTS}96-cinder-pool.png` });
   }

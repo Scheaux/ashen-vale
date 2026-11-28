@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import type { SimEvent } from '../sim/state';
+import type { SimEvent, TelegraphTier } from '../sim/state';
 import { TerrainSurface, WARNING_CLEARANCE } from './terrainSurface';
-import { warningFootprints } from './telegraphs';
+import { TelegraphLayer, warningFootprints } from './telegraphs';
 
 function unevenGround() {
   const geometry = new THREE.PlaneGeometry(42, 42, 42, 42);
@@ -20,7 +20,7 @@ describe('terrain-following enemy warnings', () => {
   it.each(['melee-arc', 'pounce', 'bolt'] as const)('keeps the entire %s warning just above the rendered triangles', (shape) => {
     const { ground, surface } = unevenGround();
     const ev: Extract<SimEvent, { kind: 'telegraph' }> = {
-      kind: 'telegraph', enemyId: 'fixture', attackId: 'fixture-0', shape,
+      kind: 'telegraph', enemyId: 'fixture', attackId: 'fixture-0', tier: 'elite', shape,
       x: -4, z: -8, facing: 0.67, range: shape === 'bolt' ? 24 : 5.5, radius: 0.95, arcDeg: 110, duration: 0.8,
     };
     const footprints = warningFootprints(ev);
@@ -53,6 +53,30 @@ describe('terrain-following enemy warnings', () => {
     expect(coveredArea).toBeCloseTo(area, 4);
     expect(highest).toBeGreaterThan(0.045); // the old fixed plane would disappear here
     geometry.dispose();
+    ground.geometry.dispose();
+    ground.material.dispose();
+  });
+
+  it('filters normal-tier tells and counts visible elites and bosses', () => {
+    const { ground, surface } = unevenGround();
+    const scene = new THREE.Scene();
+    const layer = new TelegraphLayer(scene, surface);
+    const tell = (tier: TelegraphTier, enemyId: string): Extract<SimEvent, { kind: 'telegraph' }> => ({
+      kind: 'telegraph', enemyId, attackId: `${enemyId}-0`, tier, shape: 'melee-arc',
+      x: 0, z: 0, facing: 0, range: 4, radius: 0.8, arcDeg: 110, duration: 0.8,
+    });
+
+    layer.handleEvents([tell('normal', 'normal-1'), tell('elite', 'elite-1'), tell('boss', 'boss-1')]);
+    expect(layer.counts()).toEqual({ visible: 2, hiddenNormal: 1, visibleElite: 1, visibleBoss: 1 });
+    // The first live warning belongs to the first rendered tier.
+    expect(layer.probe()?.id).toBe('elite-1');
+
+    // Normal tells never create a view, even when they repeat.
+    layer.handleEvents([tell('normal', 'normal-2')]);
+    expect(layer.counts()).toEqual({ visible: 2, hiddenNormal: 2, visibleElite: 1, visibleBoss: 1 });
+
+    layer.clear();
+    expect(layer.counts()).toEqual({ visible: 0, hiddenNormal: 0, visibleElite: 0, visibleBoss: 0 });
     ground.geometry.dispose();
     ground.material.dispose();
   });

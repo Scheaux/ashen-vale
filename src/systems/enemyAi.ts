@@ -288,6 +288,9 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
             kind: 'telegraph',
             enemyId: enemy.id,
             attackId: enemy.attackId,
+            // Bosses and elites keep ground tells; normal enemies (including
+            // boss adds for now) rely on the body-language windup cue.
+            tier: def.boss ? 'boss' : enemy.elite.length > 0 ? 'elite' : 'normal',
             shape: attack.shape,
             x: attack.shape === 'slam' ? enemy.strikeTarget.x : enemy.position.x,
             z: attack.shape === 'slam' ? enemy.strikeTarget.z : enemy.position.z,

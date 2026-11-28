@@ -457,15 +457,20 @@ export class EnemyViews {
       return;
     }
 
-    // Hit flash + hover tint + a cool chill wash across body materials.
+    // Hit flash + hover tint + a cool chill wash, plus a warm windup ember:
+    // normal enemies have no ground tell, so the body itself must telegraph.
     const flash: number = view.flash * view.flash;
     const hover = enemy.id === this.highlightedId ? 1 : 0;
     const chill = enemy.chillTime > 0 ? 1 : 0;
+    const windup = enemy.phase === 'windup'
+      ? Math.min(1, enemy.phaseTime / Math.max(0.15, def.attack.windup))
+      : 0;
+    const windupPulse = windup * (0.65 + 0.35 * Math.sin(performance.now() / 120));
     for (const mat of view.model.flashMaterials) {
       mat.emissive.setRGB(
-        flash * 0.55 + hover * 0.22 + chill * 0.06,
-        flash * 0.4 + hover * 0.16 + chill * 0.22,
-        flash * 0.32 + hover * 0.1 + chill * 0.42,
+        flash * 0.55 + hover * 0.22 + chill * 0.06 + windupPulse * 0.22,
+        flash * 0.4 + hover * 0.16 + chill * 0.22 + windupPulse * 0.08,
+        flash * 0.32 + hover * 0.1 + chill * 0.42 + windupPulse * 0.03,
       );
     }
 

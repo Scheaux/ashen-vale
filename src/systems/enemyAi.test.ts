@@ -229,6 +229,25 @@ describe('behavior spacing', () => {
   });
 });
 
+describe('telegraph tier', () => {
+  const firstTelegraphTier = (spawn: EnemySpawn): string | undefined => {
+    const state = createGameState(getClass('marauder'), layoutWith([spawn]));
+    for (let i = 0; i < 600; i++) {
+      stepRun(state, 1 / 60);
+      const tell = drainEvents(state).find(
+        (ev): ev is Extract<SimEvent, { kind: 'telegraph' }> => ev.kind === 'telegraph',
+      );
+      if (tell) return tell.tier;
+    }
+    return undefined;
+  };
+
+  it('tags normal and elite telegraphs without changing the event', () => {
+    expect(firstTelegraphTier(husk(0, 16))).toBe('normal');
+    expect(firstTelegraphTier(husk(0, 16, ['savage']))).toBe('elite');
+  });
+});
+
 describe('elites', () => {
   it('applies modifiers at creation and auras boost nearby allies', () => {
     const state = createGameState(

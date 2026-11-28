@@ -171,6 +171,82 @@ async function main() {
   check('a full telegraphed fight can still be won', killed);
   await page.screenshot({ path: `${SHOTS}22-after-fight.png` });
 
+  // --- Indicator tiering: normal ground tells are sim-only, elite tells render ---
+  const distanceTo = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+  await page.evaluate(() => window.__ashen.healPlayer(9999));
+  s = await snap();
+  const liveElites = s.enemies.filter((e) => !e.dead && e.elite.length > 0);
+  const liveNormals = s.enemies.filter((e) => !e.dead && e.elite.length === 0);
+  const nearestEliteDistance = (enemy) => liveElites.length > 0
+    ? Math.min(...liveElites.map((elite) => distanceTo(enemy, elite)))
+    : Infinity;
+  const isolatedNormal = [...liveNormals]
+    .sort((a, b) => nearestEliteDistance(b) - nearestEliteDistance(a))[0];
+  let normalWindup = false;
+  let normalHiddenDelta = 0;
+  let normalCounts = null;
+  let normalProbeId = null;
+  if (isolatedNormal) {
+    let hiddenBefore = s.telegraphs.hiddenNormal;
+    let sawReadyPhase = false;
+    await page.evaluate(([x, z]) => {
+      window.__ashen.healPlayer(9999);
+      window.__ashen.teleportPlayer(x, z);
+    }, [isolatedNormal.x + 1, isolatedNormal.z]);
+    // The target may already be mid-windup from earlier aggro. Wait for a
+    // ready phase before timing the next tell so the hidden counter delta is
+    // attributable to a fresh windup.
+    for (let i = 0; i < 120 && !normalWindup; i++) {
+      await sleep(50);
+      const now = await snap();
+      const current = now.enemies.find((e) => e.id === isolatedNormal.id);
+      if (!current || current.dead) break;
+      if (current.phase !== 'windup' && current.phase !== 'active') {
+        sawReadyPhase = true;
+        hiddenBefore = now.telegraphs.hiddenNormal;
+      } else if (sawReadyPhase) {
+        normalWindup = true;
+        normalHiddenDelta = now.telegraphs.hiddenNormal - hiddenBefore;
+        normalCounts = now.telegraphs;
+        normalProbeId = now.probes.telegraph?.id ?? null;
+      }
+      await page.evaluate(() => window.__ashen.healPlayer(9999));
+    }
+  }
+  check('a live normal-enemy windup is observed', normalWindup,
+    isolatedNormal ? `${isolatedNormal.type} ${isolatedNormal.id}` : 'no normal enemy');
+  check('normal windups stay in the sim but are filtered from rendering',
+    normalHiddenDelta > 0, `${normalHiddenDelta} hidden normal tells`);
+  check('the observed normal windup has no ground-tell view',
+    normalWindup && normalProbeId !== isolatedNormal.id,
+    `probe ${normalProbeId ?? 'null'}, ${normalCounts ? JSON.stringify(normalCounts) : 'no counts'}`);
+
+  s = await snap();
+  const eliteTarget = [...s.enemies]
+    .filter((e) => !e.dead && e.elite.length > 0)
+    .sort((a, b) => distanceTo(a, s.playerPos) - distanceTo(b, s.playerPos))[0];
+  let eliteTell = null;
+  if (eliteTarget) {
+    await page.evaluate(([x, z]) => {
+      window.__ashen.healPlayer(9999);
+      window.__ashen.teleportPlayer(x, z);
+    }, [eliteTarget.x + 1.2, eliteTarget.z]);
+    await page.evaluate(([id]) => window.__ashen.hurtEnemy(id, 4), [eliteTarget.id]);
+    for (let i = 0; i < 100 && !eliteTell; i++) {
+      await sleep(50);
+      const now = await snap();
+      if (now.telegraphs.visibleElite > 0) eliteTell = now.telegraphs;
+      await page.evaluate(() => window.__ashen.healPlayer(9999));
+    }
+    const bars = (await snap()).render.healthBars;
+    check('a damaged elite still shows its health bar', bars >= 1, `${bars} bars`);
+  }
+  check('an elite windup keeps a visible ground tell',
+    eliteTell !== null && eliteTell.visibleElite > 0,
+    eliteTell ? JSON.stringify(eliteTell) : 'no elite tell within 5s');
+  check('elite nameplates are unaffected by the indicator filter',
+    (await page.locator('.nameplate').count()) >= 1);
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
 
   await browser.close();
