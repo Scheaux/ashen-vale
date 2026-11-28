@@ -78,12 +78,18 @@ async function main() {
   };
   /** Engage the nearest on-screen enemy so skill aim keys off the attack target. */
   const engage = async () => {
-    for (let attempt = 0; attempt < 30; attempt++) {
+    for (let attempt = 0; attempt < 12; attempt++) {
       const s = await snap();
       const alive = [...s.enemies].filter((e) => !e.dead);
       if (alive.length === 0) return null;
+      // Scoring every camp member on every retry is slow under software WebGL;
+      // the nearest sixteen are the only plausible melee targets.
+      const nearest = [...alive]
+        .sort((a, b) => Math.hypot(a.x - s.playerPos.x, a.z - s.playerPos.z)
+          - Math.hypot(b.x - s.playerPos.x, b.z - s.playerPos.z))
+        .slice(0, 16);
       const scored = [];
-      for (const e of alive) {
+      for (const e of nearest) {
         const scr = await page.evaluate(([x, z]) => window.__ashen.worldToScreen(x, z), [e.x, e.z]);
         scored.push({
           e,
@@ -93,15 +99,24 @@ async function main() {
         });
       }
       scored.sort((a, b) => (b.onScreen - a.onScreen) || (a.d - b.d));
-      const pick = scored[0];
-      if (pick.onScreen) {
+      // The nearest enemy can sit under a HUD panel, where a pointer click
+      // never reaches the canvas; try the next few visible candidates.
+      let triedOnScreen = false;
+      for (const pick of scored.filter((candidate) => candidate.onScreen).slice(0, 4)) {
+        const overCanvas = await page.evaluate(([x, y]) => {
+          const element = document.elementFromPoint(x, y);
+          return element instanceof HTMLCanvasElement;
+        }, [pick.scr.x, pick.scr.y]);
+        if (!overCanvas) continue;
+        triedOnScreen = true;
         await page.mouse.click(pick.scr.x, pick.scr.y);
-        await sleep(250);
+        await sleep(200);
         const after = await snap();
         if (after.attackTargetId === pick.e.id) return pick.e;
-      } else {
-        await clickWorld(pick.e.x, pick.e.z); // walk the enemy into view first
-        await sleep(600);
+      }
+      if (!triedOnScreen) {
+        await clickWorld(scored[0].e.x, scored[0].e.z); // walk the enemy into view
+        await sleep(500);
       }
     }
     return null;
@@ -199,16 +214,48 @@ async function main() {
 
   // --- Nova (E): damages nearby enemies ---
   await waitCooldown('sunder');
-  target = await engageClose(2.5);
-  const novaVictimHp = target ? (await snap()).enemies.find((e) => e.id === target.id)?.hp : null;
+  // Self-centred nova: stand next to a live enemy instead of relying on the
+  // pathing/engagement heuristic to deliver one into the radius.
+  const novaSetup = await page.evaluate(() => {
+    const current = window.__ashen.snapshot();
+    const enemy = [...current.enemies]
+      .filter((entry) => !entry.dead)
+      .sort((a, b) => Math.hypot(a.x - current.playerPos.x, a.z - current.playerPos.z)
+        - Math.hypot(b.x - current.playerPos.x, b.z - current.playerPos.z))[0];
+    if (!enemy) return null;
+    window.__ashen.healPlayer(9999);
+    window.__ashen.teleportPlayer(enemy.x, enemy.z);
+    return { id: enemy.id };
+  });
+  await sleep(200);
+  s = await snap();
+  const novaVictimHp = novaSetup
+    ? s.enemies.find((entry) => entry.id === novaSetup.id && !entry.dead)?.hp ?? null
+    : null;
   await page.keyboard.press('e');
   await sleep(700);
   s = await snap();
-  const novaHpAfter = target ? s.enemies.find((e) => e.id === target.id)?.hp : null;
+  const novaHpAfter = novaSetup ? s.enemies.find((entry) => entry.id === novaSetup.id)?.hp ?? null : null;
   check('Whirlwind nova damages nearby enemies', novaVictimHp !== null && novaHpAfter < novaVictimHp,
     `hp ${novaVictimHp} -> ${novaHpAfter}`);
 
-  // --- Dash (R): the hero travels ---
+  // --- Dash (R): the hero travels down a clear corridor lane ---
+  const dashAim = await page.evaluate(() => {
+    window.__ashen.healPlayer(9999);
+    window.__ashen.teleportPlayer(6, 40); // centreline of the first leg
+    const current = window.__ashen.snapshot();
+    for (const point of [{ x: 12, z: 10 }, { x: 9, z: 25 }, { x: 6, z: 55 }]) {
+      if (current.enemies.some((enemy) => !enemy.dead
+        && Math.hypot(enemy.x - point.x, enemy.z - point.z) < 4)) continue;
+      const screen = window.__ashen.worldToScreen(point.x, point.z);
+      if (screen.x > 40 && screen.x < 1400 && screen.y > 40 && screen.y < 860) {
+        return { screen };
+      }
+    }
+    return null;
+  });
+  if (dashAim) await page.mouse.move(dashAim.screen.x, dashAim.screen.y);
+  await sleep(150);
   const beforeDash = (await snap()).playerPos;
   await page.keyboard.press('r');
   await sleep(1400); // let the committed charge finish before measuring
@@ -328,13 +375,22 @@ async function main() {
   await page.evaluate(() => window.__ashen.equipSkill('w', 'ember-nova'));
   await sleep(200);
 
-  target = await engageClose(2.5);
-  let witchVictimHp = target ? (await snap()).enemies.find((e) => e.id === target.id)?.hp : null;
-  if (target) {
-    await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z + 0.8), [target.x, target.z]);
-    await sleep(120);
-    witchVictimHp = (await snap()).enemies.find((e) => e.id === target.id)?.hp ?? witchVictimHp;
-  }
+  const witchSetup = await page.evaluate(() => {
+    const current = window.__ashen.snapshot();
+    const enemy = [...current.enemies]
+      .filter((entry) => !entry.dead)
+      .sort((a, b) => Math.hypot(a.x - current.playerPos.x, a.z - current.playerPos.z)
+        - Math.hypot(b.x - current.playerPos.x, b.z - current.playerPos.z))[0];
+    if (!enemy) return null;
+    window.__ashen.healPlayer(9999);
+    window.__ashen.teleportPlayer(enemy.x, enemy.z);
+    return { id: enemy.id };
+  });
+  await sleep(150);
+  const witchBefore = await snap();
+  const witchVictimHp = witchSetup
+    ? witchBefore.enemies.find((entry) => entry.id === witchSetup.id && !entry.dead)?.hp ?? null
+    : null;
   await page.keyboard.press('w'); // Ember Nova
   for (let i = 0; i < 25; i++) {
     if ((await snap()).cooldowns['ember-nova'] > 0) break;
@@ -343,7 +399,7 @@ async function main() {
   }
   await sleep(700);
   s = await snap();
-  const witchVictim = target ? s.enemies.find((e) => e.id === target.id) : null;
+  const witchVictim = witchSetup ? s.enemies.find((e) => e.id === witchSetup.id) : null;
   const witchHpAfter = witchVictim ? (witchVictim.dead ? 0 : witchVictim.hp) : 0;
   check('Ember Nova burns everything around the caster',
     witchVictimHp !== null && (witchVictim === null || witchVictim.dead || witchHpAfter < witchVictimHp),
