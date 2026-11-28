@@ -36,6 +36,22 @@ async function waitForServer(url, timeoutMs = 20000) {
   throw new Error(`Server not reachable at ${url}`);
 }
 
+function distanceToCorridor(point, corridor) {
+  let best = Infinity;
+  for (let i = 0; i < corridor.points.length - 1; i++) {
+    const a = corridor.points[i];
+    const b = corridor.points[i + 1];
+    const vx = b.x - a.x;
+    const vz = b.z - a.z;
+    const lengthSq = vx * vx + vz * vz;
+    const t = lengthSq > 0
+      ? Math.max(0, Math.min(1, ((point.x - a.x) * vx + (point.z - a.z) * vz) / lengthSq))
+      : 0;
+    best = Math.min(best, Math.hypot(point.x - (a.x + vx * t), point.z - (a.z + vz * t)));
+  }
+  return best;
+}
+
 async function main() {
   let server = null;
   if (!process.env.QA_URL) {
@@ -65,10 +81,13 @@ async function main() {
 
   // --- Objective tracker: camps are optional, the Warden waits at the end ---
   let s = await snap();
-  check('the moor opens with three optional camps', s.objectives.campsTotal === 3 && s.objectives.campsCleared === 0,
+  check('the moor opens with 16 optional camps', s.objectives.campsTotal === 16 && s.objectives.campsCleared === 0,
     JSON.stringify(s.objectives));
+  check('the moor exposes the linear corridor',
+    s.corridor !== null && s.corridor.points.length === 4 && s.corridor.radius === 29,
+    JSON.stringify(s.corridor));
   const openingObjective = await objectiveText();
-  check('HUD tracker marks the camps optional', openingObjective.includes('Camps cleared (0/3) — optional'), openingObjective);
+  check('HUD tracker marks the camps optional', openingObjective.includes('Camps cleared (0/16) — optional'), openingObjective);
   check('HUD tracker points at the far-end Warden', openingObjective.includes('Reach the Ashen Warden at the far end'), openingObjective);
   check('the Warden is not in play yet', !s.enemies.some((e) => e.type === 'ashen-warden'));
   await page.screenshot({ path: `${SHOTS}60-objectives.png` });
@@ -77,10 +96,13 @@ async function main() {
   await page.evaluate(() => window.__ashen.clearCamps());
   await sleep(300);
   s = await snap();
-  check('clearing every camp completes the optional camp track', s.objectives.campsCleared === 3,
+  check('clearing every camp completes the optional camp track', s.objectives.campsCleared === 16,
     JSON.stringify(s.objectives));
   check('camps alone do not wake the Warden', !s.objectives.bossSpawned &&
     !s.enemies.some((e) => e.type === 'ashen-warden' && !e.dead), JSON.stringify(s.objectives));
+  check('the portal stays sealed while the Warden sleeps',
+    s.objectives.portalOpen === false && s.portal?.open === false,
+    JSON.stringify({ objectives: s.objectives, portal: s.portal }));
 
   // --- Entering the end arena wakes the Warden ---
   const beforeSpawn = s.playerPos;
@@ -117,8 +139,9 @@ async function main() {
   const distToArena = Math.hypot(s.playerPos.x - s.arena.x, s.playerPos.z - s.arena.z);
   check('the Warden fight does not clamp the hero to the arena', distToArena > s.arena.radius + 1,
     `distance ${distToArena.toFixed(1)} of ${s.arena.radius}`);
-  check('the hero is still inside the zone after retreating',
-    Math.hypot(s.playerPos.x, s.playerPos.z) <= 42, JSON.stringify(s.playerPos));
+  check('the hero is still inside the corridor after retreating',
+    s.corridor !== null && distanceToCorridor(s.playerPos, s.corridor) <= s.corridor.radius,
+    `corridor distance ${s.corridor ? distanceToCorridor(s.playerPos, s.corridor).toFixed(1) : 'n/a'} / ${s.corridor?.radius}`);
 
   // --- The kill, the portal and the victory loop ---
   await page.evaluate(([id, amount]) => window.__ashen.hurtEnemy(id, amount), [boss.id, 99999]);

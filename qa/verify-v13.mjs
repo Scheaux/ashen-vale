@@ -386,8 +386,18 @@ async function main() {
     s.skills.find((skill) => skill.slot === 'f')?.id === 'leap-slam', JSON.stringify(s.skills));
 
   // --- Warden slam leaves a cinder pool ---
+  // Camps are optional; the Warden only wakes when the hero enters the end
+  // clearing. Clear the 16 camps first to prove they do not spawn him.
   await page.evaluate(() => window.__ashen.clearCamps());
   await sleep(700);
+  s = await snap();
+  check('clearing the 16 optional camps leaves the Warden asleep',
+    s.objectives.campsTotal === 16 && s.objectives.campsCleared === 16 &&
+    s.objectives.bossSpawned === false,
+    JSON.stringify(s.objectives));
+  await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z]);
+  await page.waitForFunction(() => window.__ashen.snapshot().objectives.bossSpawned, null, { timeout: 5000 });
+  await sleep(500);
   s = await snap();
   const boss = s.enemies.find((enemy) => enemy.type === 'ashen-warden' && !enemy.dead);
   check('the Warden is back for the hazard test', !!boss);

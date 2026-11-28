@@ -137,7 +137,8 @@ async function main() {
   await sleep(150);
   s = await snap();
   const hpText = await page.locator('[data-hp-text]').textContent();
-  check('HUD health readout updates', (hpText ?? '').includes(String(s.playerHp)), hpText ?? '');
+  // The HUD rounds HP; the sim can hold fractional damage mid-fight.
+  check('HUD health readout updates', (hpText ?? '').includes(String(Math.round(s.playerHp))), hpText ?? '');
   await page.keyboard.press('Escape'); // resume
   await sleep(150);
 

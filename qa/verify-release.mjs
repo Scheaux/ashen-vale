@@ -182,9 +182,12 @@ async function main() {
   await page.evaluate(() => window.__ashen.clearCamps());
   await sleep(700);
   s = await snap();
-  check('clearing the optional camps does not wake the Warden',
-    s.objectives.campsCleared === 3 && s.objectives.bossSpawned === false,
+  check('clearing all 16 optional camps does not wake the Warden',
+    s.objectives.campsCleared === 16 && s.objectives.campsTotal === 16 && s.objectives.bossSpawned === false,
     JSON.stringify(s.objectives));
+  check('the portal stays sealed before the Warden falls',
+    s.objectives.portalOpen === false && s.portal?.open === false,
+    JSON.stringify({ objectives: s.objectives, portal: s.portal }));
   await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z]);
   await sleep(500);
   s = await snap();
@@ -205,7 +208,9 @@ async function main() {
   check('the victory screen closes the campaign', await page.locator('[data-screen="victory"]').isVisible());
   check('victory opens the Warden’s Gate portal', (await snap()).objectives.portalOpen === true);
   await page.screenshot({ path: `${SHOTS}82-release-victory.png` });
-  check('victory checkpoints the completed zone', (await saves()).slots[0].bossDefeated === true);
+  check('victory checkpoints the completed 16-slot zone',
+    (await saves()).slots[0].bossDefeated === true &&
+    (await saves()).slots[0].campsTotal === 16);
 
   // Save / quit / reload / Continue.
   await page.click('[data-screen="victory"] [data-action="quit"]');

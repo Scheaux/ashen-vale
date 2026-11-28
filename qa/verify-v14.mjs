@@ -69,6 +69,9 @@ async function main() {
   const uid = await page.evaluate(() => window.__ashen.grantItem('normal'));
   await page.evaluate(() => window.__ashen.grantCurrency(10, 10, 10));
   let s = await snap();
+  // Kills can award runes when the victim is an elite, so craft costs are
+  // asserted as deltas from the post-grant balance.
+  const craftCurrency = { ...s.currency };
   const baseItem = s.items.find((item) => item.uid === uid);
   check('rolled items carry a base implicit', !!baseItem?.implicit, JSON.stringify(baseItem?.implicit));
   check('rolled items start at quality 0', baseItem?.quality === 0);
@@ -87,21 +90,24 @@ async function main() {
   let item = s.items.find((entry) => entry.uid === uid);
   check('adding an affix upgrades normal to magic', item?.rarity === 'magic' && item?.affixes.length >= 1,
     `${item?.rarity}, ${item?.affixes.length} affixes`);
-  check('adding an affix spends an Ashen Rune', s.currency.rune === 9, `${s.currency.rune}`);
+  check('adding an affix spends an Ashen Rune', s.currency.rune === craftCurrency.rune - 1,
+    `${craftCurrency.rune} -> ${s.currency.rune}`);
 
   await page.locator('[data-craft-action="reforge"]').click();
   await sleep(200);
   s = await snap();
   item = s.items.find((entry) => entry.uid === uid);
-  check('reforging spends Ember Dust', s.currency.dust === 10, `${s.currency.dust}`);
+  check('reforging spends Ember Dust', s.currency.dust === craftCurrency.dust - 1,
+    `${craftCurrency.dust} -> ${s.currency.dust}`);
   check('reforged item still has its identity', item?.uid === uid && item?.affixes.length === 1);
 
   await page.locator('[data-craft-action="quality"]').click();
   await sleep(200);
   s = await snap();
   item = s.items.find((entry) => entry.uid === uid);
-  check('quality spends a Quality Ember and reaches 5%', s.currency.quality === 9 && item?.quality === 5,
-    `${s.currency.quality} embers, ${item?.quality}%`);
+  check('quality spends a Quality Ember and reaches 5%',
+    s.currency.quality === craftCurrency.quality - 1 && item?.quality === 5,
+    `${craftCurrency.quality} -> ${s.currency.quality} embers, ${item?.quality}%`);
   await page.screenshot({ path: `${SHOTS}97-crafting.png` });
 
   await page.keyboard.press('Escape');
@@ -120,8 +126,11 @@ async function main() {
   check('save v8 carries the crafted item', save.version === 8 &&
     save.inventory.bags.some((entry) => entry.uid === uid));
   check('Continue restores item quality and affix count', item?.quality === 5 && item?.affixes.length === 1);
-  check('Continue restores crafting currency', s.currency.dust === 10 && s.currency.rune === 9 && s.currency.quality === 9,
-    JSON.stringify(s.currency));
+  check('Continue restores crafting currency',
+    s.currency.dust === craftCurrency.dust - 1
+    && s.currency.rune === craftCurrency.rune - 1
+    && s.currency.quality === craftCurrency.quality - 1,
+    `${JSON.stringify(craftCurrency)} -> ${JSON.stringify(s.currency)}`);
 
   // --- Equipped quality changes derived combat stats ---
   await page.keyboard.press('c');

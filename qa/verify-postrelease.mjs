@@ -80,19 +80,36 @@ async function main() {
   await page.keyboard.press('Escape');
   await sleep(200);
 
-  // --- Grounding: find a raised play-area point and verify every ground layer ---
+  // --- Grounding: find a raised walkable point and verify every ground layer ---
   const raised = await page.evaluate(() => {
+    const corridor = window.__ashen.snapshot().corridor;
+    const distanceToCorridor = (x, z) => {
+      let depth = Infinity;
+      for (let i = 0; i < corridor.points.length - 1; i++) {
+        const a = corridor.points[i];
+        const b = corridor.points[i + 1];
+        const vx = b.x - a.x;
+        const vz = b.z - a.z;
+        const lengthSq = vx * vx + vz * vz;
+        const t = lengthSq > 0
+          ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / lengthSq))
+          : 0;
+        depth = Math.min(depth, Math.hypot(x - (a.x + vx * t), z - (a.z + vz * t)));
+      }
+      return depth;
+    };
     let best = { x: 0, z: 0, h: -1 };
-    for (let x = -34; x <= 34; x += 3) {
-      for (let z = -34; z <= 34; z += 3) {
-        if (Math.hypot(x, z) > 39) continue;
+    for (let x = -110; x <= 110; x += 3) {
+      for (let z = -110; z <= 110; z += 3) {
+        if (distanceToCorridor(x, z) > corridor.radius - 1.2) continue;
         const h = window.__ashen.terrainHeightAt(x, z);
         if (h > best.h) best = { x, z, h };
       }
     }
     return best;
   });
-  check('the terrain probe finds a raised point', raised.h > 0.05, `height ${raised.h.toFixed(3)} at ${raised.x},${raised.z}`);
+  check('the terrain probe finds a raised walkable point', raised.h > 0.05,
+    `height ${raised.h.toFixed(3)} at ${raised.x},${raised.z}`);
   await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [raised.x, raised.z]);
   await sleep(500);
   s = await snap();

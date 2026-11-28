@@ -1,6 +1,6 @@
 /**
  * v1.5/moor save v8 browser QA: prove the live export carries 16 moor camp
- * slots (3 active) and 3 ossuary slots with no legacy objectives field, a live
+ * slots (16 active) and 3 ossuary slots with no legacy objectives field, a live
  * zero-camp Warden checkpoint is valid, a completed v7 save migrates with all
  * camp flags reset while boss flags are preserved, a v7 zero-camp boss save is
  * still rejected at the v7 stage, a v8 zero-camp boss save is accepted, and a
@@ -184,7 +184,7 @@ async function main() {
     s = await snap();
     check('entering the end arena wakes the Warden with zero camps cleared',
       s.objectives.campsCleared === 0
-      && s.objectives.campsTotal === 3
+      && s.objectives.campsTotal === 16
       && s.objectives.bossSpawned === true
       && s.objectives.bossDefeated === false,
       JSON.stringify(s.objectives));
@@ -196,8 +196,8 @@ async function main() {
     await page.locator('.save-slot[data-slot="0"] .save-slot__body').click();
     await sleep(450);
     s = await saves();
-    check('the normal checkpoint writes slot 1 with the active three-camp total and zero clears',
-      s.slots[0].status === 'ok' && s.slots[0].campsCleared === 0 && s.slots[0].campsTotal === 3,
+    check('the normal checkpoint writes slot 1 with the active 16-camp total and zero clears',
+      s.slots[0].status === 'ok' && s.slots[0].campsCleared === 0 && s.slots[0].campsTotal === 16,
       `${s.slots[0].status}, camps ${s.slots[0].campsCleared}/${s.slots[0].campsTotal}`);
 
     const slotBody = await readRawSave(page, 0);
@@ -235,8 +235,8 @@ async function main() {
     await page.click('[data-action="load-game"]');
     await page.locator('.save-screen').waitFor({ state: 'visible' });
     const cardText = await page.locator('.save-slot[data-slot="0"]').innerText();
-    check('the save card shows the zone and the active three-camp total',
-      /The Ashen Moor/.test(cardText) && /Camps 0\/3/.test(cardText),
+    check('the save card shows the zone and the active 16-camp total',
+      /The Ashen Moor/.test(cardText) && /Camps 0\/16/.test(cardText),
       cardText.replace(/\n/g, ' | '));
     await page.screenshot({ path: `${SHOTS}v15b-save-card.png` });
     await page.locator('[data-save-close]').click();
@@ -247,7 +247,7 @@ async function main() {
     await page.evaluate(() => window.__ashen.healPlayer(9999));
     s = await snap();
     check('Continue restores the zero-camp v8 boss progress',
-      s.objectives.campsCleared === 0 && s.objectives.campsTotal === 3 && s.objectives.bossSpawned === true,
+      s.objectives.campsCleared === 0 && s.objectives.campsTotal === 16 && s.objectives.bossSpawned === true,
       JSON.stringify(s.objectives));
 
     const liveWardens = s.enemies.filter((enemy) => enemy.type === 'ashen-warden' && !enemy.dead);
@@ -303,7 +303,7 @@ async function main() {
 
     s = await saves();
     check('the completed v7 fixture migrates as a valid slot with flags reset',
-      s.slots[1].status === 'ok' && s.slots[1].campsCleared === 0 && s.slots[1].campsTotal === 3
+      s.slots[1].status === 'ok' && s.slots[1].campsCleared === 0 && s.slots[1].campsTotal === 16
       && s.slots[1].bossDefeated === true,
       `${s.slots[1].status}, camps ${s.slots[1].campsCleared}/${s.slots[1].campsTotal}, boss defeated ${s.slots[1].bossDefeated}`);
 
@@ -312,8 +312,8 @@ async function main() {
     s = await snap();
     check('a completed v7 save loads into play', s.mode === 'playing' && !s.dead,
       `mode ${s.mode}, dead ${s.dead}`);
-    check('v7 -> v8 restores the optional camps at 0/3',
-      s.objectives.campsCleared === 0 && s.objectives.campsTotal === 3,
+    check('v7 -> v8 restores the optional camps at 0/16',
+      s.objectives.campsCleared === 0 && s.objectives.campsTotal === 16,
       `${s.objectives.campsCleared}/${s.objectives.campsTotal}`);
     check('v7 -> v8 restores bossDefeated with zero camps', s.objectives.bossDefeated === true,
       JSON.stringify(s.objectives));
@@ -412,7 +412,7 @@ async function main() {
     check('a v8 boss save with zero camps is valid',
       s.slots[2].status === 'ok'
       && s.slots[2].campsCleared === 0
-      && s.slots[2].campsTotal === 3
+      && s.slots[2].campsTotal === 16
       && s.slots[2].bossDefeated === true,
       `${s.slots[2].status}, camps ${s.slots[2].campsCleared}/${s.slots[2].campsTotal}, boss defeated ${s.slots[2].bossDefeated}`);
     check('the title offers Continue for the zero-camp v8 boss save',

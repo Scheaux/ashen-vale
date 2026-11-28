@@ -100,7 +100,7 @@ async function main() {
   await sleep(500);
   s = await saves();
   check('reaching the end arena checkpoints the awakened Warden',
-    s.slots[0].campsCleared === 0 && s.slots[0].campsTotal === 3 && s.slots[0].bossSpawned === true,
+    s.slots[0].campsCleared === 0 && s.slots[0].campsTotal === 16 && s.slots[0].bossSpawned === true,
     `${s.slots[0].campsCleared}/${s.slots[0].campsTotal}, boss ${s.slots[0].bossSpawned}`);
   check('the checkpoint keeps the level and passive', s.slots[0].level >= 5 && s.slots[0].status === 'ok',
     `lv ${s.slots[0].level}`);
@@ -120,7 +120,9 @@ async function main() {
   check('Load Game opens the slot screen', await page.locator('.save-screen').isVisible());
   check('the slot screen shows three cards', (await page.locator('.save-slot').count()) === 3);
   const slotOneText = await page.locator('.save-slot[data-slot="0"]').innerText();
-  check('the occupied slot reads as a checkpoint', /Checkpoint/i.test(slotOneText) && /Marauder/i.test(slotOneText), slotOneText.replace(/\n/g, ' | '));
+  check('the occupied slot reads as a checkpoint',
+    /Checkpoint/i.test(slotOneText) && /Marauder/i.test(slotOneText) && /Camps 0\/16/.test(slotOneText),
+    slotOneText.replace(/\n/g, ' | '));
   await page.screenshot({ path: `${SHOTS}73-save-slots.png` });
   await page.locator('[data-save-close]').click();
   await sleep(200);
@@ -134,7 +136,7 @@ async function main() {
   check('Continue restores the level', s.level >= 5, `level ${s.level}`);
   check('Continue restores passive allocations', s.passives.allocated.includes('o1'), s.passives.allocated.join(','));
   check('Continue restores the optional camp track and the boss',
-    s.objectives.campsCleared === 0 && s.objectives.campsTotal === 3 && s.objectives.bossSpawned,
+    s.objectives.campsCleared === 0 && s.objectives.campsTotal === 16 && s.objectives.bossSpawned,
     JSON.stringify(s.objectives));
   check('the restored run stays bound to slot 1', restored.activeSlot === 0);
   await page.screenshot({ path: `${SHOTS}74-continue-restored.png` });
@@ -186,9 +188,16 @@ async function main() {
   await sleep(800);
   s = await snap();
   const afterVictory = await saves();
-  check('Continue after victory restores the completed zone', s.objectives.bossDefeated === true &&
-    !s.enemies.some((enemy) => enemy.type === 'ashen-warden' && !enemy.dead), JSON.stringify(s.objectives));
-  check('the completed run remains in a slot', afterVictory.slots[0].status === 'ok' && afterVictory.slots[0].bossDefeated);
+  check('Continue after victory restores the completed zone with its open portal',
+    s.objectives.bossDefeated === true &&
+    s.objectives.portalOpen === true &&
+    s.objectives.campsTotal === 16 &&
+    !s.enemies.some((enemy) => enemy.type === 'ashen-warden' && !enemy.dead),
+    JSON.stringify(s.objectives));
+  check('the completed run remains in a 16-slot slot',
+    afterVictory.slots[0].status === 'ok' &&
+    afterVictory.slots[0].campsTotal === 16 &&
+    afterVictory.slots[0].bossDefeated);
 
   // --- A torn primary write recovers the previous checkpoint from its backup ---
   // Overwrite slot 2 once so its previous body becomes the backup.

@@ -88,6 +88,12 @@ function stableRunState(s) {
     cooldowns: { ...s.cooldowns },
     objectives: { ...s.objectives },
     arena: { ...s.arena },
+    corridor: s.corridor
+      ? { radius: s.corridor.radius, points: s.corridor.points.map((point) => ({ ...point })) }
+      : null,
+    portal: s.portal
+      ? { x: s.portal.x, z: s.portal.z, open: s.portal.open }
+      : null,
     enemies: s.enemies.map((enemy) => ({
       id: enemy.id,
       type: enemy.type,
@@ -270,6 +276,14 @@ async function pausedRemount(page, label, expectedEpoch, expectedTerrainId, base
     `destination ${after.probes.rings.destination === null ? 'null' : 'visible'} `
     + '(hover clearing is proven on the live path where hover was established first)');
 
+  check(`${label}: corridor route unchanged`,
+    after.corridor !== null
+    && after.corridor.radius === base.corridor?.radius
+    && JSON.stringify(after.corridor.points) === JSON.stringify(base.corridor?.points),
+    after.corridor
+      ? `${after.corridor.points.length} points, radius ${after.corridor.radius}`
+      : 'corridor missing');
+
   check(`${label}: telegraph view cleared`,
     after.probes.telegraph === null,
     after.probes.telegraph === null ? 'null' : JSON.stringify(after.probes.telegraph));
@@ -289,7 +303,7 @@ async function pausedRemount(page, label, expectedEpoch, expectedTerrainId, base
     after.probes.playerGround.y === after.playerRenderY &&
     after.probes.playerGround.height === expectedGround &&
     after.probes.playerGround.error < 1e-6 &&
-    Math.abs(expectedGround) > 1e-4,
+    Number.isFinite(expectedGround),
     `probe y ${after.probes.playerGround.y.toFixed(9)} vs renderY ${after.playerRenderY.toFixed(9)}, `
     + `height ${after.probes.playerGround.height.toFixed(9)} vs terrainHeightAt ${expectedGround.toFixed(9)}, `
     + `error ${after.probes.playerGround.error.toExponential(3)}`);
@@ -342,33 +356,60 @@ async function main() {
     const warmRender = { geometries: warm.render.geometries, textures: warm.render.textures };
     check('new game reaches play', warm.mode === 'playing' && !warm.dead && warm.playerHp > 0,
       `mode ${warm.mode}, hp ${warm.playerHp}/${warm.playerMaxHp}, position ${warm.playerPos.x.toFixed(2)},${warm.playerPos.z.toFixed(2)}`);
+    check('the live run exposes the linear corridor spawn',
+      warm.corridor !== null
+      && warm.corridor.points.length === 4
+      && warm.corridor.radius === 29
+      && Math.hypot(warm.playerPos.x, warm.playerPos.z - 74) < 1.5,
+      JSON.stringify({ corridor: warm.corridor, playerPos: warm.playerPos }));
     console.log(`INFO  warm frame (pristine, informational): ${warm.render.geometries} geo, ${warm.render.textures} tex, `
       + `${warm.render.drawCalls} calls, ${warm.render.triangles} triangles, `
       + `epoch ${warm.render.mountEpoch}, terrain ${warm.render.terrainId}`);
 
-    // A real slope probe must happen before the Warden spawn: once the boss is
-    // live, activeBounds clamps the hero to the arena and the outer hills are
-    // no longer walkable. The finite-difference value is cross-checked again
-    // after the remounts to prove the rebuilt surface kept the same slope.
+    // A real slope probe must happen on walkable ground. The linear bog is
+    // deliberately flatter than the old disc, so the steepest in-corridor rim
+    // is the surface-rebake probe. The finite-difference value is cross-checked
+    // again after the remounts to prove the rebuilt surface kept that slope.
     let slopeEvidence = null;
     const slope = await page.evaluate(() => {
+      const current = window.__ashen.snapshot();
+      const corridor = current.corridor;
+      const distanceToCorridor = (x, z) => {
+        let depth = Infinity;
+        for (let i = 0; i < corridor.points.length - 1; i++) {
+          const a = corridor.points[i];
+          const b = corridor.points[i + 1];
+          const vx = b.x - a.x;
+          const vz = b.z - a.z;
+          const lengthSq = vx * vx + vz * vz;
+          const t = lengthSq > 0
+            ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / lengthSq))
+            : 0;
+          depth = Math.min(depth, Math.hypot(x - (a.x + vx * t), z - (a.z + vz * t)));
+        }
+        return depth;
+      };
       const height = (x, z) => window.__ashen.terrainHeightAt(x, z);
       const e = 0.5;
-      let best = { x: 0, z: 0, slope: -1, height: 0 };
-      for (let x = -41; x <= 41; x += 1) {
-        for (let z = -41; z <= 41; z += 1) {
-          if (x * x + z * z > 41 * 41) continue;
+      let best = { x: 0, z: 0, slope: -1, height: 0, corridorDistance: 0 };
+      for (let x = -100; x <= 100; x += 1) {
+        for (let z = -105; z <= 105; z += 1) {
+          const corridorDistance = distanceToCorridor(x, z);
+          if (corridorDistance > corridor.radius - 1.2) continue;
           const dx = (height(x + e, z) - height(x - e, z)) / (2 * e);
           const dz = (height(x, z + e) - height(x, z - e)) / (2 * e);
           const gradient = Math.hypot(dx, dz);
-          if (gradient > best.slope) best = { x, z, slope: gradient, height: height(x, z) };
+          if (gradient > best.slope) {
+            best = { x, z, slope: gradient, height: height(x, z), corridorDistance };
+          }
         }
       }
       return best;
     });
-    check('a steep playable slope exists on the moor',
-      slope.slope > 0.04,
-      `gradient ${slope.slope.toFixed(6)} at ${slope.x},${slope.z}, height ${slope.height.toFixed(6)}`);
+    check('a steep walkable slope exists on the linear moor',
+      slope.slope > 0.03 && slope.corridorDistance <= 28,
+      `gradient ${slope.slope.toFixed(6)} at ${slope.x},${slope.z}, height ${slope.height.toFixed(6)}, `
+      + `corridor distance ${slope.corridorDistance.toFixed(2)}`);
 
     const slopeView = await page.evaluate(([sx, sz]) => {
       const length = Math.hypot(sx, sz) || 1;
@@ -396,7 +437,7 @@ async function main() {
       );
       const hoverHeight = await terrainHeight(page, hover.x, hover.z);
       check('hover ring normal matches the finite-difference normal',
-        componentError < 1e-4 && hovered.probes.rings.hoverNormal.y < 0.999,
+        componentError < 1e-4 && hovered.probes.rings.hoverNormal.y < 0.9999,
         `components error ${componentError.toExponential(3)}, ${normalDetail(hovered.probes.rings.hoverNormal)}, expected ${normalDetail(expected)}`);
       check('hover ring center clearance stays +0.025 on the slope',
         Math.abs(hover.y - (hoverHeight + 0.025)) < 1e-6,
@@ -419,7 +460,7 @@ async function main() {
       );
       const destHeight = await terrainHeight(page, dest.x, dest.z);
       check('destination ring normal matches the finite-difference normal',
-        componentError < 1e-4 && destinationMarked.probes.rings.destinationNormal.y < 0.999,
+        componentError < 1e-4 && destinationMarked.probes.rings.destinationNormal.y < 0.9999,
         `components error ${componentError.toExponential(3)}, ${normalDetail(destinationMarked.probes.rings.destinationNormal)}, expected ${normalDetail(expected)}`);
       check('destination ring center clearance stays +0.035 on the slope',
         Math.abs(dest.y - (destHeight + 0.035)) < 1e-6,
@@ -450,19 +491,27 @@ async function main() {
       window.__ashen.equipSkill('w', 'sunder');
     });
 
-    // Clear the camps; the objective tick spawns the live Warden in the arena.
+    // Clear the 16 optional camps; they do not wake the Warden. The live boss
+    // is spawned by entering the end clearing, and the hero is not moved.
     await page.evaluate(() => window.__ashen.clearCamps());
+    await page.waitForFunction(() => {
+      const s = window.__ashen.snapshot();
+      return s.objectives.campsCleared === 16 && s.objectives.bossSpawned === false;
+    }, null, { timeout: 5000 });
+    await page.evaluate(() => {
+      const s = window.__ashen.snapshot();
+      window.__ashen.teleportPlayer(s.arena.x, s.arena.z);
+    });
     await page.waitForFunction(() => {
       const s = window.__ashen.snapshot();
       return s.objectives.bossSpawned
         && s.enemies.some((enemy) => enemy.type === 'ashen-warden' && !enemy.dead);
     }, null, { timeout: 5000 });
-    // Let the boss-live arena bounds finish pulling the hero off the old spot.
     await sleep(200);
     const wardenBase = (await snapshot(page)).enemies.find(
       (enemy) => enemy.type === 'ashen-warden' && !enemy.dead,
     );
-    if (!wardenBase) throw new Error('clearCamps did not spawn a live Ashen Warden');
+    if (!wardenBase) throw new Error('the end-clearing entry did not spawn a live Ashen Warden');
 
     // Do not freeze while a windup telegraph is live: pause would keep the
     // view active and make the quiet baseline fail for the wrong reason.
@@ -494,8 +543,24 @@ async function main() {
       for (const [dx, dz] of [[4, 0], [-4, 0], [0, 4], [0, -4]]) {
         candidates.push({ x: s.playerPos.x + dx, z: s.playerPos.z + dz });
       }
+      const corridor = s.corridor;
+      const inCorridor = (x, z) => {
+        let depth = Infinity;
+        for (let i = 0; i < corridor.points.length - 1; i++) {
+          const a = corridor.points[i];
+          const b = corridor.points[i + 1];
+          const vx = b.x - a.x;
+          const vz = b.z - a.z;
+          const lengthSq = vx * vx + vz * vz;
+          const t = lengthSq > 0
+            ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / lengthSq))
+            : 0;
+          depth = Math.min(depth, Math.hypot(x - (a.x + vx * t), z - (a.z + vz * t)));
+        }
+        return depth <= corridor.radius - 1.2;
+      };
       for (const { x, z } of candidates) {
-        if (Math.hypot(x, z) > 41) continue;
+        if (!inCorridor(x, z)) continue;
         if (s.enemies.some((enemy) => !enemy.dead && Math.hypot(enemy.x - x, enemy.z - z) < 3)) continue;
         const height = window.__ashen.terrainHeightAt(x, z);
         const screen = window.__ashen.worldToScreen(x, z, height);
@@ -548,9 +613,9 @@ async function main() {
     check('changed baseline carries the drained flask',
       base.flasks.health === 1 && base.flasks.mana === warm.flasks.mana,
       `flasks ${base.flasks.health}/${base.flasks.mana}/${base.flasks.max}`);
-    check('changed baseline has all camps cleared and a live damaged Warden',
-      base.objectives.campsCleared === 3 &&
-      base.objectives.campsTotal === 3 &&
+    check('changed baseline has all 16 camps cleared and a live damaged Warden',
+      base.objectives.campsCleared === 16 &&
+      base.objectives.campsTotal === 16 &&
       base.objectives.bossSpawned === true &&
       base.objectives.bossDefeated === false &&
       base.enemies.some((enemy) => enemy.type === 'ashen-warden' && !enemy.dead && enemy.hp < enemy.maxHp),
@@ -601,10 +666,10 @@ async function main() {
       hp: document.querySelector('[data-hp-text]')?.textContent?.trim() ?? '',
       objectives: document.querySelector('[data-objectives]')?.innerText ?? '',
     }));
-    check('HUD still shows the changed HP and completed camps',
+    check('HUD still shows the changed HP and the 16 optional camps',
       !hud.hidden &&
       hud.hp === `${Math.round(base.playerHp)} / ${Math.round(base.playerMaxHp)}` &&
-      hud.objectives.includes('Clear the camps (3/3)') &&
+      hud.objectives.includes('Camps cleared (16/16) — optional') &&
       hud.objectives.includes('Slay the Ashen Warden'),
       `hp "${hud.hp}", objectives "${hud.objectives.replace(/\n/g, ' / ')}"`);
 
@@ -684,12 +749,28 @@ async function main() {
         { x: dx, z: dz },
         { x: -dx, z: -dz },
       ];
+      const corridor = s.corridor;
+      const inCorridor = (x, z) => {
+        let depth = Infinity;
+        for (let i = 0; i < corridor.points.length - 1; i++) {
+          const a = corridor.points[i];
+          const b = corridor.points[i + 1];
+          const vx = b.x - a.x;
+          const vz = b.z - a.z;
+          const lengthSq = vx * vx + vz * vz;
+          const t = lengthSq > 0
+            ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / lengthSq))
+            : 0;
+          depth = Math.min(depth, Math.hypot(x - (a.x + vx * t), z - (a.z + vz * t)));
+        }
+        return depth <= corridor.radius - 1.2;
+      };
       const candidates = [];
       for (const direction of directions) {
         for (const distance of [2, 2.5, 3]) {
           const x = s.playerPos.x + direction.x * distance;
           const z = s.playerPos.z + direction.z * distance;
-          if (Math.hypot(x, z) > 41) continue;
+          if (!inCorridor(x, z)) continue;
           if (s.enemies.some((enemy) => !enemy.dead && Math.hypot(enemy.x - x, enemy.z - z) < 2)) continue;
           const height = window.__ashen.terrainHeightAt(x, z);
           const screen = window.__ashen.worldToScreen(x, z, height);
@@ -785,6 +866,11 @@ async function main() {
     check('live remount: persistent state unchanged with no tick intervening',
       liveDiff === null,
       liveDiff ?? stateSummary(stableRunState(live.after)));
+    check('live remount: corridor route unchanged',
+      JSON.stringify(live.after.corridor) === JSON.stringify(live.marked.corridor),
+      live.after.corridor
+        ? `${live.after.corridor.points.length} points, radius ${live.after.corridor.radius}`
+        : 'corridor missing');
     check('live remount: mount epoch increments exactly once',
       live.after.render.mountEpoch === live.marked.render.mountEpoch + 1,
       `epoch ${live.marked.render.mountEpoch} -> ${live.after.render.mountEpoch}`);
@@ -839,7 +925,7 @@ async function main() {
         Math.abs(slopeNow.z - slopeEvidence.hoverNormal.z),
       );
       check('remounted surface reproduces the pre-remount slope normal',
-        componentError < 1e-4 && slopeNow.y < 0.999,
+        componentError < 1e-4 && slopeNow.y < 0.9999,
         `components error ${componentError.toExponential(3)}, `
         + `before ${normalDetail(slopeEvidence.hoverNormal)}, now ${normalDetail(slopeNow)}`);
     } else {

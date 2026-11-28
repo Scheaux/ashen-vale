@@ -213,14 +213,46 @@ async function main() {
         normalProbeId = now.probes.telegraph?.id ?? null;
         normalNearCues = now.enemyCues;
         // Retreat while the committed windup is still live: the target must
-        // switch from a detailed rig to the far additive cue.
+        // switch from a detailed rig to the far additive cue. The retreat point
+        // must stay inside the linear corridor, or hero movement would clamp it
+        // back under the detail range.
         const dx = now.playerPos.x - current.x;
         const dz = now.playerPos.z - current.z;
-        const length = Math.hypot(dx, dz) || 1;
-        await page.evaluate(([x, z]) => {
-          window.__ashen.healPlayer(9999);
-          window.__ashen.teleportPlayer(x, z);
-        }, [current.x + (dx / length) * 22, current.z + (dz / length) * 22]);
+        const baseAngle = Math.atan2(dz, dx);
+        const retreat = await page.evaluate(([enemyX, enemyZ, startAngle, corridor]) => {
+          const distanceToCorridor = (x, z) => {
+            let best = Infinity;
+            for (let i = 0; i < corridor.points.length - 1; i++) {
+              const a = corridor.points[i];
+              const b = corridor.points[i + 1];
+              const vx = b.x - a.x;
+              const vz = b.z - a.z;
+              const lengthSq = vx * vx + vz * vz;
+              const t = lengthSq > 0
+                ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / lengthSq))
+                : 0;
+              best = Math.min(best, Math.hypot(x - (a.x + vx * t), z - (a.z + vz * t)));
+            }
+            return best;
+          };
+          for (const radius of [22, 21, 20, 19]) {
+            for (let step = 0; step < 32; step++) {
+              const angle = startAngle + (step / 32) * Math.PI * 2;
+              const x = enemyX + Math.cos(angle) * radius;
+              const z = enemyZ + Math.sin(angle) * radius;
+              if (distanceToCorridor(x, z) <= corridor.radius - 1.2) {
+                return { x, z, distance: radius };
+              }
+            }
+          }
+          return null;
+        }, [current.x, current.z, baseAngle, now.corridor]);
+        if (retreat) {
+          await page.evaluate(([x, z]) => {
+            window.__ashen.healPlayer(9999);
+            window.__ashen.teleportPlayer(x, z);
+          }, [retreat.x, retreat.z]);
+        }
         await sleep(60);
         const farNow = await snap();
         const farTarget = farNow.enemies.find((e) => e.id === isolatedNormal.id);
