@@ -1,25 +1,32 @@
 # Ashen Vale
 
 A dark-fantasy isometric action RPG in TypeScript + three.js, released as
-**v1.4.1**. Built in vertical slices; the completed MVP covers scaffold,
+**v1.5.0**. Built in vertical slices; the completed MVP covers scaffold,
 movement, combat, enemy AI with telegraphs, rewards/loot, the full combat kit
 (mana, flasks and the death → checkpoint retry flow), a passive skill tree, the
-zone objective loop — clear the camps, then end the Ashen Warden in its arena —
-local save slots with Continue, jointed procedural character rigs, and the
-post-release polish pass (fixed 45° camera, terrain grounding, HUD declutter,
-combat readability, VFX, performance LOD and adaptive resolution).
+zone objective loop — a long linear moor with 16 optional camps and the Ashen
+Warden at the far end — local save slots with Continue, jointed procedural
+character rigs, and the post-release polish pass (fixed 45° camera, terrain
+grounding, HUD declutter, combat readability, VFX, performance LOD and
+adaptive resolution).
 
 v1.2 added a **skill-point progression and six-slot loadout system** (RMB +
 Q/W/E/R/F), a skill library with unlock/upgrade ranks, and click-to-swap hotbar
 slots. v1.3 added the **fourth active per class**, a **rune modifier layer**,
 **volatile elite death blasts**, **Warden cinder pools** and **camera
-occlusion**. v1.4 adds **item base implicits and quality**, expanded
-bases/affixes/uniques, and a **crafting bench/economy**. v1.4.1 hardens
+occlusion**. v1.4 added **item base implicits and quality**, expanded
+bases/affixes/uniques, and a **crafting bench/economy**. v1.4.1 hardened
 **salvage** with a double-click-resistant confirmation, pointer focus that
 never scrolls the panel, equipment-first refusal and expanded browser coverage.
-See [the post-release plan](./docs/post-release-plan.md) for the road map,
-[the moor expansion plan](./docs/plans/next-update-investigation.md) for the
-current work, and [release notes](./docs/release-notes.md) for verification
+v1.5.0 rebuilds the moor as a **linear bog**: 16 optional camps,
+corridor-aware enemy movement, an end-of-zone Warden with an encounter leash,
+and a sealed portal that opens on the Warden's death. Saves move to **v8**
+with 16 camp slots, and the HUD gains a live **FPS readout**. The moor is the
+final campaign zone for now, so the Warden still closes the loop to victory;
+the ossuary portal is visible but not yet a travel target. See
+[the post-release plan](./docs/post-release-plan.md) for the road map,
+[the linear-moor design](./docs/plans/next-update-investigation.md) for the
+shipped layout, and [release notes](./docs/release-notes.md) for verification
 evidence, known limitations and rollback steps.
 
 ## Run
@@ -134,13 +141,18 @@ npm run qa:release # production build + the full-loop release suite only
   allocation and no-orphan refunds; passive bonuses feed the shared stat
   derivation (attribute nodes compound through synergies) and the tree
   screen on P shows tooltips, lit connectors and the points budget
-- **Zone objectives & boss:** three camps tracked on the HUD ("Clear the
-  camps (n/3)") gate the Ashen Warden — a three-phase boss (sweeps → ground
-  slams at where you stand → enraged charges) with phase multipliers, minion
-  adds and its own telegraph shapes, locked in a pillar-ringed arena while
-  the fight is live. Phase-2 slams leave a burning **cinder pool** that ticks
-  damage for 2.6s; elite **Volatile** deaths leave a telegraphed blast. The
-  victory screen closes the loop back to play or title
+- **Zone objectives & boss:** a long linear bog with **16 optional camps**
+  tracked on the HUD ("Camps cleared (n/16) — optional"). Camps award XP, loot
+  and currency but never gate the boss. The **Ashen Warden** waits at the far
+  end and wakes when the hero enters its clearing — a three-phase boss
+  (sweeps → ground slams at where you stand → enraged charges) with phase
+  multipliers, minion adds and its own telegraph shapes. An **encounter leash**
+  keeps the Warden near the clearing while the hero can retreat freely; the
+  return never resets its HP or phase. Phase-2 slams leave a burning **cinder
+  pool** that ticks damage for 2.6s; elite **Volatile** deaths leave a
+  telegraphed blast. The **portal** behind the clearing stays sealed until the
+  Warden dies, then opens; the victory screen closes the loop back to play or
+  title
 - Player health bar, death screen with a death recap (killing blow, damage
   taken, kills, time survived) and respawn at the checkpoint, which preserves
   progression and encounter damage while refilling mana and flasks and
@@ -154,10 +166,11 @@ npm run qa:release # production build + the full-loop release suite only
   flasks, **skill ranks and six-slot loadout**, position and camp/boss flags —
   with cleared camps left empty and a live boss fight restarting at its arena
   spawn. Every write keeps the previous body as a backup; torn writes recover,
-  and corrupt slots are reported and deletable. Schema **v6** adds item
-  implicits/quality and crafting currency, with tested v1→v6, v2→v6, v3→v6,
-  v4→v6 and v5→v6 migrations; legacy saves pre-spend the active kit available
-  at their level and gain 0% quality/no implicit
+  and corrupt slots are reported and deletable. Schema **v8** stores 16 moor
+  camp flags and preserves boss/portal state; v7→v8 resets the old three moor
+  flags (no legacy camp carry-over), while the tested v1→v8 chain keeps item
+  quality, implicits, currency, ranks and loadout data. Legacy saves pre-spend
+  the active kit available at their level and gain 0% quality/no implicit
   (`src/save/schema.ts`, `slots.ts`, `restore.ts`)
 - **Combat readability:** layered ground telegraphs (dark stain, rising fill,
   bright rim), one instanced health-bar draw call pair for all enemies, heavy-hit
@@ -167,13 +180,14 @@ npm run qa:release # production build + the full-loop release suite only
   silhouettes beyond 16 units, at most eight full rigs), instanced contact
   shadows, frustum-culled detail selection, and adaptive resolution between 1x
   and the device cap. Release QA gates camp fights at **≤320 draw calls /
-  ≤260K triangles** (measured 121–280 calls and 165–193K triangles in headless
-  Chromium)
-- **Release:** v1.4.1 with a full-loop browser suite (fresh start → feedback →
-  camps → boss phases → victory → save → reload → Continue), high-DPI adaptive
-  quality and reduced-motion checks, plus post-release QA for grounding, the
-  fixed camera, HUD declutter, skill points/loadouts, fourth actives, runes,
-  hazards, camera occlusion, item crafting and salvage; see
+  ≤260K triangles** (measured 274 calls / 244K triangles at the densest camp,
+  and 241 calls / 246K triangles in the end Warden pack; during a live boss
+  encounter the detailed-rig cap drops to four, boss-first)
+- **Release:** v1.5.0 with the full-loop browser suite (fresh start → feedback →
+  optional camps → Warden phases → portal → victory → save → reload → Continue)
+  plus the linear-moor gate (16 camps, arena-entry Warden, leash/retreat,
+  sealed/open portal, 16-slot save and performance), high-DPI adaptive quality,
+  reduced-motion checks, and the HUD FPS counter; see
   [release notes](./docs/release-notes.md) for evidence and rollback
 
 ## Architecture
@@ -197,7 +211,7 @@ src/
   ui/        DOM-overlay screens (title, class select, HUD with six-slot loadout/flasks,
              passive tree, skill library/loadout picker, crafting bench, pause with
              controls, death recap, inventory), floating combat text, nameplates
-  save/      versioned schema (v6) + migrations, localStorage slots with backups,
+  save/      versioned schema (v8) + migrations, localStorage slots with backups,
              checkpoint restore (rebuilds zone progress, ranks, runes, loadout and
              crafting stock)
 ```
@@ -211,9 +225,11 @@ rigs, health bars, pixel ratio, shadow state and quality-window samples.
 
 Enemy rendering uses a detail budget: the closest eight on-screen rigs get full
 jointed animation, while distant enemies use a merged, vertex-colored
-silhouette with glowing eyes. Contact shadows are one instanced blob pass, and
-all health bars are two instanced passes. The pixel ratio steps between 1x and
-the device cap (up to 2x) based on a 1.5s frame-time window.
+silhouette with glowing eyes. During a live boss encounter the cap drops to
+four, boss-first, so nearby optional-camp rigs cannot push the end fight over
+the draw-call budget. Contact shadows are one instanced blob pass, and all
+health bars are two instanced passes. The pixel ratio steps between 1x and the
+device cap (up to 2x) based on a 1.5s frame-time window.
 
 The same seed and tick-by-tick inputs produce the same gameplay outcomes.
 Rendering consumes authoritative state and events. Checkpoints store character
@@ -223,8 +239,12 @@ Loading rebuilds the zone from those flags and the deterministic layout.
 
 ## Release
 
-- **Version:** 1.4.1
+- **Version:** 1.5.0
 - **Build:** static `dist/` bundle; `npm run build`, then serve `dist/`
-- **Rollback target:** tag `v1.4.0`. Save schema v6 is unchanged in v1.4.1;
-  v1.3.0 cannot read v6, so export/remove v6 slots before rolling back further.
+- **Rollback target:** commit `f1d1fb1` (last pre-expansion `main`, save v7).
+  Save schema v8 is one-way: v1.4.x and the v7 build cannot read v8, so
+  export/remove v8 slots before rolling back. The last public tag, `v1.4.0`,
+  reads save v6.
+- **Portal:** it opens on the Warden's death but has no travel target yet; it
+  refuses with "The Ossuary is not yet available".
 - **Evidence:** see [docs/release-notes.md](./docs/release-notes.md)

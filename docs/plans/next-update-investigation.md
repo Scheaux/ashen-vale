@@ -1,5 +1,10 @@
 # Next Update — Linear Moor, Prop Occlusion, Indicator Policy
 
+> **Status:** shipped in **v1.5.0** (2026-11-28). Shipped layout: spawn
+> `(0,74)`, corridor points `(12,10)`, `(-8,-40)`, `(0,-72)`, radius 29;
+> Warden `(0,-72)`, portal `(0,-80)`; 16 camps split 6/5/5. See
+> [release notes](../release-notes.md).
+
 Baseline: 5.0b save v7 is green on `feat/v15b-save` (253 unit tests, 426
 browser checks; merge pending). Land/merge 5.0b first. The moor rebuild below
 ships as save **v8**.

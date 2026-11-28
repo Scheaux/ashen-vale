@@ -1,5 +1,5 @@
 /**
- * v1.6 linear-moor expansion browser QA.
+ * v1.5 linear-moor expansion browser QA (16 camps).
  *
  * Covers the end-to-end shape of the 16-camp bog:
  *  - corridor spawn, 16 optional camps, 16-slot save body and save card;

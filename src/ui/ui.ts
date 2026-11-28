@@ -249,8 +249,8 @@ export class Ui {
 
   private updatePauseSave(): void {
     this.pauseSave.textContent = this.activeSlot === null
-      ? 'Ashen Vale v1.4 · autosave off — save manually'
-      : `Ashen Vale v1.4 · autosave slot ${this.activeSlot + 1}`;
+      ? 'Ashen Vale v1.5 · autosave off — save manually'
+      : `Ashen Vale v1.5 · autosave slot ${this.activeSlot + 1}`;
   }
 
   /** Red/blue edge pulse for health or shield damage (readability, not motion). */

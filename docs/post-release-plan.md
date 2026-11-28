@@ -1,10 +1,10 @@
 # Ashen Vale — Post-Release Polish & Expansion Plan
 
 Baseline: **v1.0.0** (`b3091c1`, tag `v1.0.0`).
-Status: **v1.4.1 ships the itemization/economy scope plus salvage hardening**
-(base implicits, quality, expanded bases/affixes/uniques, crafting bench and
-currency, gesture-safe salvage). It passed 234 unit tests and 328 browser
-checks. The next planned slice is v1.5 world expansion.
+Status: **v1.5.0 ships the linear-moor rebuild** (16 optional camps, end-zone
+Warden with a leash, on-death portal, 16-slot save v8 and a HUD FPS counter).
+It passed 309 unit tests and 537 browser checks. The next world-expansion
+step is the ossuary, its boss and portal travel.
 
 This plan starts with correctness and UX debt found in the shipped build, then
 expands the game in vertical slices. Every release keeps the same gates:
@@ -311,10 +311,14 @@ Sizes are relative slices, not calendar estimates.
   equipment is refused before the bag lookup, and the browser suite covers
   double-click, scrolled-panel, pending-invalidation and save/reload paths.
 
-### v1.5 — World expansion (L) — next
-- Second zone with a new camp/arena layout, new enemy archetypes and a new boss.
-- Waypoints/zone transitions and a quest/objective spine.
-- Real terrain elevation (now safe because grounding is a render contract).
+### v1.5 — World expansion (L) — in progress
+- **v1.5.0 linear moor:** rebuilt the first zone as a long bog with 16 optional
+  camps, corridor-aware enemy movement, an end-zone Warden with an encounter
+  leash, a portal that opens on the Warden's death, and save v8 (16 camp slots,
+  v7→v8 reset, no camp gate). The HUD gains a live FPS readout.
+- **Remaining:** second (ossuary) zone with a new camp/arena layout, enemy
+  archetypes and boss; waypoints/zone transitions and a quest/objective spine;
+  real terrain elevation.
 - Acceptance: two-zone run start→finish; save/Continue across zones; performance
   budget holds with the second zone's population.
 
@@ -391,4 +395,5 @@ placed in Q. Clicking any slot opens the skill picker with that slot selected.
 
 v1.1/v1.2 shipped as **v1.2.0**; v1.3 shipped as **v1.3.0**; v1.4
 (itemization, crafting and currency) shipped as **v1.4.0**; v1.4.1 hardens
-salvage and its browser coverage. The next slice is **v1.5 world expansion**.
+salvage and its browser coverage. **v1.5.0** ships the linear-moor rebuild.
+The next world-expansion step is the ossuary, its boss and portal travel.

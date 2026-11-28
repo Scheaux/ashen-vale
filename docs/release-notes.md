@@ -1,5 +1,89 @@
 # Ashen Vale — Release Notes
 
+## v1.5.0 — 2026-11-28
+
+The linear-moor expansion: the first zone is rebuilt as a long bog with 16
+optional camps, an end-zone Warden and a portal that opens on its death.
+
+### What ships
+
+- **Linear bog:** the radius-42 arena disc is replaced by a ~152-unit corridor
+  (`(0,74) → (12,10) → (-8,-40) → (0,-72)`, half-width 29) with rounded caps.
+  Terrain flattens the walkable band, keeps bog undulation inside and hills
+  outside, and the shadow camera covers spawn through portal. The player is
+  clamped to the band; the arena no longer clamps or teleports the hero.
+- **16 optional camps:** six on the first leg, five each on the second and
+  third, alternating sides 10–14 units off the centreline. Each camp holds 3–5
+  enemies with a 50% elite chance. Camps award XP/loot/currency and a HUD
+  count, but never gate the Warden or portal.
+- **End-zone Warden:** the Warden waits at `(0,-72)` and wakes when the hero
+  enters the end clearing. It keeps the existing three phases, adds and cinder
+  pools, with an 18-unit encounter leash: it chases inside the ring and walks
+  home without following the hero down the bog. The return de-aggros but never
+  resets HP, phase or adds, and a committed attack still resolves.
+- **Portal and victory:** `(0,-80)` carries a sealed arch before the kill and
+  an open teal gate/veil after. `portalOpen` derives from `bossDefeated`; the
+  victory screen remains bound to the last `CAMPAIGN_ZONES` entry, which is
+  the moor today. Clicking the open portal refuses with "The Ossuary is not
+  yet available"; no travel is wired.
+- **Save v8:** 16 moor camp slots, v7→v8 resets the old three flags (no legacy
+  carry-over), preserves `bossSpawned`/`bossDefeated`, keeps the ossuary at
+  three, and no longer requires camp completion for a boss spawn/defeat. v8 is
+  one-way; v1.4.x and the v7 build cannot read it.
+- **Corridor-aware AI/restore:** chase, pounce tells/travel and slam targets
+  clamp to the band; restored hero positions clamp to the corridor (with the
+  live-boss arena threshold kept). Legacy fixtures without a corridor keep the
+  original circle path.
+- **Props and tells:** prop occlusion now dithers colour/depth instead of
+  shrinking instance matrices, so props keep authored scale and cast matching
+  shadows. Normal enemies no longer draw ground attack tells; elite/boss tells
+  remain, and committed windups get detail priority plus a far-silhouette halo.
+- **HUD FPS counter:** a small top-right readout updates four times a second,
+  uses tabular numerals, and tints muted red below 50 FPS. `render.fps` exposes
+  the same sample for QA.
+- **Performance:** the boss-fight detail cap drops from eight rigs to four,
+  boss-first, so nearby optional-camp rigs become silhouettes. Measured peaks:
+  274 calls / 244,178 tris at the densest camp; 241 / 245,728 in the end
+  Warden pack; 208 / 234,424 with the open portal. Budget unchanged at 320 /
+  260K.
+
+### Verification evidence
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm test` | **309 tests** across 32 files |
+| `npm run build` | production build in `dist/` |
+| `npm run qa` | **18/18 suites, 537 browser checks** |
+| Render budget | all samples under 320 calls / 260K triangles |
+
+### Known limitations
+
+- The portal is a gate only; the ossuary is not a travel target yet. The
+  sealed arch has no collider, so the hero can walk through it into the empty
+  corridor cap.
+- Camp distribution is 6/5/5 rather than 4–5 per leg because the final leg is
+  short; all authored camp discs are separated by at least 12.83 units.
+- The `generateZoneLayout(seed)` fallback can accept overlapping anchors on a
+  rare non-default seed (seed 65 was observed). The shipped game uses the
+  default seed, whose anchors are clear.
+- Dash impact can resolve against the pre-corridor-clamped position for one
+  tick; movement re-clamps the visible position in the same tick.
+- A pounce tell at a concave bend can advertise a longer lane than the dash
+  travels; the landing itself is corridor-clamped.
+
+### Rollback
+
+Rollback target: `f1d1fb1` (last pre-expansion `main`, save v7). Save v8 is
+one-way; export or remove v8 slots before rolling back. The last public tag,
+`v1.4.0`, reads save v6.
+
+```bash
+git checkout f1d1fb1
+npm ci
+npm run build
+```
+
 ## v1.4.1 — 2026-11-27
 
 The salvage hardening release: the Ember Dust item sink is now gesture-safe,
