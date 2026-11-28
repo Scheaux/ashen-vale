@@ -123,6 +123,10 @@ interface PropInstance {
   radius: number;
   tall: boolean;
   fade: number;
+  /** Hysteresis state for the camera-to-player occlusion test. */
+  occluding: boolean;
+  /** QA-only override: update() leaves this instance's fade untouched. */
+  forced: boolean;
 }
 
 interface PropMesh {
@@ -156,12 +160,24 @@ export interface PropsView {
   update(camera: THREE.Camera, playerX: number, playerZ: number, dt: number): void;
   /** Fade/occlusion state plus live and authored per-instance scales. */
   probe(): PropProbe;
+  /**
+   * QA-only: force one prop's fade (null resumes occlusion control). Returns
+   * false when no instance matches the authored x/z.
+   */
+  forceFadeAt(x: number, z: number, fade: number | null): boolean;
   readonly occludedCount: number;
   /** Detach the scenery group and release its geometries, materials and textures. */
   dispose(): void;
 }
 
 const OCCLUSION_PADDING = 1.1;
+/** Release band beyond the enter radius, so camera drift cannot flicker. */
+const OCCLUSION_HYSTERESIS = 0.45;
+/** Along-line enter band; release extends past it before an occluder lets go. */
+const OCCLUSION_T_ENTER_MIN = 0.08;
+const OCCLUSION_T_ENTER_MAX = 0.97;
+const OCCLUSION_T_RELEASE_MIN = 0.05;
+const OCCLUSION_T_RELEASE_MAX = 0.99;
 const FADE_ATTRIBUTE = 'instanceFade';
 const STANDARD_FADE_CACHE_KEY = 'ashen-prop-instance-fade-v1';
 const DEPTH_FADE_CACHE_KEY = 'ashen-prop-instance-fade-depth-v1';
@@ -200,9 +216,10 @@ function replaceShaderMarker(source: string, marker: string, replacement: string
  * step with the visible dither without enabling transparency or sorting.
  */
 function patchInstanceFade(material: THREE.Material, cacheKey: string): void {
-  const previous = material.onBeforeCompile;
+  const previousCompile = material.onBeforeCompile;
+  const previousCacheKey = material.customProgramCacheKey;
   material.onBeforeCompile = (shader, renderer) => {
-    previous.call(material, shader, renderer);
+    previousCompile.call(material, shader, renderer);
     shader.vertexShader = replaceShaderMarker(
       shader.vertexShader,
       '#include <common>',
@@ -228,7 +245,7 @@ function patchInstanceFade(material: THREE.Material, cacheKey: string): void {
       'fragment',
     );
   };
-  material.customProgramCacheKey = () => cacheKey;
+  material.customProgramCacheKey = () => `${previousCacheKey.call(material)}|${cacheKey}`;
 }
 
 const PROP_RADIUS: Record<PropKind, number> = {
@@ -300,6 +317,8 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
         radius: PROP_RADIUS[kind] * p.scale,
         tall: kind !== 'rock',
         fade: 0,
+        occluding: false,
+        forced: false,
       });
     });
     mesh.instanceMatrix.needsUpdate = true;
@@ -324,18 +343,28 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
       let anyChanged = false;
       for (let i = 0; i < instances.length; i++) {
         const instance = instances[i];
-        let target = 0;
+        if (instance.forced) continue;
+
+        let occluding = false;
         if (instance.tall && lenSq > 1e-4) {
           const t = ((instance.position.x - cameraPosition.x) * dx +
             (instance.position.z - cameraPosition.z) * dz) / lenSq;
-          if (t > 0.08 && t < 0.97) {
+          const tMin = instance.occluding ? OCCLUSION_T_RELEASE_MIN : OCCLUSION_T_ENTER_MIN;
+          const tMax = instance.occluding ? OCCLUSION_T_RELEASE_MAX : OCCLUSION_T_ENTER_MAX;
+          if (t > tMin && t < tMax) {
             const lineX = cameraPosition.x + dx * t;
             const lineZ = cameraPosition.z + dz * t;
             const dist = Math.hypot(instance.position.x - lineX, instance.position.z - lineZ);
-            if (dist < instance.radius + OCCLUSION_PADDING) target = 1;
+            const enterRadius = instance.radius + OCCLUSION_PADDING;
+            const radius = instance.occluding
+              ? enterRadius + OCCLUSION_HYSTERESIS
+              : enterRadius;
+            occluding = dist < radius;
           }
         }
+        instance.occluding = occluding;
 
+        const target = occluding ? 1 : 0;
         const previous = instance.fade;
         instance.fade += (target - instance.fade) * (1 - Math.exp(-14 * dt));
         if (Math.abs(instance.fade - target) < 0.01) instance.fade = target;
@@ -377,10 +406,32 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
     return { total: sample.length, occluded: occludedCount, sample };
   }
 
+  function forceFadeAt(x: number, z: number, fade: number | null): boolean {
+    for (const { instances, fadeAttribute } of meshes) {
+      for (let i = 0; i < instances.length; i++) {
+        const instance = instances[i];
+        if (Math.abs(instance.position.x - x) > 1e-6 || Math.abs(instance.position.z - z) > 1e-6) {
+          continue;
+        }
+        if (fade === null) {
+          instance.forced = false;
+        } else {
+          instance.forced = true;
+          instance.fade = Math.min(1, Math.max(0, fade));
+          (fadeAttribute.array as Float32Array)[i] = instance.fade;
+          fadeAttribute.needsUpdate = true;
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
   return {
     group,
     update,
     probe,
+    forceFadeAt,
     dispose() {
       depthMaterial.dispose();
       disposeMeshTree(group);

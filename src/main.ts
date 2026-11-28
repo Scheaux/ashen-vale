@@ -213,6 +213,8 @@ export interface AshenDebug {
   sceneryPoints(): Array<{ x: number; z: number }>;
   /** Review fixture: prop occlusion fades plus live/authored instance scales. */
   propProbe(): ReturnType<PropsView['probe']>;
+  /** Review fixture: force one prop's fade; null resumes occlusion. */
+  propFadeAt(x: number, z: number, fade: number | null): boolean;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
   healPlayer(amount: number): void;
   /** Review fixture: grant XP to reach the level-up edge state. */
@@ -1604,6 +1606,10 @@ class Game {
     return this.propsView.probe();
   }
 
+  propFadeAt(x: number, z: number, fade: number | null): boolean {
+    return this.propsView.forceFadeAt(x, z, fade);
+  }
+
   hazardPoints(): ReturnType<AshenDebug['hazardPoints']> {
     const state = this.state;
     if (!state) return [];
@@ -1746,6 +1752,7 @@ const game = new Game(canvas, uiRoot);
   remountZone: (zoneId) => game.remountZone(zoneId),
   sceneryPoints: () => game.sceneryPoints(),
   propProbe: () => game.propProbe(),
+  propFadeAt: (x, z, fade) => game.propFadeAt(x, z, fade),
   exportSave: () => game.exportSave(),
   saves: () => game.saves(),
 };

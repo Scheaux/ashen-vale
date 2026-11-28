@@ -12,9 +12,12 @@ vi.mock('./materials', async () => {
   return {
     barkMaterial: () => {
       const material = new three.MeshStandardMaterial();
-      material.onBeforeCompile = () => {
+      material.onBeforeCompile = (shader) => {
         materialHooks.barkBeforeCompile += 1;
+        shader.vertexShader += '\n// bark-previous-hook';
+        shader.fragmentShader += '\n// bark-previous-hook';
       };
+      material.customProgramCacheKey = () => 'bark-base-cache';
       return material;
     },
     stoneMaterial: () => new three.MeshStandardMaterial(),
@@ -83,13 +86,16 @@ describe('PropsView occlusion fade', () => {
     const standard = meshes[0].material as THREE.MeshStandardMaterial;
     const standardShader = runPatch(standard);
     expect(materialHooks.barkBeforeCompile).toBe(1);
+    expect(standardShader.vertexShader).toContain('// bark-previous-hook');
+    expect(standardShader.fragmentShader).toContain('// bark-previous-hook');
     expect(standardShader.vertexShader).toContain('attribute float instanceFade;');
     expect(standardShader.vertexShader).toContain('varying float vInstanceFade;');
     expect(standardShader.vertexShader).toContain('vInstanceFade = instanceFade;');
     expect(standardShader.fragmentShader).toContain('ashenBayer4(gl_FragCoord.xy)');
     expect(standardShader.fragmentShader).toContain('vInstanceFade >');
     expect(standardShader.fragmentShader).toContain('discard;');
-    expect(standard.customProgramCacheKey()).toBe('ashen-prop-instance-fade-v1');
+    expect(standard.customProgramCacheKey()).toContain('bark-base-cache');
+    expect(standard.customProgramCacheKey()).toContain('ashen-prop-instance-fade-v1');
 
     // The matching depth material carries the same patch and cache key.
     const depth = meshes[0].customDepthMaterial as THREE.MeshDepthMaterial;
@@ -100,7 +106,7 @@ describe('PropsView occlusion fade', () => {
     expect(depthShader.fragmentShader).toContain('ashenBayer4(gl_FragCoord.xy)');
     expect(depthShader.fragmentShader).toContain('vInstanceFade >');
     expect(depthShader.fragmentShader).toContain('discard;');
-    expect(depth.customProgramCacheKey()).toBe('ashen-prop-instance-fade-depth-v1');
+    expect(depth.customProgramCacheKey()).toContain('ashen-prop-instance-fade-depth-v1');
 
     // A renamed three shader chunk fails loudly instead of silently dropping
     // the dither.
@@ -111,12 +117,92 @@ describe('PropsView occlusion fade', () => {
     expect(() => standard.onBeforeCompile(broken, null as unknown as THREE.WebGLRenderer))
       .toThrow(/begin_vertex/);
 
+    // QA fade hook: a forced instance ignores update until released.
+    expect(view.forceFadeAt(0, 0, 0)).toBe(true);
+    for (let i = 0; i < 10; i++) view.update(camera, -1, -1, 1 / 60);
+    expect(view.probe().sample[0].fade).toBe(0);
+    expect(view.forceFadeAt(1234, 5678, 0.5)).toBe(false);
+    expect(view.forceFadeAt(0, 0, null)).toBe(true);
+    for (let i = 0; i < 60; i++) view.update(camera, -1, -1, 1 / 60);
+    expect(view.probe().sample[0].fade).toBeGreaterThan(0.9);
+
     // Moving away releases the fade; matrices stay frozen.
     for (let i = 0; i < 60; i++) view.update(camera, 20, 20, 1 / 60);
     expect(view.probe().occluded).toBe(0);
     for (let i = 0; i < meshes.length; i++) {
       expect(Array.from(meshes[i].instanceMatrix.array)).toEqual(Array.from(before[i]));
     }
+
+    view.dispose();
+  });
+
+  it('holds a prop faded across the radial and t-band deadbands', () => {
+    const view = createProps(layout());
+    const camera = new THREE.PerspectiveCamera();
+    const step = (playerX: number, playerZ: number, frames = 30) => {
+      for (let i = 0; i < frames; i++) view.update(camera, playerX, playerZ, 1 / 60);
+    };
+    const fade = () => view.probe().sample[0].fade;
+    expect(view.probe().sample[0].kind).toBe('deadTree');
+
+    // Start inside the enter band.
+    camera.position.set(10, 6, 0);
+    step(-10, 0, 60);
+    expect(fade()).toBeGreaterThan(0.99);
+
+    // Radial deadband: 1.7..2.05 is outside enter 1.65 but inside release 2.1.
+    for (const z of [1.7, 2.05, 1.8, 2.0, 1.9]) {
+      camera.position.set(10, 6, z);
+      step(-10, z, 6);
+      expect(fade()).toBeGreaterThan(0.99);
+    }
+
+    // Past the release radius the prop may fade, and jittering back into the
+    // enter-but-not-release gap must not re-trigger it.
+    camera.position.set(10, 6, 2.2);
+    step(-10, 2.2, 60);
+    expect(fade()).toBeLessThan(0.01);
+    expect(view.probe().occluded).toBe(0);
+    for (const z of [1.9, 1.7, 2.0]) {
+      camera.position.set(10, 6, z);
+      step(-10, z, 10);
+      expect(fade()).toBeLessThan(0.01);
+    }
+
+    // Re-enter, then jitter across the t-band release edge (0.99): t stays in
+    // (0.97, 0.99) so an already-faded instance must stay faded.
+    camera.position.set(10, 6, 0);
+    step(-10, 0, 60);
+    expect(fade()).toBeGreaterThan(0.99);
+    for (const playerX of [-0.26, -0.14, -0.2]) {
+      step(playerX, 0, 6);
+      expect(fade()).toBeGreaterThan(0.99);
+    }
+
+    // t > 0.99 releases, and re-entering the (0.97, 0.99) gap must not re-trigger.
+    step(-0.05, 0, 60);
+    expect(fade()).toBeLessThan(0.01);
+    for (const playerX of [-0.2, -0.26, -0.14]) {
+      step(playerX, 0, 10);
+      expect(fade()).toBeLessThan(0.01);
+    }
+
+    // Lower t-band: camera (1) / player (-15.7) gives t ≈ 0.060, inside the
+    // release band (0.05) but below enter (0.08); a faded prop must hold.
+    camera.position.set(10, 6, 0);
+    step(-10, 0, 60);
+    expect(fade()).toBeGreaterThan(0.99);
+    camera.position.set(1, 6, 0);
+    step(-15.7, 0, 30);
+    expect(fade()).toBeGreaterThan(0.99);
+
+    // t ≈ 0.031 releases, and returning to t ≈ 0.060 must not re-trigger.
+    camera.position.set(0.5, 6, 0);
+    step(-15.7, 0, 60);
+    expect(fade()).toBeLessThan(0.01);
+    camera.position.set(1, 6, 0);
+    step(-15.7, 0, 10);
+    expect(fade()).toBeLessThan(0.01);
 
     view.dispose();
   });

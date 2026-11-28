@@ -174,7 +174,7 @@ async function main() {
   check('the render snapshot keeps the occluded prop count', counts.snapshot === counts.probe,
     `${counts.snapshot} snapshot vs ${counts.probe} probe`);
 
-  // --- Render-level proof: the fade changes the prop's screen coverage ---
+  // --- Render-level proof: forced fade changes the prop's screen coverage ---
   const enemyPoints = (await snap()).enemies.filter((enemy) => !enemy.dead);
   const distanceToEnemies = (prop) => enemyPoints.length === 0
     ? 0
@@ -183,27 +183,23 @@ async function main() {
   if (!renderTarget) {
     check('fade changes the prop screen coverage in rendered pixels', false, 'no occlusion target found');
   } else {
-    // A prop far from live enemies keeps telegraphs/projectiles out of the
-    // evidence frame. Snap the camera to its converged occlusion pose.
+    const waitFrames = (frames = 2) => page.evaluate((count) => new Promise((resolve) => {
+      let remaining = count;
+      const tick = () => {
+        remaining -= 1;
+        if (remaining <= 0) resolve();
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }), frames);
+
+    // A prop far from live enemies keeps telegraphs/projectiles out of frame.
+    // No remount: geometry and camera stay identical between the shots.
     await page.evaluate(([x, z]) => {
       window.__ashen.healPlayer(9999);
       window.__ashen.teleportPlayer(x, z);
-      window.__ashen.remountZone('ashen-moor');
     }, [renderTarget.x - 2.2, renderTarget.z - 2.2]);
-
-    let renderFade = 0;
-    for (let i = 0; i < 30; i++) {
-      await sleep(100);
-      const probe = await probeProps();
-      const sample = probe.sample.find((candidate) =>
-        Math.abs(candidate.x - renderTarget.x) < 1e-6 &&
-        Math.abs(candidate.z - renderTarget.z) < 1e-6);
-      renderFade = sample?.fade ?? 0;
-      if (renderFade > 0.99) break;
-    }
-    check('render evidence target reaches full fade', renderFade > 0.99,
-      `${renderTarget.kind} at ${renderTarget.x.toFixed(1)}, ${renderTarget.z.toFixed(1)}; fade ${renderFade.toFixed(3)}`);
-    await page.screenshot({ path: `${SHOTS}93-occlusion.png` });
+    await sleep(1200);
 
     const region = await page.evaluate(([x, z, kind, authoredY]) => {
       const ground = window.__ashen.terrainHeightAt(x, z);
@@ -223,40 +219,61 @@ async function main() {
       };
     }, [renderTarget.x, renderTarget.z, renderTarget.kind, renderTarget.authoredScale.y]);
 
-    const fade1Shot = await page.screenshot({ clip: region });
-    writeFileSync(`${SHOTS}93-occlusion-fade1.png`, fade1Shot);
+    let fade0Shot;
+    let fade0ControlShot;
+    let fade1Shot;
+    try {
+      check('prop fade hook targets the evidence prop',
+        await page.evaluate(([x, z]) => window.__ashen.propFadeAt(x, z, 0), [renderTarget.x, renderTarget.z]));
+      await waitFrames(2);
+      const forcedZero = await probeProps();
+      const zeroSample = forcedZero.sample.find((candidate) =>
+        Math.abs(candidate.x - renderTarget.x) < 1e-6 &&
+        Math.abs(candidate.z - renderTarget.z) < 1e-6);
+      check('prop fade hook forces fade 0', zeroSample?.fade === 0,
+        `fade ${zeroSample?.fade?.toFixed(3) ?? 'missing'}`);
 
-    // Freeze the fade/camera smoothing via negative Math.exp, then rebuild the
-    // props at fade 0 without moving the camera. Restored immediately after.
-    await page.evaluate(() => {
-      const original = Math.exp;
-      window.__qaOriginalExp = original;
-      Math.exp = (value) => (value < 0 ? 1 : original(value));
-      window.__ashen.remountZone('ashen-moor');
-    });
-    await page.evaluate(() => new Promise((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    const fadeZeroProbe = await probeProps();
-    const fadeZeroSample = fadeZeroProbe.sample.find((candidate) =>
-      Math.abs(candidate.x - renderTarget.x) < 1e-6 &&
-      Math.abs(candidate.z - renderTarget.z) < 1e-6);
-    check('render evidence target resets to fade 0',
-      fadeZeroSample?.fade === 0, `fade ${fadeZeroSample?.fade?.toFixed(3) ?? 'missing'}`);
-    const fade0Shot = await page.screenshot({ clip: region });
-    writeFileSync(`${SHOTS}93-occlusion-fade0.png`, fade0Shot);
-    await page.screenshot({ path: `${SHOTS}93-occlusion-fade0-full.png` });
-    await page.evaluate(() => {
-      if (window.__qaOriginalExp) {
-        Math.exp = window.__qaOriginalExp;
-        delete window.__qaOriginalExp;
-      }
-    });
+      await page.screenshot({ path: `${SHOTS}93-occlusion.png` });
+      fade0Shot = await page.screenshot({ clip: region });
+      writeFileSync(`${SHOTS}93-occlusion-fade0.png`, fade0Shot);
+      await sleep(150);
+      fade0ControlShot = await page.screenshot({ clip: region });
+      writeFileSync(`${SHOTS}93-occlusion-fade0-control.png`, fade0ControlShot);
 
-    const diff = await compareScreenshots(page, fade1Shot, fade0Shot);
+      check('prop fade hook forces fade 1',
+        await page.evaluate(([x, z]) => window.__ashen.propFadeAt(x, z, 1), [renderTarget.x, renderTarget.z]));
+      await waitFrames(2);
+      const forcedOne = await probeProps();
+      const oneSample = forcedOne.sample.find((candidate) =>
+        Math.abs(candidate.x - renderTarget.x) < 1e-6 &&
+        Math.abs(candidate.z - renderTarget.z) < 1e-6);
+      check('prop fade hook reports fade 1', oneSample?.fade === 1,
+        `fade ${oneSample?.fade?.toFixed(3) ?? 'missing'}`);
+      await sleep(150);
+      fade1Shot = await page.screenshot({ clip: region });
+      writeFileSync(`${SHOTS}93-occlusion-fade1.png`, fade1Shot);
+      await page.screenshot({ path: `${SHOTS}93-occlusion-fade1-full.png` });
+    } finally {
+      await page.evaluate(([x, z]) => window.__ashen.propFadeAt(x, z, null),
+        [renderTarget.x, renderTarget.z]);
+    }
+
+    const controlDiff = await compareScreenshots(page, fade0Shot, fade0ControlShot);
+    const fadeDiff = await compareScreenshots(page, fade0ControlShot, fade1Shot);
+    const dimensionsOk = controlDiff.width === region.width && controlDiff.height === region.height &&
+      fadeDiff.width === region.width && fadeDiff.height === region.height;
+    check('render evidence crops match the requested region', dimensionsOk,
+      `${controlDiff.width}x${controlDiff.height} and ${fadeDiff.width}x${fadeDiff.height} ` +
+      `vs ${region.width}x${region.height}`);
+
+    const pixelChangeThreshold = 2000;
+    check('forced fade control pair stays below the pixel threshold',
+      controlDiff.changed < pixelChangeThreshold && controlDiff.meanDelta < 0.5,
+      `${controlDiff.changed}/${controlDiff.pixels} px changed, mean delta ${controlDiff.meanDelta.toFixed(2)}`);
     check('fade changes the prop screen coverage in rendered pixels',
-      diff.changed > 1500 && diff.meanDelta > 1,
-      `${renderTarget.kind}; ${diff.changed}/${diff.pixels} px changed, ` +
-      `mean delta ${diff.meanDelta.toFixed(2)}`);
+      fadeDiff.changed > pixelChangeThreshold && fadeDiff.meanDelta > 1,
+      `${renderTarget.kind}; ${fadeDiff.changed}/${fadeDiff.pixels} px changed, ` +
+      `mean delta ${fadeDiff.meanDelta.toFixed(2)}`);
   }
   await setZoom(18);
 

@@ -87,7 +87,7 @@ export function createWorldScene(canvas: HTMLCanvasElement): WorldScene {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.22;
   renderer.shadowMap.enabled = true;
-  // Three r187 removed PCFSoftShadowMap for WebGL; it silently resolves to PCF.
+  // Three r187 removed PCFSoftShadowMap for WebGL; it warns and resolves to PCF.
   // Use PCF directly to keep the shadow filter explicit and warning-free.
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
