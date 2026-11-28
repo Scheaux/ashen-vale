@@ -17,11 +17,10 @@ occlusion**. v1.4 adds **item base implicits and quality**, expanded
 bases/affixes/uniques, and a **crafting bench/economy**. v1.4.1 hardens
 **salvage** with a double-click-resistant confirmation, pointer focus that
 never scrolls the panel, equipment-first refusal and expanded browser coverage.
-See [MVP.md](./MVP.md)
-for the roadmap,
-[the post-release plan](./docs/post-release-plan.md) for the next phases, and
-[release notes](./docs/release-notes.md) for verification evidence, known
-limitations and rollback steps.
+See [the post-release plan](./docs/post-release-plan.md) for the road map,
+[the moor expansion plan](./docs/plans/next-update-investigation.md) for the
+current work, and [release notes](./docs/release-notes.md) for verification
+evidence, known limitations and rollback steps.
 
 ## Run
 
