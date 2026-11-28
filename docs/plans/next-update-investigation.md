@@ -1,7 +1,8 @@
 # Next Update — Linear Moor, Prop Occlusion, Indicator Policy
 
-Baseline: 5.0b save v7 on `feat/v15b-save` (core green; browser QA tightening
-in progress). Land/merge 5.0b first. The moor rebuild below ships as save **v8**.
+Baseline: 5.0b save v7 is green on `feat/v15b-save` (253 unit tests, 426
+browser checks; merge pending). Land/merge 5.0b first. The moor rebuild below
+ships as save **v8**.
 
 ## Goals
 
