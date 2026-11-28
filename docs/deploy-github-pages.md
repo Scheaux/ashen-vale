@@ -5,25 +5,25 @@ the project page can live at:
 
 **https://scheaux.github.io/ashen-vale/**
 
-## One-time repository setup
+## Repository setup
 
-Pages is not enabled yet (`has_pages: false` as of the v1.5.0 release). This
-step needs repository admin access in the GitHub UI; the workflow's
-`GITHUB_TOKEN` cannot enable Pages by itself.
+Pages is enabled for `Scheaux/ashen-vale` with **Source: GitHub Actions**. The
+workflow is `.github/workflows/pages.yml`. It runs on every push to `main` and
+can be started manually from **Actions → Deploy to GitHub Pages → Run
+workflow**.
+
+If Pages is ever disabled or reset, re-enable it with repository admin access:
 
 1. Open <https://github.com/Scheaux/ashen-vale/settings/pages>.
-2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+2. Under **Build and deployment → Source**, choose **GitHub Actions** (not
+   "Deploy from a branch"; a branch source publishes the raw repository root
+   and overwrites the built game).
 3. Make sure the repository has Pages available (public repository, or a plan
    that supports Pages for private repositories).
 
 If the workflow runs before this is done, it stops at **Configure Pages** with
 a "Get Pages site failed" error. Enable the source above, then re-run the
-failed job (or **Actions → Deploy to GitHub Pages → Run workflow**). No code
-change is needed.
-
-The workflow is `.github/workflows/pages.yml`. It runs on every push to `main`
-and can be started manually from **Actions → Deploy to GitHub Pages → Run
-workflow**.
+failed job. No code change is needed.
 
 ## What the workflow does
 
