@@ -1,6 +1,6 @@
 /**
  * v1.4 itemization/economy QA: crafted item state, currency spend, base
- * implicits/quality, save v6 persistence, and no identity loss.
+ * implicits/quality, save v7 persistence, and no identity loss.
  */
 import { chromium } from 'playwright';
 import { startPreviewServer, stopServer } from './server.mjs';
@@ -117,7 +117,7 @@ async function main() {
   s = await snap();
   item = s.items.find((entry) => entry.uid === uid);
   const save = await page.evaluate(() => JSON.parse(window.__ashen.exportSave()));
-  check('save v6 carries the crafted item', save.version === 6 &&
+  check('save v7 carries the crafted item', save.version === 7 &&
     save.inventory.bags.some((entry) => entry.uid === uid));
   check('Continue restores item quality and affix count', item?.quality === 5 && item?.affixes.length === 1);
   check('Continue restores crafting currency', s.currency.dust === 10 && s.currency.rune === 9 && s.currency.quality === 9,
