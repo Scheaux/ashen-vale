@@ -34,7 +34,7 @@ export const ZONE_DEFS: Record<ZoneId, ZoneDef> = {
     chapter: 'I',
     seed: 20261122,
     campCount: 16,
-    activeCamps: 3,
+    activeCamps: 16,
     bossId: 'ashen-warden',
     bossTrigger: 'end',
   },

@@ -84,8 +84,8 @@ describe('TerrainSurface', () => {
     expect(mesh.geometry).not.toBe(geometry);
     // Known values from the rebuilt 30-unit/128-segment moor grid. These are
     // non-zero near the boundary and would be 0 under stale 20x20 indexing.
-    expect(surface.heightAt(14.9, 14.9)).toBeCloseTo(0.00267683, 5);
-    expect(surface.heightAt(-14.9, 14.9)).toBeCloseTo(0.00491645, 5);
+    expect(surface.heightAt(14.9, 14.9)).toBeCloseTo(0.00046036, 5);
+    expect(surface.heightAt(-14.9, 14.9)).toBeCloseTo(0.01503875, 5);
 
     // A non-up normal at the first sample also proves the rewritten step/min/
     // row/segments are being used, not just the new position attribute.
@@ -93,7 +93,7 @@ describe('TerrainSurface', () => {
     expect(normal.length()).toBeCloseTo(1, 6);
     expect(normal.y).toBeLessThan(0.9999999);
     expect(Math.abs(normal.x)).toBeGreaterThan(1e-4);
-    expect(Math.abs(normal.z)).toBeGreaterThan(1e-4);
+    expect(Math.abs(normal.z)).toBeGreaterThan(1e-6);
 
     mesh.geometry.dispose();
     (mesh.material as THREE.Material).dispose();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
 import type { ZoneLayout } from '../content/types';
+import { generateZoneLayout } from '../content/zone';
 import { createGameState, drainEvents, type GameState, type SimEvent } from '../sim/state';
 import { damageEnemy } from './combat';
 import { activeBounds, stepMovement } from './movement';
@@ -180,5 +181,74 @@ describe('zone objectives (optional camps, end Warden)', () => {
 
     enterArena(state);
     expect(state.objectives.bossSpawned).toBe(true);
+  });
+});
+
+describe('linear moor objectives', () => {
+  it('boots with 16 optional camps and the Warden asleep at the end', () => {
+    const layout = generateZoneLayout();
+    const state = createGameState(getClass('ranger'), layout);
+
+    expect(state.corridor).toEqual(layout.corridor);
+    expect(state.objectives.campsTotal).toBe(16);
+    expect(state.objectives.campCleared).toHaveLength(16);
+    expect(state.objectives.bossSpawned).toBe(false);
+    expect(state.portal).toEqual({ x: 0, z: -80 });
+    expect(state.arena.center).toEqual({ x: 0, z: -72 });
+    expect(state.enemies.some((enemy) => enemy.defId === 'ashen-warden')).toBe(false);
+
+    stepObjectives(state, []);
+    expect(state.objectives.bossSpawned).toBe(false);
+  });
+
+  it('clearing all 16 camps never gates the Warden', () => {
+    const layout = generateZoneLayout();
+    const state = createGameState(getClass('marauder'), layout);
+    for (const enemy of state.enemies) {
+      if (enemy.camp >= 0) enemy.dead = true;
+    }
+    stepObjectives(state, []);
+    expect(state.objectives.campCleared.every(Boolean)).toBe(true);
+    expect(state.objectives.bossSpawned).toBe(false);
+    expect(state.enemies.some((enemy) => enemy.defId === 'ashen-warden')).toBe(false);
+
+    // Walking into the end clearing still wakes him, with camps irrelevant.
+    state.player.position = { x: state.arena.center.x, z: state.arena.center.z };
+    stepObjectives(state, []);
+    expect(state.objectives.bossSpawned).toBe(true);
+    expect(state.enemies.some((enemy) => enemy.defId === 'ashen-warden')).toBe(true);
+  });
+
+  it('ends the final-zone run and opens the portal when the Warden dies', () => {
+    const layout = generateZoneLayout();
+    const state = createGameState(getClass('witch'), layout);
+    const events: SimEvent[] = [];
+
+    state.player.position = { x: state.arena.center.x, z: state.arena.center.z + state.arena.radius - 1 };
+    stepObjectives(state, events);
+    expect(state.objectives.bossSpawned).toBe(true);
+    const boss = state.enemies.find((enemy) => enemy.defId === 'ashen-warden')!;
+    kill(state, boss.id, events);
+    stepObjectives(state, events);
+
+    expect(state.objectives.bossDefeated).toBe(true);
+    expect(events.some((event) => event.kind === 'victory')).toBe(true);
+    expect(events.some((event) => event.kind === 'objective' && event.text.includes('Gate opens'))).toBe(true);
+    expect(state.portal).toEqual({ x: 0, z: -80 });
+  });
+
+  it('keeps the corridor walkable after the Warden wakes', () => {
+    const layout = generateZoneLayout();
+    const state = createGameState(getClass('marauder'), layout);
+    state.player.position = { x: state.arena.center.x, z: state.arena.center.z };
+    stepObjectives(state, []);
+    expect(state.objectives.bossSpawned).toBe(true);
+    expect(activeBounds(state)).toBe(state.bounds);
+
+    // Retreat up the corridor: the Warden no longer holds an arena clamp.
+    state.player.moveTarget = { x: 12, z: 10 };
+    for (let i = 0; i < 60 * 12; i++) stepMovement(state, 1 / 60);
+    expect(state.player.position.z).toBeGreaterThan(state.arena.center.z + state.arena.radius);
+    drainEvents(state);
   });
 });

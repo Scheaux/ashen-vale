@@ -1,10 +1,11 @@
 import { angleLerp } from '../core/math';
+import { clampCircleToCorridor, clampToCorridor } from '../content/corridor';
 import type { CircleCollider, ZoneBounds, ZoneLayout } from '../content/types';
 import type { GameState, Vec2 } from '../sim/state';
 
 /**
  * Click-to-move steering with arrival slowdown, circle-vs-circle collision
- * resolution against zone colliders, and a soft circular boundary.
+ * resolution against zone colliders, and a soft corridor boundary.
  * Pure and deterministic: same state + same dt => same result.
  */
 
@@ -13,8 +14,13 @@ const SLOW_RADIUS = 1.3;
 const ACCEL = 14;
 const STOP_SPEED = 0.02;
 
-/** Set the move destination, clamped inside the walkable bounds. */
+/** Set the move destination, clamped inside the walkable corridor or bounds. */
 export function setMoveTarget(state: GameState, target: Vec2): void {
+  if (state.corridor) {
+    const clamped = clampToCorridor(state.corridor, target.x, target.z, state.player.radius);
+    state.player.moveTarget = clamped;
+    return;
+  }
   const { center, radius } = activeBounds(state);
   const dx = target.x - center.x;
   const dz = target.z - center.z;
@@ -179,7 +185,8 @@ export function stepMovement(state: GameState, dt: number): void {
   p.position.z += p.velocity.z * dt;
 
   resolveCircleCollisions(p.position, p.velocity, p.radius, state.colliders);
-  clampCircleToBounds(p.position, p.velocity, p.radius, activeBounds(state));
+  if (state.corridor) clampCircleToCorridor(p.position, p.velocity, p.radius, state.corridor);
+  else clampCircleToBounds(p.position, p.velocity, p.radius, activeBounds(state));
 
   const speedNow = Math.hypot(p.velocity.x, p.velocity.z);
   if (speedNow > 0.1) {

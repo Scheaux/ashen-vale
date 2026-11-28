@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
+import { distanceToCorridor } from '../content/corridor';
 import type { CircleCollider, ZoneLayout } from '../content/types';
 import { createGameState } from '../sim/state';
 import { cancelMove, activeBounds, setMoveTarget, stepMovement } from './movement';
@@ -126,5 +127,80 @@ describe('stepMovement', () => {
       state.player.position.z - state.arena.center.z,
     );
     expect(distToArena).toBeGreaterThan(state.arena.radius);
+  });
+});
+
+function corridorLayout(): ZoneLayout {
+  return {
+    ...testLayout(),
+    bounds: { center: { x: 0, z: 0 }, radius: 80 },
+    spawn: { x: 0, z: 28 },
+    arena: { center: { x: 0, z: -30 }, radius: 5 },
+    bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [] },
+    corridor: {
+      points: [
+        { x: 0, z: 30 },
+        { x: 10, z: 0 },
+        { x: 0, z: -30 },
+      ],
+      radius: 12,
+    },
+  };
+}
+
+describe('corridor movement', () => {
+  it('clamps far click targets to the nearest corridor edge', () => {
+    const layout = corridorLayout();
+    const state = createGameState(getClass('ranger'), layout);
+    setMoveTarget(state, { x: 500, z: 500 });
+
+    const target = state.player.moveTarget!;
+    expect(target).toBeDefined();
+    expect(distanceToCorridor(layout.corridor!, target.x, target.z))
+      .toBeLessThanOrEqual(layout.corridor!.radius - state.player.radius + 1e-6);
+
+    runTicks(state, 60 * 10);
+    const p = state.player.position;
+    expect(distanceToCorridor(layout.corridor!, p.x, p.z))
+      .toBeLessThanOrEqual(layout.corridor!.radius - state.player.radius + 1e-6);
+  });
+
+  it('does not let the hero cut across the bog', () => {
+    const layout = corridorLayout();
+    const state = createGameState(getClass('marauder'), layout);
+    // Click well outside the band beside the middle bend. The hero must walk
+    // the corridor and stop at its edge, never leaving the walkable capsule.
+    setMoveTarget(state, { x: 60, z: 10 });
+    for (let i = 0; i < 60 * 8; i++) {
+      stepMovement(state, 1 / 60);
+      const p = state.player.position;
+      expect(distanceToCorridor(layout.corridor!, p.x, p.z))
+        .toBeLessThanOrEqual(layout.corridor!.radius - state.player.radius + 1e-3);
+    }
+  });
+
+  it('clamps past the end cap instead of entering the hills', () => {
+    const layout = corridorLayout();
+    const state = createGameState(getClass('witch'), layout);
+    setMoveTarget(state, { x: 0, z: -100 });
+    runTicks(state, 60 * 12);
+
+    const p = state.player.position;
+    const end = layout.corridor!.points[layout.corridor!.points.length - 1];
+    const limit = layout.corridor!.radius - state.player.radius;
+    expect(Math.hypot(p.x - end.x, p.z - end.z)).toBeLessThanOrEqual(limit + 1e-3);
+  });
+
+  it('keeps legacy fixtures on circle bounds when no corridor exists', () => {
+    const layout = testLayout();
+    const state = createGameState(getClass('marauder'), layout);
+    expect(state.corridor).toBeUndefined();
+    expect(activeBounds(state)).toBe(state.bounds);
+
+    setMoveTarget(state, { x: 200, z: 0 });
+    expect(state.player.moveTarget!.x).toBeLessThanOrEqual(state.bounds.radius - 1);
+    runTicks(state, 60 * 10);
+    expect(Math.hypot(state.player.position.x, state.player.position.z))
+      .toBeLessThanOrEqual(state.bounds.radius + 1e-6);
   });
 });

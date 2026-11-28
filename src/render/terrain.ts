@@ -1,36 +1,48 @@
 import * as THREE from 'three';
 import type { ZoneId } from '../content/types';
+import { distanceToCorridor } from '../content/corridor';
+import { MOOR_CORRIDOR } from '../content/zone';
 import { noise2D, smoothstep } from '../core/noise';
 import { detailNormal } from './materials';
 import { createGroundTexture } from './textures';
 import { TerrainSurface } from './terrainSurface';
 
 /** Bump when the heightfield or vertex-colour recipe changes. */
-export const TERRAIN_VERSION = 1;
+export const TERRAIN_VERSION = 2;
 
 const SEGMENTS = 128;
+/**
+ * The corridor's rounded caps reach z≈±103. The old 170-unit plane (±85) cut
+ * them off, so the grid grows to 240 while keeping the same 128² triangle
+ * budget and four-instance prop draw calls.
+ */
+const MOOR_TERRAIN_SIZE = 240;
 
-/** Moor height/colour recipe; must stay byte-for-byte the shipped look. */
+/** Moor height/colour recipe: flat bog band around the corridor, hills outside. */
 function shapeMoor(pos: THREE.BufferAttribute, colors: Float32Array): void {
   const cMoss = new THREE.Color('#2c3225');
   const cEarth = new THREE.Color('#362b1d');
   const cDirt = new THREE.Color('#4a4230');
   const tmp = new THREE.Color();
+  const corridor = MOOR_CORRIDOR;
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const r = Math.hypot(x, z);
+    // Distance to the centerline: the flattened bog follows the whole route.
+    const distance = distanceToCorridor(corridor, x, z);
 
-    // Play area stays flat; hills only rise beyond the walkable bounds (r=42).
+    // Hills only rise beyond the walkable band; the corridor lip blends over
+    // a wide apron so camps and the end clearing stay on gentle ground.
+    const outside = smoothstep(corridor.radius - 1, corridor.radius + 28, distance);
     const hills = noise2D(x * 0.032, z * 0.032) * 10 + noise2D(x * 0.095, z * 0.095) * 2.6;
-    const edge = smoothstep(44, 66, r);
-    const undulation = noise2D(x * 0.13, z * 0.13) * 0.16 * smoothstep(18, 38, r);
-    pos.setY(i, undulation + hills * edge);
+    const bog = (noise2D(x * 0.11, z * 0.11) * 0.12 + noise2D(x * 0.23, z * 0.23) * 0.04) *
+      (1 - outside) * smoothstep(2, corridor.radius, distance);
+    pos.setY(i, bog + hills * outside);
 
     const n = noise2D(x * 0.05, z * 0.05) * 0.5 + 0.5;
     tmp.copy(cMoss).lerp(cEarth, smoothstep(0.25, 0.62, n)).lerp(cDirt, smoothstep(0.58, 0.95, n));
-    tmp.multiplyScalar(1 - edge * 0.3);
+    tmp.multiplyScalar(1 - outside * 0.3);
     colors[i * 3] = tmp.r;
     colors[i * 3 + 1] = tmp.g;
     colors[i * 3 + 2] = tmp.b;
@@ -63,8 +75,8 @@ function createMoorMaterial(): THREE.MeshStandardMaterial {
 }
 
 /**
- * Dark-fantasy ground: flat in the walkable area, rising into ridged hills
- * outside the play bounds so the zone edge reads as a natural wall.
+ * Dark-fantasy ground: a flat, gently undulating bog corridor with hills rising
+ * outside the walkable band, so the route reads as a natural hollow.
  *
  * Passing `reuse` rebuilds the mesh/material/vertex colours while rewriting the
  * same TerrainSurface source, so existing view layers keep a live sampler.
@@ -72,7 +84,7 @@ function createMoorMaterial(): THREE.MeshStandardMaterial {
 export function createTerrain(
   zoneId: ZoneId = 'ashen-moor',
   reuse?: TerrainSurface,
-  size = 170,
+  size = MOOR_TERRAIN_SIZE,
 ): { mesh: THREE.Mesh; surface: TerrainSurface } {
   const geo = new THREE.PlaneGeometry(size, size, SEGMENTS, SEGMENTS);
   geo.rotateX(-Math.PI / 2);

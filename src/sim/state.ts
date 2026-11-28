@@ -4,7 +4,9 @@ import type {
   EnemySpawn,
   EliteModifier,
   SkillId,
+  Vec2,
   ZoneBounds,
+  ZoneCorridor,
   ZoneId,
   ZoneLayout,
 } from '../content/types';
@@ -24,10 +26,7 @@ import { PASSIVE_ROOT } from '../content/passives';
 import { createRng, type Rng } from '../core/rng';
 import type { ItemInstance } from './items';
 
-export interface Vec2 {
-  x: number;
-  z: number;
-}
+export type { Vec2 } from '../content/types';
 
 export interface PlayerState {
   position: Vec2;
@@ -330,6 +329,10 @@ export interface GameState {
   hazards: HazardState[];
   colliders: CircleCollider[];
   bounds: ZoneBounds;
+  /** Linear walkable band for the current layout; absent on legacy fixtures. */
+  corridor?: ZoneCorridor;
+  /** Portal behind the end clearing; present on the live moor layout. */
+  portal?: Vec2;
   /** Boss arena bounds; used for the end encounter trigger and respawn. */
   arena: ZoneBounds;
   /** Where the Warden waits at the far end of the zone. */
@@ -494,6 +497,15 @@ export function createGameState(
       center: { ...layout.bounds.center },
       radius: layout.bounds.radius,
     },
+    ...(layout.corridor
+      ? {
+        corridor: {
+          points: layout.corridor.points.map((point) => ({ ...point })),
+          radius: layout.corridor.radius,
+        },
+      }
+      : {}),
+    ...(layout.portal ? { portal: { ...layout.portal } } : {}),
     arena: {
       center: { ...layout.arena.center },
       radius: layout.arena.radius,

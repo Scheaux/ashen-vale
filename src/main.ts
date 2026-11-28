@@ -22,6 +22,7 @@ import { ProjectileViews } from './render/projectiles';
 import { SkillVfxLayer } from './render/skillVfx';
 import { TelegraphLayer } from './render/telegraphs';
 import { createProps, type PropsView } from './render/props';
+import { createPortal, type PortalView } from './render/portal';
 import { applyZoneAtmosphere, createWorldScene, type WorldScene } from './render/scene';
 import { createTerrain } from './render/terrain';
 import type { TerrainSurface } from './render/terrainSurface';
@@ -151,12 +152,14 @@ export interface AshenDebug {
     };
     playerRenderY: number;
     arena: { x: number; z: number; radius: number };
+    corridor: { points: Array<{ x: number; z: number }>; radius: number } | null;
+    portal: { x: number; z: number; open: boolean; glow: number } | null;
     objectives: {
       campsCleared: number;
       campsTotal: number;
       bossSpawned: boolean;
       bossDefeated: boolean;
-      /** Derived from bossDefeated; the portal mesh/travel lands later. */
+      /** Derived from bossDefeated; the portal mesh is open when true. */
       portalOpen: boolean;
     };
     skills: Array<{
@@ -291,6 +294,7 @@ class Game {
   private readonly world: WorldScene;
   private readonly scene: THREE.Scene;
   private propsView: PropsView;
+  private portalView: PortalView | null = null;
   private readonly rig: CameraRig;
   private readonly enemyViews: EnemyViews;
   private readonly projectileViews: ProjectileViews;
@@ -348,6 +352,8 @@ class Game {
   private tellDamageBeforeTelegraph = false;
   /** Refusal-toast throttling so key mashing cannot spam the toast layer. */
   private lastRefusal = { label: '', at: 0 };
+  /** One ossuary refusal toast per approach; clicking always re-reports. */
+  private portalNoticeShown = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -369,6 +375,8 @@ class Game {
     this.scene.add(terrain.mesh);
     this.propsView = createProps(this.layout, terrain.surface);
     this.scene.add(this.propsView.group);
+    this.portalView = this.layout.portal ? createPortal(this.layout.portal, terrain.surface) : null;
+    if (this.portalView) this.scene.add(this.portalView.group);
     this.enemyViews = new EnemyViews(this.scene, terrain.surface);
     this.projectileViews = new ProjectileViews(this.scene, terrain.surface);
     this.telegraphs = new TelegraphLayer(this.scene, terrain.surface);
@@ -546,6 +554,7 @@ class Game {
     this.tellTelegraphs = 0;
     this.tellPlayerDamages = 0;
     this.tellDamageBeforeTelegraph = false;
+    this.portalNoticeShown = false;
     this.ui.hideDeath();
     this.ui.hideVictory();
     this.ui.clearToasts();
@@ -587,6 +596,11 @@ class Game {
     this.propsView.dispose();
     this.propsView = createProps(layout, this.terrainSurface);
     this.scene.add(this.propsView.group);
+
+    // The portal owns its stone/veil materials and procedural glow texture.
+    this.portalView?.dispose();
+    this.portalView = layout.portal ? createPortal(layout.portal, this.terrainSurface) : null;
+    if (this.portalView) this.scene.add(this.portalView.group);
 
     // Embers own one geometry and one points material.
     this.embers.dispose();
@@ -824,6 +838,8 @@ class Game {
 
   private renderFrame(dt: number, alpha: number, elapsed: number): void {
     const state = this.state;
+    this.portalView?.sync(state?.objectives.bossDefeated ?? false, elapsed, dt);
+    if (state && this.mode === 'playing' && !this.dead) this.updatePortalNotice(state);
     if (state && this.playerView) {
       const events = drainEvents(state);
       if (events.length > 0) {
@@ -993,6 +1009,40 @@ class Game {
     this.enemyViews.setHighlight(id);
   }
 
+  /** Report the sealed ossuary once per approach; clicking re-reports. */
+  private updatePortalNotice(state: GameState): void {
+    const portal = this.layout.portal;
+    if (!portal) {
+      this.portalNoticeShown = false;
+      return;
+    }
+    const near = Math.hypot(
+      state.player.position.x - portal.x,
+      state.player.position.z - portal.z,
+    ) <= 5.5;
+    if (near && !this.portalNoticeShown) {
+      this.portalNoticeShown = true;
+      this.showPortalRefusal();
+    } else if (!near) {
+      this.portalNoticeShown = false;
+    }
+  }
+
+  private pickPortal(): boolean {
+    if (!this.portalView) return false;
+    if (!this.pointerInside) return false;
+    this.raycaster.setFromCamera(this.pointer, this.rig.camera);
+    return this.raycaster.intersectObject(this.portalView.group, true).length > 0;
+  }
+
+  private showPortalRefusal(): void {
+    const message = 'The Drowned Ossuary is not yet available';
+    const now = performance.now();
+    if (this.lastRefusal.label === message && now - this.lastRefusal.at < 900) return;
+    this.lastRefusal = { label: message, at: now };
+    this.ui.showToast(message, '#8f887a');
+  }
+
   // ---------- Input ----------
 
   private setPointer(e: PointerEvent): void {
@@ -1033,7 +1083,17 @@ class Game {
         this.destinationActive = false;
         return;
       }
+      if (this.pickPortal()) {
+        this.portalNoticeShown = true;
+        this.showPortalRefusal();
+        return;
+      }
       const point = this.groundPoint();
+      if (point && this.portalView?.contains(point.x, point.z)) {
+        this.portalNoticeShown = true;
+        this.showPortalRefusal();
+        return;
+      }
       if (point) this.bus.emit('input:move-target', { x: point.x, z: point.z });
     });
 
@@ -1434,6 +1494,20 @@ class Game {
       arena: state
         ? { x: state.arena.center.x, z: state.arena.center.z, radius: state.arena.radius }
         : { x: 0, z: 0, radius: 0 },
+      corridor: this.layout.corridor
+        ? {
+          points: this.layout.corridor.points.map((point) => ({ x: point.x, z: point.z })),
+          radius: this.layout.corridor.radius,
+        }
+        : null,
+      portal: this.layout.portal
+        ? {
+          x: this.layout.portal.x,
+          z: this.layout.portal.z,
+          open: state?.objectives.bossDefeated ?? false,
+          glow: this.portalView?.probe().glow ?? 0,
+        }
+        : null,
       objectives: state
         ? {
           campsCleared: state.objectives.campCleared.filter(Boolean).length,
@@ -1726,7 +1800,7 @@ class Game {
         const progress = save ? save.progress[save.zoneId] : null;
         const zone = save ? getZoneDef(save.zoneId) : null;
         // Save bodies store all authored slots; reviews should see the camps
-        // this build actually plays (3 for the moor in this slice).
+        // this build actually plays (16 for the moor).
         const campsTotal = save ? activeCampsForZone(save.zoneId) : 0;
         return {
           slot: info.slot,

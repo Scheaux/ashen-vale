@@ -1,5 +1,10 @@
 /** Shared content contracts: authored data stays separate from runtime state. */
 
+export interface Vec2 {
+  x: number;
+  z: number;
+}
+
 export type ClassId = 'marauder' | 'ranger' | 'witch';
 export type ZoneId = 'ashen-moor' | 'drowned-ossuary';
 export type EnemyId = 'ashen-husk' | 'cinder-cultist' | 'mire-skitterer' | 'ashen-warden';
@@ -70,6 +75,15 @@ export interface ZoneBounds {
   radius: number;
 }
 
+/**
+ * Long, linear playable band. The walkable area is every point within `radius`
+ * of the polyline through `points`, including the rounded end caps.
+ */
+export interface ZoneCorridor {
+  points: Vec2[];
+  radius: number;
+}
+
 export type EliteModifier = 'vital' | 'savage' | 'swift' | 'volatile';
 
 export interface EnemySpawn {
@@ -92,6 +106,10 @@ export interface ZoneLayout {
   enemySpawns: EnemySpawn[];
   /** Boss arena at the far end of the zone (slice 7). */
   arena: ZoneBounds;
-  /** Where the Ashen Warden waits until the camps are cleared. */
+  /** Where the Ashen Warden waits at the far end of the zone. */
   bossSpawn: EnemySpawn;
+  /** Linear walkable band; legacy fixtures may omit it and use circle bounds. */
+  corridor?: ZoneCorridor;
+  /** Portal behind the end encounter; opens when the zone boss falls. */
+  portal?: Vec2;
 }

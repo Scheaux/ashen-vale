@@ -19,6 +19,9 @@ const MOOR_FOG_DENSITY = 0.0105;
 const MOON_POSITION = new THREE.Vector3(-72, 48, -96);
 const MOON_TARGET = new THREE.Vector3(0, 10, 0);
 const HALO_POSITION = MOON_POSITION.clone().lerp(MOON_TARGET, 0.02);
+/** Shadow box large enough to cover spawn (z=74) through the portal (z=-80). */
+const SHADOW_EXTENT = 110;
+const SHADOW_TARGET = new THREE.Vector3(0, 0, -4);
 
 /**
  * Retint/reaim the existing lights, fog and sky for a zone. No lights are
@@ -46,7 +49,8 @@ export function applyZoneAtmosphere(world: WorldScene, zoneId: ZoneId): void {
   lights.key.color.setHex(0xb9c6ff);
   lights.key.intensity = 2.7;
   lights.key.position.set(28, 40, 20);
-  lights.key.target.position.set(0, 0, 0);
+  lights.key.target.position.copy(SHADOW_TARGET);
+  lights.key.target.updateMatrixWorld();
 
   // Warm horizon rim, as if the moor smoulders beyond the ridge.
   lights.rim.color.setHex(0xff8a4c);
@@ -99,15 +103,15 @@ export function createWorldScene(canvas: HTMLCanvasElement): WorldScene {
   // Cold moonlight key with shadows over the play area.
   const key = new THREE.DirectionalLight(0xb9c6ff, 2.7);
   key.position.set(28, 40, 20);
+  key.target.position.copy(SHADOW_TARGET);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 1;
-  key.shadow.camera.far = 140;
-  const S = 48;
-  key.shadow.camera.left = -S;
-  key.shadow.camera.right = S;
-  key.shadow.camera.top = S;
-  key.shadow.camera.bottom = -S;
+  key.shadow.camera.far = 260;
+  key.shadow.camera.left = -SHADOW_EXTENT;
+  key.shadow.camera.right = SHADOW_EXTENT;
+  key.shadow.camera.top = SHADOW_EXTENT;
+  key.shadow.camera.bottom = -SHADOW_EXTENT;
   key.shadow.bias = -0.0006;
   scene.add(key, key.target);
 
