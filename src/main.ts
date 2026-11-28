@@ -211,6 +211,8 @@ export interface AshenDebug {
   remountZone(zoneId: ZoneId): void;
   /** Review fixture: nearest scenery points to the hero (picking checks). */
   sceneryPoints(): Array<{ x: number; z: number }>;
+  /** Review fixture: prop occlusion fades plus live/authored instance scales. */
+  propProbe(): ReturnType<PropsView['probe']>;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
   healPlayer(amount: number): void;
   /** Review fixture: grant XP to reach the level-up edge state. */
@@ -1598,6 +1600,10 @@ class Game {
       .map((prop) => ({ x: prop.x, z: prop.z }));
   }
 
+  propProbe(): ReturnType<AshenDebug['propProbe']> {
+    return this.propsView.probe();
+  }
+
   hazardPoints(): ReturnType<AshenDebug['hazardPoints']> {
     const state = this.state;
     if (!state) return [];
@@ -1739,6 +1745,7 @@ const game = new Game(canvas, uiRoot);
   terrainHeightAt: (x, z) => game.terrainHeightAt(x, z),
   remountZone: (zoneId) => game.remountZone(zoneId),
   sceneryPoints: () => game.sceneryPoints(),
+  propProbe: () => game.propProbe(),
   exportSave: () => game.exportSave(),
   saves: () => game.saves(),
 };

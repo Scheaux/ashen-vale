@@ -53,16 +53,77 @@ async function main() {
   await sleep(900);
 
   // --- Camera occlusion: place the hero behind a tall prop relative to the camera ---
-  let occluded = 0;
-  const scenery = await page.evaluate(() => window.__ashen.sceneryPoints());
-  for (const point of scenery) {
-    await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [point.x - 2.2, point.z - 2.2]);
-    await sleep(350);
-    occluded = (await snap()).render.occludedProps;
-    if (occluded > 0) break;
+  const probeProps = () => page.evaluate(() => window.__ashen.propProbe());
+  const preProps = await probeProps();
+  check('prop probe exposes authored scenery instances',
+    preProps.total > 0 && preProps.sample.length === preProps.total, `${preProps.total} props`);
+  const tallProps = preProps.sample.filter((prop) => prop.tall);
+  check('prop probe exposes tall occlusion targets', tallProps.length > 0, `${tallProps.length} tall props`);
+
+  async function setZoom(distance) {
+    for (let i = 0; i < 8; i++) {
+      const current = (await snap()).camera.distance;
+      if (Math.abs(current - distance) <= 0.1) return current;
+      await page.mouse.move(720, 450);
+      await page.mouse.wheel(0, (distance / current - 1) / 0.0012);
+      await sleep(120);
+    }
+    return (await snap()).camera.distance;
   }
-  check('tall props fade between the camera and the hero', occluded > 0, `${occluded} occluded props`);
+
+  const maxScaleDelta = (a, b) =>
+    Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.z - b.z));
+
+  let occluded = 0;
+  let occlusionFade = 0;
+  let occlusionZoom = 0;
+  for (const zoom of [18, 12, 21]) {
+    const actualZoom = await setZoom(zoom);
+    let found = null;
+    for (const point of tallProps.slice(0, 12)) {
+      await page.evaluate(([x, z]) => {
+        window.__ashen.healPlayer(9999);
+        window.__ashen.teleportPlayer(x, z);
+      }, [point.x - 2.2, point.z - 2.2]);
+      await sleep(500);
+      const probe = await probeProps();
+      const target = probe.sample.find((sample) =>
+        Math.abs(sample.x - point.x) < 1e-6 && Math.abs(sample.z - point.z) < 1e-6);
+      if (probe.occluded > 0 && target && target.fade > 0.9) {
+        found = { probe, target };
+        break;
+      }
+    }
+    occluded = found?.probe.occluded ?? 0;
+    occlusionFade = found?.target.fade ?? 0;
+    occlusionZoom = actualZoom;
+    check(`tall props fade between the camera and the hero at zoom ${actualZoom.toFixed(1)}`,
+      occluded > 0 && occlusionFade > 0.9,
+      `${occluded} occluded props, target fade ${occlusionFade.toFixed(2)}`);
+
+    const after = await probeProps();
+    const scaleChanged = after.sample.length !== preProps.sample.length ||
+      after.sample.some((sample, i) => maxScaleDelta(sample.scale, preProps.sample[i].scale) > 1e-6);
+    const authoredMismatch = after.sample.findIndex((sample) =>
+      maxScaleDelta(sample.scale, sample.authoredScale) > 1e-6);
+    check(`authored prop scale is unchanged at zoom ${actualZoom.toFixed(1)}`,
+      !scaleChanged && authoredMismatch === -1,
+      scaleChanged
+        ? 'live instance scale changed'
+        : authoredMismatch >= 0
+          ? `matrix/authored mismatch at sample ${authoredMismatch}`
+          : `${after.total} scales stable`);
+  }
+  check('tall props fade between the camera and the hero', occluded > 0,
+    `${occluded} occluded props at zoom ${occlusionZoom.toFixed(1)}, fade ${occlusionFade.toFixed(2)}`);
+  const counts = await page.evaluate(() => ({
+    snapshot: window.__ashen.snapshot().render.occludedProps,
+    probe: window.__ashen.propProbe().occluded,
+  }));
+  check('the render snapshot keeps the occluded prop count', counts.snapshot === counts.probe,
+    `${counts.snapshot} snapshot vs ${counts.probe} probe`);
   await page.screenshot({ path: `${SHOTS}93-occlusion.png` });
+  await setZoom(18);
 
   // --- Volatile elite: kill it at close range, read the warning, take the blast ---
   const victim = await page.evaluate(() => {

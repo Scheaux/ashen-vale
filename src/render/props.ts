@@ -118,27 +118,107 @@ function axisScale(min: number, max: number, t: number): number {
 interface PropInstance {
   position: THREE.Vector3;
   quaternion: THREE.Quaternion;
+  /** Authored nonuniform scale; the instance matrix is written once from this. */
   scale: THREE.Vector3;
   radius: number;
   tall: boolean;
   fade: number;
+  /** Hysteresis state for the camera-to-player occlusion test. */
+  occluding: boolean;
 }
 
 interface PropMesh {
   mesh: THREE.InstancedMesh;
+  kind: PropKind;
   instances: PropInstance[];
+  fadeAttribute: THREE.InstancedBufferAttribute;
+}
+
+export interface PropProbeSample {
+  x: number;
+  z: number;
+  /** Scale read from the live instance matrix; must match `authoredScale`. */
+  scale: { x: number; y: number; z: number };
+  /** Scale recorded when the instance matrix was written (never rewritten). */
+  authoredScale: { x: number; y: number; z: number };
+  fade: number;
+  tall: boolean;
+  kind: PropKind;
+}
+
+export interface PropProbe {
+  total: number;
+  occluded: number;
+  sample: PropProbeSample[];
 }
 
 export interface PropsView {
   group: THREE.Group;
   /** Fade tall props that sit between the camera and the hero. */
   update(camera: THREE.Camera, playerX: number, playerZ: number, dt: number): void;
+  /** Fade/occlusion state plus live and authored per-instance scales. */
+  probe(): PropProbe;
   readonly occludedCount: number;
   /** Detach the scenery group and release its geometries, materials and textures. */
   dispose(): void;
 }
 
 const OCCLUSION_PADDING = 1.1;
+/** Extra band before an occluding prop releases, so camera drift does not flicker. */
+const OCCLUSION_HYSTERESIS = 0.45;
+const FADE_ATTRIBUTE = 'instanceFade';
+const STANDARD_FADE_CACHE_KEY = 'ashen-prop-instance-fade-v1';
+const DEPTH_FADE_CACHE_KEY = 'ashen-prop-instance-fade-depth-v1';
+
+/**
+ * Stable 4x4 Bayer threshold in screen space. Values fall in (0, 1), so
+ * fade 0 never discards and fade 1 discards every fragment.
+ */
+const BAYER_GLSL = /* glsl */`
+float ashenBayer2(vec2 p) {
+  return p.x < 0.5
+    ? (p.y < 0.5 ? 0.0 : 3.0)
+    : (p.y < 0.5 ? 2.0 : 1.0);
+}
+
+float ashenBayer4(vec2 fragCoord) {
+  vec2 cell = floor(mod(fragCoord, 4.0));
+  vec2 hi = floor(cell * 0.5);
+  vec2 lo = mod(cell, 2.0);
+  return (4.0 * ashenBayer2(lo) + ashenBayer2(hi) + 0.5) / 16.0;
+}
+`;
+
+/**
+ * Patch an opaque material so per-instance occlusion fades through a
+ * screen-space dither instead of touching the instance matrix. The matching
+ * depth material uses the same attribute and threshold, keeping shadows in
+ * step with the visible dither without enabling transparency or sorting.
+ */
+function patchInstanceFade(material: THREE.Material, cacheKey: string): void {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>\nattribute float ${FADE_ATTRIBUTE};\nvarying float vInstanceFade;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>\nvInstanceFade = ${FADE_ATTRIBUTE};`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>\nvarying float vInstanceFade;\n${BAYER_GLSL}`,
+      )
+      .replace(
+        'void main() {',
+        'void main() {\n\tif (vInstanceFade > ashenBayer4(gl_FragCoord.xy)) discard;',
+      );
+  };
+  material.customProgramCacheKey = () => cacheKey;
+}
+
 const PROP_RADIUS: Record<PropKind, number> = {
   rock: 0.85,
   deadTree: 0.55,
@@ -150,6 +230,12 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
   const style = styles();
   const group = new THREE.Group();
   const meshes: PropMesh[] = [];
+
+  // One shared shadow-depth stand-in: the same instance fade attribute and
+  // dither gate keep the shadow coverage in step with the visible fragments.
+  // Default packing matches the renderer's internal shadow depth material.
+  const depthMaterial = new THREE.MeshDepthMaterial();
+  patchInstanceFade(depthMaterial, DEPTH_FADE_CACHE_KEY);
 
   const byKind = new Map<PropKind, PropPlacement[]>();
   for (const p of layout.props) {
@@ -166,10 +252,16 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
 
   for (const [kind, placements] of byKind) {
     const s = style[kind];
+    patchInstanceFade(s.material, STANDARD_FADE_CACHE_KEY);
     const mesh = new THREE.InstancedMesh(s.geometry, s.material, placements.length);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.customDepthMaterial = depthMaterial;
     const instances: PropInstance[] = [];
+    const fadeArray = new Float32Array(placements.length);
+    const fadeAttribute = new THREE.InstancedBufferAttribute(fadeArray, 1);
+    fadeAttribute.setUsage(THREE.DynamicDrawUsage);
+    s.geometry.setAttribute(FADE_ATTRIBUTE, fadeAttribute);
 
     placements.forEach((p, i) => {
       // Deterministic per-instance variation derived from placement values.
@@ -186,6 +278,7 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
         axisScale(s.scaleAxes.y[0], s.scaleAxes.y[1], b) * p.scale,
         axisScale(s.scaleAxes.z[0], s.scaleAxes.z[1], b) * p.scale,
       );
+      // Authored once. update() only writes the fade attribute, never this matrix.
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(i, matrix);
       instances.push({
@@ -195,17 +288,17 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
         radius: PROP_RADIUS[kind] * p.scale,
         tall: kind !== 'rock',
         fade: 0,
+        occluding: false,
       });
     });
     mesh.instanceMatrix.needsUpdate = true;
     group.add(mesh);
-    meshes.push({ mesh, instances });
+    meshes.push({ mesh, kind, instances, fadeAttribute });
   }
 
   let occludedCount = 0;
   const cameraPosition = new THREE.Vector3();
   const playerPosition = new THREE.Vector3();
-  const fadeScale = new THREE.Vector3();
 
   function update(camera: THREE.Camera, playerX: number, playerZ: number, dt: number): void {
     camera.getWorldPosition(cameraPosition);
@@ -215,11 +308,12 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
     const lenSq = dx * dx + dz * dz;
     let occluded = 0;
 
-    for (const { mesh, instances } of meshes) {
+    for (const { instances, fadeAttribute } of meshes) {
+      const fades = fadeAttribute.array as Float32Array;
       let anyChanged = false;
       for (let i = 0; i < instances.length; i++) {
         const instance = instances[i];
-        let target = 0;
+        let occluding = false;
         if (instance.tall && lenSq > 1e-4) {
           const t = ((instance.position.x - cameraPosition.x) * dx +
             (instance.position.z - cameraPosition.z) * dz) / lenSq;
@@ -227,28 +321,61 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
             const lineX = cameraPosition.x + dx * t;
             const lineZ = cameraPosition.z + dz * t;
             const dist = Math.hypot(instance.position.x - lineX, instance.position.z - lineZ);
-            if (dist < instance.radius + OCCLUSION_PADDING) target = 1;
+            const threshold = instance.radius + OCCLUSION_PADDING +
+              (instance.occluding ? OCCLUSION_HYSTERESIS : 0);
+            occluding = dist < threshold;
           }
         }
+        instance.occluding = occluding;
+
+        const target = occluding ? 1 : 0;
         const previous = instance.fade;
         instance.fade += (target - instance.fade) * (1 - Math.exp(-14 * dt));
         if (Math.abs(instance.fade - target) < 0.01) instance.fade = target;
         if (instance.fade > 0.5) occluded++;
-        if (instance.fade !== previous) anyChanged = true;
-        const shrink = 1 - 0.92 * instance.fade;
-        fadeScale.copy(instance.scale).multiplyScalar(shrink);
-        matrix.compose(instance.position, instance.quaternion, fadeScale);
-        mesh.setMatrixAt(i, matrix);
+        if (instance.fade !== previous) {
+          fades[i] = instance.fade;
+          anyChanged = true;
+        }
       }
-      if (anyChanged) mesh.instanceMatrix.needsUpdate = true;
+      if (anyChanged) fadeAttribute.needsUpdate = true;
     }
     occludedCount = occluded;
+  }
+
+  function probe(): PropProbe {
+    const sample: PropProbeSample[] = [];
+    for (const { mesh, kind, instances } of meshes) {
+      const matrices = mesh.instanceMatrix.array;
+      for (let i = 0; i < instances.length; i++) {
+        const instance = instances[i];
+        const offset = i * 16;
+        sample.push({
+          x: instance.position.x,
+          z: instance.position.z,
+          // Read the live matrix so a scale regression cannot hide behind the
+          // authored copy.
+          scale: {
+            x: Math.hypot(matrices[offset], matrices[offset + 1], matrices[offset + 2]),
+            y: Math.hypot(matrices[offset + 4], matrices[offset + 5], matrices[offset + 6]),
+            z: Math.hypot(matrices[offset + 8], matrices[offset + 9], matrices[offset + 10]),
+          },
+          authoredScale: { x: instance.scale.x, y: instance.scale.y, z: instance.scale.z },
+          fade: instance.fade,
+          tall: instance.tall,
+          kind,
+        });
+      }
+    }
+    return { total: sample.length, occluded: occludedCount, sample };
   }
 
   return {
     group,
     update,
+    probe,
     dispose() {
+      depthMaterial.dispose();
       disposeMeshTree(group);
     },
     get occludedCount() {
