@@ -106,6 +106,7 @@ export class Ui {
   private selected: ClassId = CLASSES[0].id;
   private readonly hudClass: HTMLElement;
   private readonly hudZone: HTMLElement;
+  private readonly fpsText: HTMLElement;
   private readonly hpFill: HTMLElement;
   private readonly hpText: HTMLElement;
   private readonly esBar: HTMLElement;
@@ -144,6 +145,7 @@ export class Ui {
     this.hud = root.querySelector('[data-hud]') as HTMLElement;
     this.hudClass = root.querySelector('[data-hud-class]') as HTMLElement;
     this.hudZone = root.querySelector('[data-hud-zone]') as HTMLElement;
+    this.fpsText = root.querySelector('[data-fps]') as HTMLElement;
     this.hpFill = root.querySelector('[data-hp-fill]') as HTMLElement;
     this.hpText = root.querySelector('[data-hp-text]') as HTMLElement;
     this.esBar = root.querySelector('[data-es-bar]') as HTMLElement;
@@ -221,6 +223,13 @@ export class Ui {
     const ratio = Math.max(0, Math.min(1, xp / Math.max(1, xpToNext)));
     this.xpFill.style.width = `${(ratio * 100).toFixed(1)}%`;
     this.levelText.textContent = `LVL ${level}`;
+  }
+
+  /** Smoothed render cadence; the loop updates this a few times a second. */
+  setFps(fps: number): void {
+    const value = Math.max(0, Math.round(fps));
+    this.fpsText.textContent = `${value} FPS`;
+    this.fpsText.classList.toggle('hud__fps--slow', value > 0 && value < 50);
   }
 
   /** Title-screen Continue availability and summary (slice 8). */
@@ -571,6 +580,7 @@ export class Ui {
           <div class="objectives__title">Objectives</div>
           <div class="objectives__list" data-objective-list></div>
         </div>
+        <div class="hud__fps" data-fps aria-hidden="true">— FPS</div>
         <div class="save-flash hidden" data-save-flash></div>
       </div>
 

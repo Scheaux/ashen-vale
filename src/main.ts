@@ -202,6 +202,8 @@ export interface AshenDebug {
       reducedMotion: boolean;
       qualityWindow: number;
       qualityFrames: number;
+      /** Smoothed render FPS reported by the HUD counter. */
+      fps: number;
     };
   };
   worldToScreen(x: number, z: number, height?: number): { x: number; y: number };
@@ -344,6 +346,10 @@ class Game {
   private qualityRatio = 1;
   private qualityTime = 0;
   private qualityFrames = 0;
+  /** HUD frame-rate sample, refreshed a few times a second. */
+  private fpsTime = 0;
+  private fpsFrames = 0;
+  private lastFps = 0;
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   /** Event-order recorder, scoped to the attack instance that caused the hit. */
   private readonly advertisedAttacks = new Set<string>();
@@ -929,8 +935,21 @@ class Game {
     this.updateHover();
     this.embers.update(dt);
     this.cursor.update(elapsed, dt);
+    this.updateFps(dt);
     this.updateQuality(dt);
     this.world.renderer.render(this.scene, this.rig.camera);
+  }
+
+  /** Refresh the HUD counter a few times a second instead of every frame. */
+  private updateFps(dt: number): void {
+    if (dt <= 0) return;
+    this.fpsTime += dt;
+    this.fpsFrames++;
+    if (this.fpsTime < 0.25) return;
+    this.lastFps = Math.round(this.fpsFrames / this.fpsTime);
+    this.ui.setFps(this.lastFps);
+    this.fpsTime = 0;
+    this.fpsFrames = 0;
   }
 
   /**
@@ -1609,6 +1628,7 @@ class Game {
         reducedMotion: this.reducedMotion,
         qualityWindow: Math.round(this.qualityTime * 1000) / 1000,
         qualityFrames: this.qualityFrames,
+        fps: this.lastFps,
       },
     };
   }

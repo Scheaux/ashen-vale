@@ -83,6 +83,8 @@ async function main() {
   check('HUD appears after starting run', hudVisible);
   const hudText = await page.locator('[data-hud-class]').textContent();
   check('HUD shows chosen class', (hudText ?? '').includes('Ranger'), hudText ?? '');
+  const fpsLabel = ((await page.locator('[data-fps]').textContent()) ?? '').trim();
+  check('HUD shows a live FPS counter', /^\d+ FPS$/.test(fpsLabel) && Number.parseInt(fpsLabel, 10) > 0, fpsLabel);
   await page.screenshot({ path: `${SHOTS}03-in-game.png` });
 
   // --- Click-to-move: click a spot and verify the player travels ---
