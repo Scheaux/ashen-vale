@@ -4,6 +4,7 @@ import { getEnemy } from '../content/enemies';
 import type { ZoneLayout } from '../content/types';
 import { createEnemyState, createGameState, type EnemyState, type GameState, type SimEvent } from '../sim/state';
 import { stepEnemies } from './enemyAi';
+import { stepObjectives } from './objectives';
 
 function layoutWithCamps(): ZoneLayout {
   return {
@@ -30,6 +31,18 @@ function spawnBoss(state: GameState): EnemyState {
 }
 
 describe('Ashen Warden boss encounter (slice 7)', () => {
+  it('wakes on arena entry without clearing any camp', () => {
+    const state = createGameState(getClass('marauder'), layoutWithCamps());
+    expect(state.objectives.campCleared.some(Boolean)).toBe(false);
+
+    state.player.position = { ...state.arena.center };
+    stepObjectives(state, []);
+    const boss = state.enemies.find((enemy) => enemy.defId === 'ashen-warden' && !enemy.dead);
+    expect(state.objectives.bossSpawned).toBe(true);
+    expect(boss).toBeDefined();
+    expect(state.objectives.campCleared.some(Boolean)).toBe(false);
+  });
+
   it('advances phases as hp falls and calls adds', () => {
     const state = createGameState(getClass('marauder'), layoutWithCamps());
     const events: SimEvent[] = [];

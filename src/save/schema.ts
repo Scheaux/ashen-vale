@@ -4,7 +4,7 @@ import { ITEM_BASES, ITEM_SLOTS, RARITY_COLORS, UNIQUES, type ItemSlot, type Rar
 import { getPassive, PASSIVE_ROOT } from '../content/passives';
 import { getSkill, startingSkillFor } from '../content/skills';
 import { getRune, type RuneId } from '../content/runes';
-import { activeCampsForZone, campCountForZone, ZONE_IDS } from '../content/zones';
+import { campCountForZone, ZONE_IDS } from '../content/zones';
 import { LOADOUT_SLOTS, type ClassId, type SkillId, type ZoneId } from '../content/types';
 import type { GameState, Vec2 } from '../sim/state';
 import { FLASK_MAX_CHARGES } from '../sim/state';
@@ -24,8 +24,9 @@ import { defaultSkillState, MAX_SKILL_RANK } from '../systems/loadout';
  * v4 -> v5 added per-skill runes.
  * v5 -> v6 added item implicits/quality and the crafting economy.
  * v6 -> v7 added per-zone progress, zone identity and the zone seed.
- * v7 -> v8 widened the moor to its 16 authored camp slots while the current
- *           build still plays the first 3.
+ * v7 -> v8 widened the moor to its 16 authored camp slots and resets camp
+ *           flags (the 3-camp meanings do not carry over); optional camps no
+ *           longer gate the Warden, so v8 boss flags are camp-independent.
  */
 export const SAVE_VERSION = 8;
 
@@ -465,9 +466,10 @@ export function validateV7(data: unknown): SaveGameV7 {
 }
 
 /**
- * Widen a v7 save to the v8 moor shape. The first three moor flags survive;
- * slots 3-15 are padding until the 16-camp layout ships, and the boss flags
- * are preserved. The ossuary keeps its frozen three slots.
+ * Widen a v7 save to the v8 moor shape. The old 3-camp flags describe camps
+ * that no longer exist, so all 16 moor slots start false (no legacy carry-over)
+ * while the boss flags are preserved. The ossuary keeps its frozen three slots
+ * and valid v7 boss gate.
  */
 export function migrateV7ToV8(data: unknown): SaveGame {
   const v7 = validateV7(data);
@@ -483,10 +485,7 @@ export function migrateV7ToV8(data: unknown): SaveGame {
     zoneSeed: v7.zoneSeed,
     progress: {
       'ashen-moor': {
-        campsCleared: Array.from(
-          { length: campCountForZone('ashen-moor') },
-          (_, index) => moor.campsCleared[index] === true,
-        ),
+        campsCleared: Array.from({ length: campCountForZone('ashen-moor') }, () => false),
         bossSpawned: moor.bossSpawned,
         bossDefeated: moor.bossDefeated,
       },
@@ -512,10 +511,9 @@ export function migrateV7ToV8(data: unknown): SaveGame {
 
 /**
  * Validate and defensively copy a v8 save. The moor must carry all 16 authored
- * slots and the ossuary its 3; the boss gate only requires the camps that are
- * active in the current build, so a completed v7 save with 3 cleared and 13
- * padded slots stays valid. Entering the ossuary still requires the moor boss
- * to be defeated.
+ * slots and the ossuary its 3. Camps are optional, so boss flags are
+ * camp-independent; only `bossDefeated => bossSpawned` is enforced. Entering
+ * the ossuary still requires the moor boss to be defeated.
  */
 export function validateV8(data: unknown): SaveGame {
   if (!isRecord(data)) throw new Error('Save data is not an object');
@@ -539,7 +537,7 @@ export function validateV8(data: unknown): SaveGame {
     throw new Error('Save data has invalid progression or timestamp');
   }
 
-  const progress = parseSaveProgress(data.progress, campCountForZone, activeCampsForZone);
+  const progress = parseSaveProgress(data.progress, campCountForZone);
   if (zoneId === 'drowned-ossuary' && !progress['ashen-moor'].bossDefeated) {
     throw new Error('Save data enters the Drowned Ossuary before the Ashen Warden falls');
   }
@@ -567,7 +565,7 @@ export function validateV8(data: unknown): SaveGame {
 function parseSaveProgress(
   value: unknown,
   campsForZone: (id: ZoneId) => number,
-  gateForZone: (id: ZoneId) => number,
+  gateForZone?: (id: ZoneId) => number,
 ): Record<ZoneId, SaveZoneProgress> {
   if (!isRecord(value)) throw new Error('Save data has invalid zone progress');
   if (Object.keys(value).length !== ZONE_IDS.length || !ZONE_IDS.every((id) => Object.hasOwn(value, id))) {
@@ -575,7 +573,7 @@ function parseSaveProgress(
   }
   const progress = {} as Record<ZoneId, SaveZoneProgress>;
   for (const id of ZONE_IDS) {
-    progress[id] = parseSaveZoneProgress(value[id], campsForZone(id), gateForZone(id));
+    progress[id] = parseSaveZoneProgress(value[id], campsForZone(id), gateForZone?.(id) ?? null);
   }
   return progress;
 }
@@ -583,7 +581,7 @@ function parseSaveProgress(
 function parseSaveZoneProgress(
   value: unknown,
   expectedCamps: number,
-  gateCamps: number,
+  gateCamps: number | null,
 ): SaveZoneProgress {
   if (!isRecord(value) || Object.keys(value).length !== 3 ||
     !Array.isArray(value.campsCleared) || value.campsCleared.length !== expectedCamps ||
@@ -593,7 +591,8 @@ function parseSaveZoneProgress(
   }
   const campsCleared = [...value.campsCleared] as boolean[];
   if (value.bossDefeated && !value.bossSpawned) throw new Error('Save data has an impossible boss state');
-  if (value.bossSpawned && !campsCleared.slice(0, gateCamps).every(Boolean)) {
+  // Frozen v7 saves still enforce their camp gate; v8 camps are optional.
+  if (gateCamps !== null && value.bossSpawned && !campsCleared.slice(0, gateCamps).every(Boolean)) {
     throw new Error('Save data spawns the boss before the camps are cleared');
   }
   return { campsCleared, bossSpawned: value.bossSpawned, bossDefeated: value.bossDefeated };

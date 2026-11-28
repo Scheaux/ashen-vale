@@ -1,9 +1,9 @@
 /**
  * Slice 8 browser QA: save slots. Verifies the fresh title has no Continue,
- * a new run autosaves into the first slot, passive/camp progress is captured
- * at milestones, Continue restores the run after a reload (level, passives,
- * camp and boss state), the pause menu saves/loads slots, and a corrupted
- * slot is reported and recoverable without a crash.
+ * a new run autosaves into the first slot, passive/objective progress is
+ * captured at milestones, Continue restores the run after a reload (level,
+ * passives, optional camps and the end-zone Warden), the pause menu saves and
+ * loads slots, and a corrupted slot is reported and recoverable without a crash.
  *
  * Run: node qa/verify-slice-08.mjs   (starts `vite preview` on :4173 itself)
  */
@@ -93,15 +93,18 @@ async function main() {
   check('the review fixture levels the exile', leveled.level >= 5, `level ${leveled.level}`);
   check('the passive allocation lands', leveled.passives.allocated.includes('o1'));
 
-  await page.evaluate(() => window.__ashen.clearCamps());
+  // --- Reaching the end arena wakes the Warden and checkpoints the fight ---
+  s = await snap();
+  await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z]);
+  await page.waitForFunction(() => window.__ashen.snapshot().objectives.bossSpawned, null, { timeout: 5000 });
   await sleep(500);
   s = await saves();
-  check('clearing the camps checkpoints the objective', s.slots[0].campsCleared === 3 && s.slots[0].campsTotal === 3,
-    `${s.slots[0].campsCleared}/${s.slots[0].campsTotal}`);
-  check('the checkpoint records the awakened Warden', s.slots[0].bossSpawned === true);
+  check('reaching the end arena checkpoints the awakened Warden',
+    s.slots[0].campsCleared === 0 && s.slots[0].campsTotal === 3 && s.slots[0].bossSpawned === true,
+    `${s.slots[0].campsCleared}/${s.slots[0].campsTotal}, boss ${s.slots[0].bossSpawned}`);
   check('the checkpoint keeps the level and passive', s.slots[0].level >= 5 && s.slots[0].status === 'ok',
     `lv ${s.slots[0].level}`);
-  await page.screenshot({ path: `${SHOTS}71-checkpoint-camps.png` });
+  await page.screenshot({ path: `${SHOTS}71-checkpoint-warden.png` });
 
   // --- Reload: Continue appears and restores the checkpoint ---
   await page.reload({ waitUntil: 'networkidle' });
@@ -130,7 +133,8 @@ async function main() {
   check('Continue returns to play', s.mode === 'playing');
   check('Continue restores the level', s.level >= 5, `level ${s.level}`);
   check('Continue restores passive allocations', s.passives.allocated.includes('o1'), s.passives.allocated.join(','));
-  check('Continue restores cleared camps and the boss', s.objectives.campsCleared === 3 && s.objectives.bossSpawned,
+  check('Continue restores the optional camp track and the boss',
+    s.objectives.campsCleared === 0 && s.objectives.campsTotal === 3 && s.objectives.bossSpawned,
     JSON.stringify(s.objectives));
   check('the restored run stays bound to slot 1', restored.activeSlot === 0);
   await page.screenshot({ path: `${SHOTS}74-continue-restored.png` });
@@ -169,6 +173,8 @@ async function main() {
   if (boss) await page.evaluate(([id, amount]) => window.__ashen.hurtEnemy(id, amount), [boss.id, 99999]);
   await sleep(500);
   check('the victory screen opens', await page.locator('[data-screen="victory"]').isVisible());
+  s = await snap();
+  check('victory opens the Warden’s Gate portal', s.objectives.portalOpen === true, JSON.stringify(s.objectives));
   s = await saves();
   check('victory checkpoints the defeated Warden', s.slots[0].bossDefeated === true);
   await page.click('[data-action="continue"]');

@@ -1,9 +1,9 @@
 /**
- * Slice 7 browser QA: zone objectives & the Ashen Warden. Verifies the HUD
- * objective tracker, camp clearing unlocking the boss, the boss spawning in
- * its arena, hp-driven phase transitions with minion adds and their
- * telegraphs, the arena boundary during the fight, and the victory screen
- * closing the loop back to play/title.
+ * Slice 7 browser QA: optional camps & the end-zone Ashen Warden. Verifies the
+ * HUD marks camps optional, clearing every camp does not wake the Warden,
+ * entering the end arena does, the hero can retreat (no arena clamp), the
+ * boss phases/adds still run, and the kill opens the portal and, because the
+ * moor is the final campaign zone, the victory screen.
  *
  * Run: node qa/verify-slice-07.mjs   (starts `vite preview` on :4173 itself)
  */
@@ -63,23 +63,37 @@ async function main() {
   await page.click('[data-action="begin"]');
   await page.waitForTimeout(800);
 
-  // --- Objective tracker: the zone opens with camps to clear ---
+  // --- Objective tracker: camps are optional, the Warden waits at the end ---
   let s = await snap();
-  check('the moor opens with three camps to clear', s.objectives.campsTotal === 3 && s.objectives.campsCleared === 0,
+  check('the moor opens with three optional camps', s.objectives.campsTotal === 3 && s.objectives.campsCleared === 0,
     JSON.stringify(s.objectives));
-  check('HUD tracker shows the camp objective', (await objectiveText()).includes('Clear the camps (0/3)'));
+  const openingObjective = await objectiveText();
+  check('HUD tracker marks the camps optional', openingObjective.includes('Camps cleared (0/3) — optional'), openingObjective);
+  check('HUD tracker points at the far-end Warden', openingObjective.includes('Reach the Ashen Warden at the far end'), openingObjective);
   check('the Warden is not in play yet', !s.enemies.some((e) => e.type === 'ashen-warden'));
   await page.screenshot({ path: `${SHOTS}60-objectives.png` });
 
-  // --- Camps clear -> the Warden wakes ---
+  // --- Camps clear, but they no longer gate the Warden ---
   await page.evaluate(() => window.__ashen.clearCamps());
   await sleep(300);
   s = await snap();
-  check('clearing every camp completes the first objective', s.objectives.campsCleared === 3 && s.objectives.bossSpawned,
+  check('clearing every camp completes the optional camp track', s.objectives.campsCleared === 3,
     JSON.stringify(s.objectives));
+  check('camps alone do not wake the Warden', !s.objectives.bossSpawned &&
+    !s.enemies.some((e) => e.type === 'ashen-warden' && !e.dead), JSON.stringify(s.objectives));
+
+  // --- Entering the end arena wakes the Warden ---
+  const beforeSpawn = s.playerPos;
+  await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z]);
+  await sleep(400);
+  s = await snap();
+  check('entering the end arena wakes the Warden', s.objectives.bossSpawned === true, JSON.stringify(s.objectives));
   const boss = s.enemies.find((e) => e.type === 'ashen-warden' && !e.dead);
-  check('the Ashen Warden spawns in its arena', !!boss &&
+  check('the Ashen Warden waits in the far-end arena', !!boss &&
     Math.hypot(boss.x - s.arena.x, boss.z - s.arena.z) <= s.arena.radius + 1, JSON.stringify({ boss, arena: s.arena }));
+  check('the Warden spawn does not move the hero',
+    Math.hypot(s.playerPos.x - s.arena.x, s.playerPos.z - s.arena.z) < 0.1,
+    JSON.stringify({ before: beforeSpawn, after: s.playerPos, arena: s.arena }));
   check('tracker flips to the boss objective', (await objectiveText()).includes('Slay the Ashen Warden'));
 
   // --- Phase transitions: hp gates, adds, telegraphs ---
@@ -91,24 +105,31 @@ async function main() {
   check('dropping the Warden past 66% enters phase 2', bossNow.bossPhase === 1, `phase ${bossNow.bossPhase}`);
   check('phase 2 calls minion adds', adds.length >= 3, `${adds.length} adds`);
 
-  // Move into the arena and fight from inside; the boundary holds the hero.
+  // Fight from inside the arena for a clean screenshot.
   await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z + 5]);
   await sleep(1200);
   await page.screenshot({ path: `${SHOTS}61-boss-fight.png` });
 
+  // --- No arena clamp: the hero can retreat down the moor ---
   await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z + 24]);
-  await page.mouse.click(720, 200); // walk away, out of the arena
   await sleep(900);
   s = await snap();
   const distToArena = Math.hypot(s.playerPos.x - s.arena.x, s.playerPos.z - s.arena.z);
-  check('the arena boundary holds the hero during the fight', distToArena <= s.arena.radius + 1,
+  check('the Warden fight does not clamp the hero to the arena', distToArena > s.arena.radius + 1,
     `distance ${distToArena.toFixed(1)} of ${s.arena.radius}`);
+  check('the hero is still inside the zone after retreating',
+    Math.hypot(s.playerPos.x, s.playerPos.z) <= 42, JSON.stringify(s.playerPos));
 
-  // --- The kill and the victory loop ---
+  // --- The kill, the portal and the victory loop ---
   await page.evaluate(([id, amount]) => window.__ashen.hurtEnemy(id, amount), [boss.id, 99999]);
   await sleep(400);
+  s = await snap();
   const victoryVisible = await page.locator('[data-screen="victory"]').isVisible();
   check('slaying the Warden opens the victory screen', victoryVisible);
+  check('slaying the Warden opens the portal', s.objectives.bossDefeated === true && s.objectives.portalOpen === true,
+    JSON.stringify(s.objectives));
+  check('the Warden’s Gate toast is announced',
+    (await page.locator('.toast').filter({ hasText: /Gate opens/ }).count()) > 0);
   const victoryKills = await page.locator('[data-victory-kills]').textContent();
   check('victory summary counts the run', Number(victoryKills) > 0, `${victoryKills} kills`);
   await page.screenshot({ path: `${SHOTS}62-victory.png` });
@@ -117,6 +138,7 @@ async function main() {
   await sleep(300);
   s = await snap();
   check('Continue closes the loop back into play', !(await page.locator('[data-screen="victory"]').isVisible()) && s.mode === 'playing');
+  check('Continue keeps the portal open', s.objectives.portalOpen === true);
 
   // --- The defeat screen still closes back to retry/title ---
   await page.evaluate(() => window.__ashen.hurtPlayer(99999));

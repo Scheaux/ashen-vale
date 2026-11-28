@@ -119,8 +119,8 @@ describe('zone progress', () => {
     expect(state.progress['ashen-moor'].campCleared).toEqual([false, false, false]);
     expect(state.progress['drowned-ossuary'].campsTotal).toBe(1);
     expect(state.progress['drowned-ossuary'].campCleared).toEqual([false]);
-    expect(state.bossTrigger).toBe('camps');
-    expect(state.finalZone).toBe('drowned-ossuary');
+    expect(state.bossTrigger).toBe('end');
+    expect(state.finalZone).toBe('ashen-moor');
 
     state.objectives.campCleared[0] = true;
     expect(state.progress['ashen-moor'].campCleared[0]).toBe(true);
@@ -318,8 +318,6 @@ describe('save schema v8', () => {
       { ...save.progress, 'ashen-moor': { ...moor, campsCleared: Array.from({ length: 16 }, () => 0) } },
       { ...save.progress, 'ashen-moor': { ...moor, bossSpawned: 'yes' } },
       { ...save.progress, 'ashen-moor': { ...moor, bossDefeated: true } },
-      { ...save.progress, 'ashen-moor': { ...moor, bossSpawned: true } },
-      { ...save.progress, 'ashen-moor': { ...moor, campsCleared: moorSlots(0, 1), bossSpawned: true } },
       { ...save.progress, 'drowned-ossuary': { ...ossuary, campsCleared: [false, false] } },
     ]) {
       expect(() => migrateSave({ ...save, progress })).toThrow();
@@ -328,7 +326,7 @@ describe('save schema v8', () => {
       ...save,
       progress: {
         ...save.progress,
-        'ashen-moor': { campsCleared: moorSlots(0, 1, 2), bossSpawned: true, bossDefeated: true },
+        'ashen-moor': { campsCleared: moorSlots(), bossSpawned: true, bossDefeated: true },
       },
     })).not.toThrow();
     expect(() => migrateSave({
@@ -344,16 +342,34 @@ describe('save schema v8', () => {
     })).not.toThrow();
   });
 
-  it('rejects a forged v8 save with empty camps behind a boss gate', () => {
+  it('accepts a v8 boss save with zero camps cleared', () => {
     const save = createSave(createGameState(getClass('witch'), emptyLayout()));
-    const forged = {
+    for (const progress of [
+      { campsCleared: moorSlots(), bossSpawned: true, bossDefeated: false },
+      { campsCleared: moorSlots(), bossSpawned: true, bossDefeated: true },
+    ]) {
+      expect(() => migrateSave({
+        ...save,
+        progress: { ...save.progress, 'ashen-moor': progress },
+      })).not.toThrow();
+    }
+  });
+
+  it('accepts a previously forged empty-camp v8 boss gate', () => {
+    const save = createSave(createGameState(getClass('witch'), emptyLayout()));
+    const emptyCampBoss = {
       ...save,
       progress: {
         ...save.progress,
         'ashen-moor': { campsCleared: moorSlots(), bossSpawned: true, bossDefeated: true },
       },
     };
-    expect(() => migrateSave(forged)).toThrow(/before the camps are cleared/);
+    const validated = migrateSave(emptyCampBoss);
+    expect(validated.progress['ashen-moor']).toEqual({
+      campsCleared: moorSlots(),
+      bossSpawned: true,
+      bossDefeated: true,
+    });
   });
 
   it('only permits an ossuary v8 save after the moor boss is defeated', () => {
@@ -364,7 +380,7 @@ describe('save schema v8', () => {
       ...ossuary,
       progress: {
         ...save.progress,
-        'ashen-moor': { campsCleared: moorSlots(0, 1, 2), bossSpawned: true, bossDefeated: true },
+        'ashen-moor': { campsCleared: moorSlots(), bossSpawned: true, bossDefeated: true },
       },
     })).not.toThrow();
   });
@@ -424,14 +440,15 @@ describe('save schema v8', () => {
     })).toThrow(/rune/);
   });
 
-  it('saves completed and live boss gates as valid v8 data', () => {
+  it('saves live and defeated bosses with or without camp progress', () => {
     const state = createGameState(getClass('marauder'), campLayout());
-    state.objectives.campCleared = [true, true, true];
-
     state.objectives.bossSpawned = true;
     expect(() => migrateSave(createSave(state))).not.toThrow();
 
     state.objectives.bossDefeated = true;
+    expect(() => migrateSave(createSave(state))).not.toThrow();
+
+    state.objectives.campCleared = [true, true, true];
     expect(() => migrateSave(createSave(state))).not.toThrow();
   });
 
@@ -561,7 +578,7 @@ describe('migration v4 -> v8', () => {
     expect(migrated.skills.loadout).toEqual(skills.loadout);
     expect(migrated.skills.runes).toEqual({});
     expect(migrated.currency).toEqual({ dust: 0, rune: 0, quality: 0 });
-    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots(0));
+    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots());
     expect(migrated.progress['ashen-moor'].campsCleared).toHaveLength(16);
   });
 
@@ -598,7 +615,7 @@ describe('migration v5 -> v8', () => {
     expect(migrated.inventory.bags[0].quality).toBe(0);
     expect(migrated.inventory.bags[0].implicit).toBeNull();
     expect(migrated.currency).toEqual({ dust: 0, rune: 0, quality: 0 });
-    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots(0));
+    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots());
     expect(Object.values(migrated.skills.runes)).toEqual(['cruel']);
   });
 
@@ -630,7 +647,7 @@ describe('migration v3 -> v8', () => {
     expect(migrated.version).toBe(8);
     expect(migrated.level).toBe(4);
     expect(migrated.passives).toEqual(['root', 'o1']);
-    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots(0));
+    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots());
     expect(migrated.flasks).toEqual({ health: 2, mana: 3 });
     const actives = activeSkillsFor('marauder');
     expect(migrated.skills.ranks).toEqual({
@@ -718,7 +735,7 @@ describe('migration v6 -> v7', () => {
     const migrated = migrateSave(v6);
     expect(migrated.version).toBe(8);
     expect(migrated.progress['ashen-moor'].bossDefeated).toBe(true);
-    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots(0, 1, 2));
+    expect(migrated.progress['ashen-moor'].campsCleared).toEqual(moorSlots());
     expect(migrated.progress['ashen-moor'].campsCleared).toHaveLength(16);
     expect(() => migrateSave(JSON.parse(JSON.stringify(migrated)))).not.toThrow();
   });
@@ -747,12 +764,13 @@ describe('migration v7 -> v8', () => {
     return migrateV6ToV7(v6);
   }
 
-  it('preserves the first three moor flags and pads slots 3-15 with false', () => {
+  it('resets all sixteen moor flags and preserves the boss flags', () => {
     const v7 = completedV7();
     const v8 = migrateV7ToV8(v7);
     expect(v8.version).toBe(8);
-    expect(v8.progress['ashen-moor'].campsCleared).toEqual(moorSlots(0, 1, 2));
+    expect(v8.progress['ashen-moor'].campsCleared).toEqual(moorSlots());
     expect(v8.progress['ashen-moor'].campsCleared).toHaveLength(16);
+    expect(v8.progress['ashen-moor'].campsCleared.every((flag) => flag === false)).toBe(true);
     expect(v8.progress['ashen-moor'].bossSpawned).toBe(true);
     expect(v8.progress['ashen-moor'].bossDefeated).toBe(true);
     expect(v8.progress['drowned-ossuary']).toEqual(emptyOssuaryProgress());
@@ -762,7 +780,7 @@ describe('migration v7 -> v8', () => {
     expect(v8.savedAt).toBe(v7.savedAt);
   });
 
-  it('preserves a partial three-slot v7 pattern and pads the rest', () => {
+  it('does not carry a partial three-slot v7 pattern into v8', () => {
     const v8 = migrateV7ToV8({
       ...completedV7(),
       progress: {
@@ -770,7 +788,7 @@ describe('migration v7 -> v8', () => {
         'drowned-ossuary': { campsCleared: [false, false, false], bossSpawned: false, bossDefeated: false },
       },
     });
-    expect(v8.progress['ashen-moor'].campsCleared).toEqual(moorSlots(0, 2));
+    expect(v8.progress['ashen-moor'].campsCleared).toEqual(moorSlots());
   });
 
   it('keeps the v7 validator strict about three slots', () => {
@@ -796,9 +814,29 @@ describe('migration v7 -> v8', () => {
     })).toThrow(/before the camps are cleared/);
   });
 
-  it('validates a completed 3-of-16 v8 save under the active-camp gate', () => {
+  it('still rejects a v7 boss save with zero cleared camps at the v7 stage', () => {
+    const v7 = completedV7();
+    expect(() => validateV7({
+      ...v7,
+      progress: {
+        ...v7.progress,
+        'ashen-moor': { campsCleared: [false, false, false], bossSpawned: true, bossDefeated: true },
+      },
+    })).toThrow(/before the camps are cleared/);
+    expect(() => migrateV7ToV8({
+      ...v7,
+      progress: {
+        ...v7.progress,
+        'ashen-moor': { campsCleared: [false, false, false], bossSpawned: true, bossDefeated: true },
+      },
+    })).toThrow(/before the camps are cleared/);
+  });
+
+  it('validates a completed v7 migration with flags reset and boss flags kept', () => {
     const v8 = migrateV7ToV8(completedV7());
     expect(validateV8(v8)).toEqual(v8);
-    expect(v8.progress['ashen-moor'].campsCleared.filter(Boolean)).toHaveLength(3);
+    expect(v8.progress['ashen-moor'].campsCleared.filter(Boolean)).toHaveLength(0);
+    expect(v8.progress['ashen-moor'].bossSpawned).toBe(true);
+    expect(v8.progress['ashen-moor'].bossDefeated).toBe(true);
   });
 });

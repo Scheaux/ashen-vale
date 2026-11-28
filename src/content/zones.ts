@@ -5,7 +5,7 @@ import type { EnemyId, ZoneId } from './types';
  * save slots a zone always stores; `activeCamps` is how many camps the current
  * build actually plays in that zone.
  */
-export type BossTrigger = 'camps' | 'arena';
+export type BossTrigger = 'camps' | 'arena' | 'end';
 
 export interface ZoneDef {
   id: ZoneId;
@@ -18,8 +18,14 @@ export interface ZoneDef {
   activeCamps: number;
   bossId: EnemyId | null;
   bossTrigger: BossTrigger;
-  final: boolean;
 }
+
+/**
+ * Playable campaign order. The last entry owns the victory screen; the moor is
+ * the whole campaign until the ossuary chapter ships. This is the single
+ * source of truth for victory (not a static per-zone flag).
+ */
+export const CAMPAIGN_ZONES: readonly ZoneId[] = ['ashen-moor'];
 
 export const ZONE_DEFS: Record<ZoneId, ZoneDef> = {
   'ashen-moor': {
@@ -30,8 +36,7 @@ export const ZONE_DEFS: Record<ZoneId, ZoneDef> = {
     campCount: 16,
     activeCamps: 3,
     bossId: 'ashen-warden',
-    bossTrigger: 'camps',
-    final: false,
+    bossTrigger: 'end',
   },
   'drowned-ossuary': {
     id: 'drowned-ossuary',
@@ -42,7 +47,6 @@ export const ZONE_DEFS: Record<ZoneId, ZoneDef> = {
     activeCamps: 1,
     bossId: null,
     bossTrigger: 'arena',
-    final: true,
   },
 };
 

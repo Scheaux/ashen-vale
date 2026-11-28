@@ -1,8 +1,9 @@
 /**
  * v1.5/moor save v8 browser QA: prove the live export carries 16 moor camp
- * slots (3 active) and 3 ossuary slots with no legacy objectives field, a
- * completed v7 save migrates 3 -> 16 with the Warden defeated, the active-3
- * boss gate is accepted while a forged empty-camp gate is refused, and a
+ * slots (3 active) and 3 ossuary slots with no legacy objectives field, a live
+ * zero-camp Warden checkpoint is valid, a completed v7 save migrates with all
+ * camp flags reset while boss flags are preserved, a v7 zero-camp boss save is
+ * still rejected at the v7 stage, a v8 zero-camp boss save is accepted, and a
  * normal v8 checkpoint survives reload.
  *
  * Run: node qa/verify-v15b.mjs   (starts `vite preview` on :4173 itself)
@@ -169,19 +170,20 @@ async function main() {
       Object.keys(fresh).filter((key) => key === 'objectives').join(', ') || 'absent');
 
     // ------------------------------------------------------------------
-    // 2. Normal v8 checkpoint: camps + live Warden survive save/reload
+    // 2. Zero-camp v8 checkpoint: the end-arena Warden survives save/reload
     // ------------------------------------------------------------------
-    await page.evaluate(() => window.__ashen.clearCamps());
+    await page.evaluate(() => {
+      const current = window.__ashen.snapshot();
+      window.__ashen.teleportPlayer(current.arena.x, current.arena.z);
+    });
     await page.waitForFunction(() => {
       const current = window.__ashen.snapshot();
-      return current.objectives.campsCleared === 3
-        && current.objectives.bossSpawned
-        && !current.objectives.bossDefeated;
+      return current.objectives.bossSpawned && !current.objectives.bossDefeated;
     }, null, { timeout: 5000 });
     await sleep(300);
     s = await snap();
-    check('clearing every camp wakes the Warden before the checkpoint',
-      s.objectives.campsCleared === 3
+    check('entering the end arena wakes the Warden with zero camps cleared',
+      s.objectives.campsCleared === 0
       && s.objectives.campsTotal === 3
       && s.objectives.bossSpawned === true
       && s.objectives.bossDefeated === false,
@@ -194,14 +196,14 @@ async function main() {
     await page.locator('.save-slot[data-slot="0"] .save-slot__body').click();
     await sleep(450);
     s = await saves();
-    check('the normal checkpoint writes slot 1 with the active 3/3 camp total',
-      s.slots[0].status === 'ok' && s.slots[0].campsCleared === 3 && s.slots[0].campsTotal === 3,
+    check('the normal checkpoint writes slot 1 with the active three-camp total and zero clears',
+      s.slots[0].status === 'ok' && s.slots[0].campsCleared === 0 && s.slots[0].campsTotal === 3,
       `${s.slots[0].status}, camps ${s.slots[0].campsCleared}/${s.slots[0].campsTotal}`);
 
     const slotBody = await readRawSave(page, 0);
     const slotMoor = slotBody?.progress?.['ashen-moor'];
     const slotOssuary = slotBody?.progress?.['drowned-ossuary'];
-    check('the normal checkpoint body is a complete v8 16-slot live-boss save',
+    check('the normal checkpoint body is a complete v8 16-slot zero-camp live-boss save',
       Boolean(slotBody)
       && slotBody.version === 8
       && slotBody.zoneId === 'ashen-moor'
@@ -211,8 +213,7 @@ async function main() {
       && !('objectives' in slotBody)
       && Array.isArray(slotMoor?.campsCleared)
       && slotMoor.campsCleared.length === MOOR_SLOTS
-      && slotMoor.campsCleared.slice(0, 3).every(Boolean)
-      && slotMoor.campsCleared.slice(3).every((flag) => flag === false)
+      && slotMoor.campsCleared.every((flag) => flag === false)
       && slotMoor.bossSpawned === true
       && slotMoor.bossDefeated === false
       && Array.isArray(slotOssuary?.campsCleared)
@@ -235,7 +236,7 @@ async function main() {
     await page.locator('.save-screen').waitFor({ state: 'visible' });
     const cardText = await page.locator('.save-slot[data-slot="0"]').innerText();
     check('the save card shows the zone and the active three-camp total',
-      /The Ashen Moor/.test(cardText) && /Camps 3\/3/.test(cardText),
+      /The Ashen Moor/.test(cardText) && /Camps 0\/3/.test(cardText),
       cardText.replace(/\n/g, ' | '));
     await page.screenshot({ path: `${SHOTS}v15b-save-card.png` });
     await page.locator('[data-save-close]').click();
@@ -245,8 +246,8 @@ async function main() {
     await waitForPlaying(page);
     await page.evaluate(() => window.__ashen.healPlayer(9999));
     s = await snap();
-    check('Continue restores the v8 camp and boss progress',
-      s.objectives.campsCleared === 3 && s.objectives.campsTotal === 3 && s.objectives.bossSpawned === true,
+    check('Continue restores the zero-camp v8 boss progress',
+      s.objectives.campsCleared === 0 && s.objectives.campsTotal === 3 && s.objectives.bossSpawned === true,
       JSON.stringify(s.objectives));
 
     const liveWardens = s.enemies.filter((enemy) => enemy.type === 'ashen-warden' && !enemy.dead);
@@ -262,11 +263,11 @@ async function main() {
       `distance ${thresholdDistance.toFixed(2)} / radius ${s.arena.radius}`);
 
     const v8Base = await exportSave();
-    check('the live v8 export has 16 moor slots with the first 3 cleared',
+    check('the live v8 export has 16 empty moor slots and 3 ossuary slots',
       v8Base.version === 8
       && v8Base.progress['ashen-moor'].campsCleared.length === MOOR_SLOTS
-      && v8Base.progress['ashen-moor'].campsCleared.slice(0, 3).every(Boolean)
-      && v8Base.progress['ashen-moor'].campsCleared.slice(3).every((flag) => flag === false),
+      && v8Base.progress['ashen-moor'].campsCleared.every((flag) => flag === false)
+      && v8Base.progress['ashen-moor'].bossSpawned === true,
       `camps ${JSON.stringify(v8Base.progress['ashen-moor'].campsCleared)}`);
 
     // ------------------------------------------------------------------
@@ -301,8 +302,8 @@ async function main() {
     await reload(page);
 
     s = await saves();
-    check('the completed v7 fixture migrates as a valid slot under the active-3 gate',
-      s.slots[1].status === 'ok' && s.slots[1].campsCleared === 3 && s.slots[1].campsTotal === 3
+    check('the completed v7 fixture migrates as a valid slot with flags reset',
+      s.slots[1].status === 'ok' && s.slots[1].campsCleared === 0 && s.slots[1].campsTotal === 3
       && s.slots[1].bossDefeated === true,
       `${s.slots[1].status}, camps ${s.slots[1].campsCleared}/${s.slots[1].campsTotal}, boss defeated ${s.slots[1].bossDefeated}`);
 
@@ -311,10 +312,10 @@ async function main() {
     s = await snap();
     check('a completed v7 save loads into play', s.mode === 'playing' && !s.dead,
       `mode ${s.mode}, dead ${s.dead}`);
-    check('v7 -> v8 restores objectives at 3/3',
-      s.objectives.campsCleared === 3 && s.objectives.campsTotal === 3,
+    check('v7 -> v8 restores the optional camps at 0/3',
+      s.objectives.campsCleared === 0 && s.objectives.campsTotal === 3,
       `${s.objectives.campsCleared}/${s.objectives.campsTotal}`);
-    check('v7 -> v8 restores bossDefeated', s.objectives.bossDefeated === true,
+    check('v7 -> v8 restores bossDefeated with zero camps', s.objectives.bossDefeated === true,
       JSON.stringify(s.objectives));
     check('the defeated Warden is not spawned live',
       !s.enemies.some((enemy) => enemy.type === 'ashen-warden' && !enemy.dead),
@@ -333,10 +334,9 @@ async function main() {
       && Number.isInteger(migrated.zoneSeed)
       && migrated.zoneSeed >= 0,
       JSON.stringify(Object.keys(migrated.progress ?? {}).sort()));
-    check('the migrated 3 -> 16 export preserves the first three flags and pads the rest',
+    check('the migrated 3 -> 16 export resets every moor camp flag and preserves the boss',
       migrated.progress?.['ashen-moor']?.campsCleared?.length === MOOR_SLOTS
-      && migrated.progress['ashen-moor'].campsCleared.slice(0, 3).every(Boolean)
-      && migrated.progress['ashen-moor'].campsCleared.slice(3).every((flag) => flag === false)
+      && migrated.progress['ashen-moor'].campsCleared.every((flag) => flag === false)
       && migrated.progress['ashen-moor'].bossDefeated === true,
       JSON.stringify(migrated.progress?.['ashen-moor']));
     check('the migrated export pads the ossuary with 3 empty slots',
@@ -344,15 +344,17 @@ async function main() {
       JSON.stringify(migrated.progress?.['drowned-ossuary']));
 
     // ------------------------------------------------------------------
-    // 4. A forged v8 empty-camp boss gate is corrupt and refused
+    // 4. A v7 zero-camp boss gate is still corrupt at the v7 stage
     // ------------------------------------------------------------------
-    const forged = JSON.parse(JSON.stringify(migrated));
-    forged.progress['ashen-moor'].campsCleared = moorSlots();
-    forged.progress['ashen-moor'].bossSpawned = true;
-    forged.progress['ashen-moor'].bossDefeated = true;
-    forged.savedAt = Date.now() + 10000;
-    await writeRawSave(page, 2, forged);
-    // Leave the forged slot as the only save so a corrupt read cannot hide
+    const v7ZeroGate = JSON.parse(JSON.stringify(v7Completed));
+    v7ZeroGate.progress['ashen-moor'] = {
+      campsCleared: [false, false, false],
+      bossSpawned: true,
+      bossDefeated: true,
+    };
+    v7ZeroGate.savedAt = Date.now() + 10000;
+    await writeRawSave(page, 2, v7ZeroGate);
+    // Leave the v7 gate slot as the only save so a corrupt read cannot hide
     // behind the earlier valid checkpoints' backups.
     await page.evaluate(() => {
       for (const slot of [0, 1]) {
@@ -363,17 +365,17 @@ async function main() {
     await reload(page);
 
     s = await saves();
-    check('the forged empty-camp v8 slot is reported corrupt',
+    check('a v7 zero-camp boss slot is reported corrupt',
       s.slots[2].status === 'corrupt', s.slots[2].error ?? s.slots[2].status);
-    check('the forged save is rejected for its impossible boss gate',
+    check('the v7 zero-camp save is rejected by the frozen boss gate',
       /spawns the boss before the camps are cleared/i.test(s.slots[2].error ?? ''),
       s.slots[2].error ?? 'no error text');
-    check('only the forged slot remains',
+    check('only the corrupt v7 slot remains',
       s.slots[0].status === 'empty' && s.slots[1].status === 'empty',
       s.slots.map((slot) => slot.status).join(', '));
     check('the title offers no Continue for a corrupt-only store',
       !(await page.locator('[data-action="continue-run"]').isVisible()));
-    check('the game does not enter play from the forged save', (await snap()).mode === 'title',
+    check('the game does not enter play from the v7 zero-camp save', (await snap()).mode === 'title',
       `mode ${(await snap()).mode}`);
 
     check('Load Game is still offered so the corrupt slot can be reclaimed',
@@ -381,13 +383,13 @@ async function main() {
     await page.click('[data-action="load-game"]');
     await page.locator('.save-screen').waitFor({ state: 'visible' });
     const corruptText = await page.locator('.save-slot[data-slot="2"]').innerText();
-    check('the save card explains the corrupt v8 save',
+    check('the save card explains the corrupt v7 save',
       /Corrupted/i.test(corruptText)
       && /spawns the boss before the camps are cleared/i.test(corruptText),
       corruptText.replace(/\n/g, ' | '));
-    check('the forged slot cannot be loaded',
+    check('the corrupt v7 slot cannot be loaded',
       await page.locator('.save-slot[data-slot="2"] .save-slot__body').isDisabled());
-    await page.screenshot({ path: `${SHOTS}v15b-forged-corrupt.png` });
+    await page.screenshot({ path: `${SHOTS}v15b-v7-zero-gate.png` });
     await page.locator('[data-save-close]').click();
     await sleep(200);
 
@@ -396,12 +398,42 @@ async function main() {
       `mode ${(await snap()).mode}`);
 
     // ------------------------------------------------------------------
-    // 5. A valid ossuary v8 save is displayed but refused by 5.0b loading
+    // 5. A v8 zero-camp boss save is valid and opens the portal
+    // ------------------------------------------------------------------
+    const v8ZeroCampBoss = JSON.parse(JSON.stringify(migrated));
+    v8ZeroCampBoss.progress['ashen-moor'].campsCleared = moorSlots();
+    v8ZeroCampBoss.progress['ashen-moor'].bossSpawned = true;
+    v8ZeroCampBoss.progress['ashen-moor'].bossDefeated = true;
+    v8ZeroCampBoss.savedAt = Date.now() + 15000;
+    await writeRawSave(page, 2, v8ZeroCampBoss);
+    await reload(page);
+
+    s = await saves();
+    check('a v8 boss save with zero camps is valid',
+      s.slots[2].status === 'ok'
+      && s.slots[2].campsCleared === 0
+      && s.slots[2].campsTotal === 3
+      && s.slots[2].bossDefeated === true,
+      `${s.slots[2].status}, camps ${s.slots[2].campsCleared}/${s.slots[2].campsTotal}, boss defeated ${s.slots[2].bossDefeated}`);
+    check('the title offers Continue for the zero-camp v8 boss save',
+      await page.locator('[data-action="continue-run"]').isVisible());
+
+    await page.click('[data-action="continue-run"]');
+    await waitForPlaying(page);
+    s = await snap();
+    check('the zero-camp v8 boss save loads with the portal open',
+      s.objectives.campsCleared === 0
+      && s.objectives.bossDefeated === true
+      && s.objectives.portalOpen === true,
+      JSON.stringify(s.objectives));
+
+    // ------------------------------------------------------------------
+    // 6. A valid ossuary v8 save is displayed but refused by 5.0b loading
     // ------------------------------------------------------------------
     const ossuary = JSON.parse(JSON.stringify(migrated));
     ossuary.zoneId = 'drowned-ossuary';
     ossuary.zoneSeed = 20261123;
-    ossuary.savedAt = Date.now() + 15000;
+    ossuary.savedAt = Date.now() + 20000;
     await writeRawSave(page, 2, ossuary);
     await reload(page);
 

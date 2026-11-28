@@ -151,7 +151,14 @@ export interface AshenDebug {
     };
     playerRenderY: number;
     arena: { x: number; z: number; radius: number };
-    objectives: { campsCleared: number; campsTotal: number; bossSpawned: boolean; bossDefeated: boolean };
+    objectives: {
+      campsCleared: number;
+      campsTotal: number;
+      bossSpawned: boolean;
+      bossDefeated: boolean;
+      /** Derived from bossDefeated; the portal mesh/travel lands later. */
+      portalOpen: boolean;
+    };
     skills: Array<{
       slot: LoadoutSlot;
       id: SkillId | null;
@@ -1433,8 +1440,9 @@ class Game {
           campsTotal: state.objectives.campsTotal,
           bossSpawned: state.objectives.bossSpawned,
           bossDefeated: state.objectives.bossDefeated,
+          portalOpen: state.objectives.bossDefeated,
         }
-        : { campsCleared: 0, campsTotal: 0, bossSpawned: false, bossDefeated: false },
+        : { campsCleared: 0, campsTotal: 0, bossSpawned: false, bossDefeated: false, portalOpen: false },
       projectiles: state?.projectiles.length ?? 0,
       strikes: state?.strikes.length ?? 0,
       hazards: state?.hazards.length ?? 0,
@@ -1559,11 +1567,13 @@ class Game {
     if (!this.state) return;
     this.state.enemies.length = 0;
     this.state.hazards.length = 0;
-    // A quiet moor must not read as "camps cleared" and wake the Warden.
+    // An emptied field has no camps to report; the end-zone Warden trigger is
+    // independent of camp completion.
     this.state.objectives.campsTotal = 0;
     this.state.objectives.campCleared = [];
   }
 
+  /** Review fixture: clear the optional camps without touching the Warden. */
   clearCamps(): void {
     const state = this.state;
     if (!state) return;

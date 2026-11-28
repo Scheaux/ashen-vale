@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
 import type { CircleCollider, ZoneLayout } from '../content/types';
 import { createGameState } from '../sim/state';
-import { cancelMove, setMoveTarget, stepMovement } from './movement';
+import { cancelMove, activeBounds, setMoveTarget, stepMovement } from './movement';
 
 function testLayout(colliders: CircleCollider[] = []): ZoneLayout {
   return {
@@ -109,5 +109,22 @@ describe('stepMovement', () => {
     runTicks(state, 60);
     expect(Math.hypot(state.player.velocity.x, state.player.velocity.z)).toBeLessThan(0.05);
     expect(state.player.moveTarget).toBeNull();
+  });
+
+  it('keeps the whole zone walkable while a boss is live', () => {
+    const state = createGameState(getClass('marauder'), testLayout());
+    state.objectives.bossSpawned = true;
+    expect(activeBounds(state)).toBe(state.bounds);
+
+    // Start in the arena and walk back down the zone; no clamp holds the hero.
+    state.player.position = { x: state.arena.center.x, z: state.arena.center.z };
+    setMoveTarget(state, { x: 0, z: 0 });
+    runTicks(state, 60 * 3);
+
+    const distToArena = Math.hypot(
+      state.player.position.x - state.arena.center.x,
+      state.player.position.z - state.arena.center.z,
+    );
+    expect(distToArena).toBeGreaterThan(state.arena.radius);
   });
 });

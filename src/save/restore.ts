@@ -67,8 +67,9 @@ export function restoreGameState(save: SaveGame, layout: ZoneLayout): GameState 
 
   applyProgress(state, save);
 
-  // A live Warden restarts at full health; the hero waits at the arena
-  // threshold rather than at the saved spot (or outside the active bounds).
+  // A live Warden restarts at full health; the hero resumes at the arena
+  // threshold rather than the saved spot, but the zone is not clamped once
+  // play resumes (the hero can retreat).
   if (state.objectives.bossSpawned && !state.objectives.bossDefeated) {
     const threshold = respawnPointFor(state, layout);
     p.position = { ...threshold };

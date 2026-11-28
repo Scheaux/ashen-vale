@@ -30,12 +30,12 @@ export function setMoveTarget(state: GameState, target: Vec2): void {
 }
 
 /**
- * Bounds the fight happens in: the arena while the Warden fight is live
- * (slice 7 arena boundary), the whole zone otherwise.
+ * The whole zone stays walkable. The end-zone Warden has no arena clamp, so
+ * the hero can retreat down the moor mid-fight; the arena only drives the
+ * encounter trigger, AI leash and checkpoint threshold.
  */
 export function activeBounds(state: GameState): ZoneBounds {
-  const o = state.objectives;
-  return o.bossSpawned && !o.bossDefeated ? state.arena : state.bounds;
+  return state.bounds;
 }
 
 /**

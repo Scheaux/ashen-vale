@@ -340,15 +340,15 @@ export class Ui {
     this.deathScreen.classList.add('hidden');
   }
 
-  /** Zone objective tracker (slice 7). */
+  /** Zone objective tracker (optional camps + end-zone Warden). */
   setObjectives(o: ObjectiveHud): void {
     this.objectivesEl.classList.toggle('hidden', o.campsTotal <= 0);
     const campDone = o.campsTotal > 0 && o.campsCleared >= o.campsTotal;
     const lines = [
-      { done: campDone, text: `Clear the camps (${o.campsCleared}/${o.campsTotal})` },
+      { done: campDone, text: `Camps cleared (${o.campsCleared}/${o.campsTotal}) — optional` },
       {
         done: o.bossDefeated,
-        text: o.bossSpawned || o.bossDefeated ? 'Slay the Ashen Warden' : 'Slay the Ashen Warden (awaits behind the camps)',
+        text: o.bossSpawned || o.bossDefeated ? 'Slay the Ashen Warden' : 'Reach the Ashen Warden at the far end',
       },
     ];
     this.objectiveList.innerHTML = lines

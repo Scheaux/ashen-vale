@@ -99,10 +99,9 @@ describe('restoreGameState', () => {
     expect(restored.objectives.campCleared).toEqual([true, false, true]);
   });
 
-  it('restarts a live boss fight at full health with the hero at the arena threshold', () => {
+  it('restarts a live boss fight without requiring camp progress', () => {
     const layout = campLayout();
     const state = createGameState(getClass('witch'), layout);
-    state.objectives.campCleared = [true, true, true];
     state.objectives.bossSpawned = true;
     const expected = respawnPointFor(state, layout);
     const save = createSave(state);
@@ -112,6 +111,7 @@ describe('restoreGameState', () => {
     expect(bosses).toHaveLength(1);
     expect(bosses[0].position).toEqual({ x: layout.bossSpawn.x, z: layout.bossSpawn.z });
     expect(bosses[0].hp).toBe(bosses[0].maxHp);
+    expect(restored.objectives.campCleared.filter(Boolean)).toHaveLength(0);
     expect(restored.player.position).toEqual(expected);
     expect(restored.player.previousPosition).toEqual(expected);
     expect(restored.player.position).not.toEqual(layout.spawn);
@@ -129,7 +129,6 @@ describe('restoreGameState', () => {
   it('does not respawn a defeated boss', () => {
     const layout = campLayout();
     const state = createGameState(getClass('witch'), layout);
-    state.objectives.campCleared = [true, true, true];
     state.objectives.bossSpawned = true;
     state.objectives.bossDefeated = true;
     const save = createSave(state);

@@ -11,6 +11,7 @@ import type {
 import { LOADOUT_SLOTS } from '../content/types';
 import {
   activeCampsForZone,
+  CAMPAIGN_ZONES,
   ZONE_DEFS,
   ZONE_IDS,
   type BossTrigger,
@@ -329,9 +330,9 @@ export interface GameState {
   hazards: HazardState[];
   colliders: CircleCollider[];
   bounds: ZoneBounds;
-  /** Boss arena bounds; active during the boss fight (slice 7). */
+  /** Boss arena bounds; used for the end encounter trigger and respawn. */
   arena: ZoneBounds;
-  /** Where the Ashen Warden waits until the camps are cleared. */
+  /** Where the Warden waits at the far end of the zone. */
   bossSpawn: EnemySpawn;
   inventory: InventoryState;
   loot: LootDrop[];
@@ -445,7 +446,7 @@ export function createGameState(
       bossDefeated: false,
     };
   }
-  const finalZone = ZONE_IDS.find((id) => ZONE_DEFS[id].final) ?? zoneId;
+  const finalZone = CAMPAIGN_ZONES[CAMPAIGN_ZONES.length - 1] ?? zoneId;
   return {
     tick: 0,
     zoneId,

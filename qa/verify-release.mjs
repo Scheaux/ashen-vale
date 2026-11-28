@@ -2,9 +2,9 @@
  * Slice 9 release QA: the full playable loop plus the polish gates.
  *
  * Verifies fresh start -> movement -> combat feedback (health bars, heavy
- * numbers, damage vignette) -> level/passives -> camp clear -> boss phases ->
- * victory -> save/quit -> reload -> Continue, plus the desktop render budget,
- * adaptive resolution on a high-DPI device, and reduced-motion boot.
+ * numbers, damage vignette) -> level/passives -> optional camps -> end-arena
+ * Warden -> portal/victory -> save/quit -> reload -> Continue, plus the desktop
+ * render budget, adaptive resolution on a high-DPI device, and reduced-motion boot.
  *
  * Run: node qa/verify-release.mjs   (starts `vite preview` on :4173 itself)
  */
@@ -178,11 +178,18 @@ async function main() {
   await page.keyboard.press('Escape');
   await sleep(250);
 
-  // Camps -> boss -> phases -> victory.
+  // Camps are optional -> enter the end arena -> boss -> phases -> victory.
   await page.evaluate(() => window.__ashen.clearCamps());
   await sleep(700);
   s = await snap();
-  check('clearing the camps wakes the Warden', s.objectives.campsCleared === 3 && s.objectives.bossSpawned);
+  check('clearing the optional camps does not wake the Warden',
+    s.objectives.campsCleared === 3 && s.objectives.bossSpawned === false,
+    JSON.stringify(s.objectives));
+  await page.evaluate(([x, z]) => window.__ashen.teleportPlayer(x, z), [s.arena.x, s.arena.z]);
+  await sleep(500);
+  s = await snap();
+  check('reaching the far-end arena wakes the Warden', s.objectives.bossSpawned === true,
+    JSON.stringify(s.objectives));
   const boss = s.enemies.find((enemy) => enemy.type === 'ashen-warden' && !enemy.dead);
   check('the Warden is in its arena', !!boss &&
     Math.hypot(boss.x - s.arena.x, boss.z - s.arena.z) <= s.arena.radius + 1);
@@ -196,6 +203,7 @@ async function main() {
     await sleep(500);
   }
   check('the victory screen closes the campaign', await page.locator('[data-screen="victory"]').isVisible());
+  check('victory opens the Warden’s Gate portal', (await snap()).objectives.portalOpen === true);
   await page.screenshot({ path: `${SHOTS}82-release-victory.png` });
   check('victory checkpoints the completed zone', (await saves()).slots[0].bossDefeated === true);
 
