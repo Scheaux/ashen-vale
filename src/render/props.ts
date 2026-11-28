@@ -123,8 +123,6 @@ interface PropInstance {
   radius: number;
   tall: boolean;
   fade: number;
-  /** Hysteresis state for the camera-to-player occlusion test. */
-  occluding: boolean;
 }
 
 interface PropMesh {
@@ -164,8 +162,6 @@ export interface PropsView {
 }
 
 const OCCLUSION_PADDING = 1.1;
-/** Extra band before an occluding prop releases, so camera drift does not flicker. */
-const OCCLUSION_HYSTERESIS = 0.45;
 const FADE_ATTRIBUTE = 'instanceFade';
 const STANDARD_FADE_CACHE_KEY = 'ashen-prop-instance-fade-v1';
 const DEPTH_FADE_CACHE_KEY = 'ashen-prop-instance-fade-depth-v1';
@@ -189,6 +185,14 @@ float ashenBayer4(vec2 fragCoord) {
 }
 `;
 
+/** Replace a required shader marker; fail loudly if three renames the chunk. */
+function replaceShaderMarker(source: string, marker: string, replacement: string, stage: string): string {
+  if (!source.includes(marker)) {
+    throw new Error(`PropsView fade patch: ${stage} shader is missing "${marker}" (three shader chunk changed?)`);
+  }
+  return source.replace(marker, replacement);
+}
+
 /**
  * Patch an opaque material so per-instance occlusion fades through a
  * screen-space dither instead of touching the instance matrix. The matching
@@ -196,25 +200,33 @@ float ashenBayer4(vec2 fragCoord) {
  * step with the visible dither without enabling transparency or sorting.
  */
 function patchInstanceFade(material: THREE.Material, cacheKey: string): void {
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>\nattribute float ${FADE_ATTRIBUTE};\nvarying float vInstanceFade;`,
-      )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>\nvInstanceFade = ${FADE_ATTRIBUTE};`,
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>\nvarying float vInstanceFade;\n${BAYER_GLSL}`,
-      )
-      .replace(
-        'void main() {',
-        'void main() {\n\tif (vInstanceFade > ashenBayer4(gl_FragCoord.xy)) discard;',
-      );
+  const previous = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    previous.call(material, shader, renderer);
+    shader.vertexShader = replaceShaderMarker(
+      shader.vertexShader,
+      '#include <common>',
+      `#include <common>\nattribute float ${FADE_ATTRIBUTE};\nvarying float vInstanceFade;`,
+      'vertex',
+    );
+    shader.vertexShader = replaceShaderMarker(
+      shader.vertexShader,
+      '#include <begin_vertex>',
+      `#include <begin_vertex>\nvInstanceFade = ${FADE_ATTRIBUTE};`,
+      'vertex',
+    );
+    shader.fragmentShader = replaceShaderMarker(
+      shader.fragmentShader,
+      '#include <common>',
+      `#include <common>\nvarying float vInstanceFade;\n${BAYER_GLSL}`,
+      'fragment',
+    );
+    shader.fragmentShader = replaceShaderMarker(
+      shader.fragmentShader,
+      'void main() {',
+      'void main() {\n\tif (vInstanceFade > ashenBayer4(gl_FragCoord.xy)) discard;',
+      'fragment',
+    );
   };
   material.customProgramCacheKey = () => cacheKey;
 }
@@ -288,7 +300,6 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
         radius: PROP_RADIUS[kind] * p.scale,
         tall: kind !== 'rock',
         fade: 0,
-        occluding: false,
       });
     });
     mesh.instanceMatrix.needsUpdate = true;
@@ -313,7 +324,7 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
       let anyChanged = false;
       for (let i = 0; i < instances.length; i++) {
         const instance = instances[i];
-        let occluding = false;
+        let target = 0;
         if (instance.tall && lenSq > 1e-4) {
           const t = ((instance.position.x - cameraPosition.x) * dx +
             (instance.position.z - cameraPosition.z) * dz) / lenSq;
@@ -321,14 +332,10 @@ export function createProps(layout: ZoneLayout, terrain?: TerrainSurface): Props
             const lineX = cameraPosition.x + dx * t;
             const lineZ = cameraPosition.z + dz * t;
             const dist = Math.hypot(instance.position.x - lineX, instance.position.z - lineZ);
-            const threshold = instance.radius + OCCLUSION_PADDING +
-              (instance.occluding ? OCCLUSION_HYSTERESIS : 0);
-            occluding = dist < threshold;
+            if (dist < instance.radius + OCCLUSION_PADDING) target = 1;
           }
         }
-        instance.occluding = occluding;
 
-        const target = occluding ? 1 : 0;
         const previous = instance.fade;
         instance.fade += (target - instance.fade) * (1 - Math.exp(-14 * dt));
         if (Math.abs(instance.fade - target) < 0.01) instance.fade = target;

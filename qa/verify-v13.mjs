@@ -4,7 +4,7 @@
  */
 import { chromium } from 'playwright';
 import { startPreviewServer, stopServer } from './server.mjs';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 const BASE = process.env.QA_URL ?? 'http://localhost:4173';
 const SHOTS = new URL('./shots/', import.meta.url).pathname;
@@ -28,6 +28,48 @@ async function waitForServer(url, timeoutMs = 20000) {
     await sleep(300);
   }
   throw new Error(`Server not reachable at ${url}`);
+}
+
+/** Decode two clipped screenshots in the browser and measure the pixel delta. */
+async function compareScreenshots(page, a, b) {
+  const dataUrl = (buffer) => `data:image/png;base64,${buffer.toString('base64')}`;
+  return page.evaluate(async ([urlA, urlB]) => {
+    async function readPixels(url) {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('2D canvas unavailable');
+      context.drawImage(img, 0, 0);
+      return {
+        width: img.width,
+        height: img.height,
+        data: context.getImageData(0, 0, img.width, img.height).data,
+      };
+    }
+    const [pixelsA, pixelsB] = await Promise.all([readPixels(urlA), readPixels(urlB)]);
+    let changed = 0;
+    let sum = 0;
+    for (let i = 0; i < pixelsA.data.length; i += 4) {
+      const dr = Math.abs(pixelsA.data[i] - pixelsB.data[i]);
+      const dg = Math.abs(pixelsA.data[i + 1] - pixelsB.data[i + 1]);
+      const db = Math.abs(pixelsA.data[i + 2] - pixelsB.data[i + 2]);
+      const delta = dr + dg + db;
+      sum += delta;
+      if (delta > 45) changed++;
+    }
+    const pixels = pixelsA.data.length / 4;
+    return {
+      width: pixelsA.width,
+      height: pixelsA.height,
+      pixels,
+      changed,
+      meanDelta: sum / (pixels * 3),
+    };
+  }, [dataUrl(a), dataUrl(b)]);
 }
 
 async function main() {
@@ -77,8 +119,13 @@ async function main() {
   let occluded = 0;
   let occlusionFade = 0;
   let occlusionZoom = 0;
-  for (const zoom of [18, 12, 21]) {
+  const zoomTargets = [18, 12, 21];
+  const actualZooms = [];
+  for (const zoom of zoomTargets) {
     const actualZoom = await setZoom(zoom);
+    actualZooms.push(actualZoom);
+    const zoomReached = Math.abs(actualZoom - zoom) <= 0.1;
+    check(`camera zoom settles at ${zoom}`, zoomReached, `actual ${actualZoom.toFixed(2)}`);
     let found = null;
     for (const point of tallProps.slice(0, 12)) {
       await page.evaluate(([x, z]) => {
@@ -97,16 +144,16 @@ async function main() {
     occluded = found?.probe.occluded ?? 0;
     occlusionFade = found?.target.fade ?? 0;
     occlusionZoom = actualZoom;
-    check(`tall props fade between the camera and the hero at zoom ${actualZoom.toFixed(1)}`,
-      occluded > 0 && occlusionFade > 0.9,
-      `${occluded} occluded props, target fade ${occlusionFade.toFixed(2)}`);
+    check(`tall props fade between the camera and the hero at zoom ${zoom}`,
+      zoomReached && occluded > 0 && occlusionFade > 0.9,
+      `zoom ${actualZoom.toFixed(2)}, ${occluded} occluded props, target fade ${occlusionFade.toFixed(2)}`);
 
     const after = await probeProps();
     const scaleChanged = after.sample.length !== preProps.sample.length ||
       after.sample.some((sample, i) => maxScaleDelta(sample.scale, preProps.sample[i].scale) > 1e-6);
     const authoredMismatch = after.sample.findIndex((sample) =>
       maxScaleDelta(sample.scale, sample.authoredScale) > 1e-6);
-    check(`authored prop scale is unchanged at zoom ${actualZoom.toFixed(1)}`,
+    check(`authored prop scale is unchanged at zoom ${zoom}`,
       !scaleChanged && authoredMismatch === -1,
       scaleChanged
         ? 'live instance scale changed'
@@ -114,6 +161,10 @@ async function main() {
           ? `matrix/authored mismatch at sample ${authoredMismatch}`
           : `${after.total} scales stable`);
   }
+  check('occlusion was exercised at zooms 12, 18 and 21',
+    actualZooms.length === zoomTargets.length &&
+    zoomTargets.every((zoom, i) => Math.abs(actualZooms[i] - zoom) <= 0.1),
+    actualZooms.map((zoom) => zoom.toFixed(2)).join(', '));
   check('tall props fade between the camera and the hero', occluded > 0,
     `${occluded} occluded props at zoom ${occlusionZoom.toFixed(1)}, fade ${occlusionFade.toFixed(2)}`);
   const counts = await page.evaluate(() => ({
@@ -122,7 +173,91 @@ async function main() {
   }));
   check('the render snapshot keeps the occluded prop count', counts.snapshot === counts.probe,
     `${counts.snapshot} snapshot vs ${counts.probe} probe`);
-  await page.screenshot({ path: `${SHOTS}93-occlusion.png` });
+
+  // --- Render-level proof: the fade changes the prop's screen coverage ---
+  const enemyPoints = (await snap()).enemies.filter((enemy) => !enemy.dead);
+  const distanceToEnemies = (prop) => enemyPoints.length === 0
+    ? 0
+    : Math.min(...enemyPoints.map((enemy) => Math.hypot(prop.x - enemy.x, prop.z - enemy.z)));
+  const renderTarget = [...tallProps].sort((a, b) => distanceToEnemies(b) - distanceToEnemies(a))[0];
+  if (!renderTarget) {
+    check('fade changes the prop screen coverage in rendered pixels', false, 'no occlusion target found');
+  } else {
+    // A prop far from live enemies keeps telegraphs/projectiles out of the
+    // evidence frame. Snap the camera to its converged occlusion pose.
+    await page.evaluate(([x, z]) => {
+      window.__ashen.healPlayer(9999);
+      window.__ashen.teleportPlayer(x, z);
+      window.__ashen.remountZone('ashen-moor');
+    }, [renderTarget.x - 2.2, renderTarget.z - 2.2]);
+
+    let renderFade = 0;
+    for (let i = 0; i < 30; i++) {
+      await sleep(100);
+      const probe = await probeProps();
+      const sample = probe.sample.find((candidate) =>
+        Math.abs(candidate.x - renderTarget.x) < 1e-6 &&
+        Math.abs(candidate.z - renderTarget.z) < 1e-6);
+      renderFade = sample?.fade ?? 0;
+      if (renderFade > 0.99) break;
+    }
+    check('render evidence target reaches full fade', renderFade > 0.99,
+      `${renderTarget.kind} at ${renderTarget.x.toFixed(1)}, ${renderTarget.z.toFixed(1)}; fade ${renderFade.toFixed(3)}`);
+    await page.screenshot({ path: `${SHOTS}93-occlusion.png` });
+
+    const region = await page.evaluate(([x, z, kind, authoredY]) => {
+      const ground = window.__ashen.terrainHeightAt(x, z);
+      const height = kind === 'deadTree' ? authoredY * 4.8 : authoredY * 1.2 + 1;
+      const base = window.__ashen.worldToScreen(x, z, ground);
+      const top = window.__ashen.worldToScreen(x, z, ground + height);
+      const pad = 80;
+      const centerX = (base.x + top.x) / 2;
+      const centerY = (base.y + top.y) / 2;
+      const width = Math.min(window.innerWidth, Math.max(320, Math.abs(base.x - top.x) + pad * 2));
+      const heightPx = Math.min(window.innerHeight, Math.max(380, Math.abs(base.y - top.y) + pad * 2));
+      return {
+        x: Math.round(Math.max(0, Math.min(window.innerWidth - width, centerX - width / 2))),
+        y: Math.round(Math.max(0, Math.min(window.innerHeight - heightPx, centerY - heightPx / 2))),
+        width: Math.round(width),
+        height: Math.round(heightPx),
+      };
+    }, [renderTarget.x, renderTarget.z, renderTarget.kind, renderTarget.authoredScale.y]);
+
+    const fade1Shot = await page.screenshot({ clip: region });
+    writeFileSync(`${SHOTS}93-occlusion-fade1.png`, fade1Shot);
+
+    // Freeze the fade/camera smoothing via negative Math.exp, then rebuild the
+    // props at fade 0 without moving the camera. Restored immediately after.
+    await page.evaluate(() => {
+      const original = Math.exp;
+      window.__qaOriginalExp = original;
+      Math.exp = (value) => (value < 0 ? 1 : original(value));
+      window.__ashen.remountZone('ashen-moor');
+    });
+    await page.evaluate(() => new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const fadeZeroProbe = await probeProps();
+    const fadeZeroSample = fadeZeroProbe.sample.find((candidate) =>
+      Math.abs(candidate.x - renderTarget.x) < 1e-6 &&
+      Math.abs(candidate.z - renderTarget.z) < 1e-6);
+    check('render evidence target resets to fade 0',
+      fadeZeroSample?.fade === 0, `fade ${fadeZeroSample?.fade?.toFixed(3) ?? 'missing'}`);
+    const fade0Shot = await page.screenshot({ clip: region });
+    writeFileSync(`${SHOTS}93-occlusion-fade0.png`, fade0Shot);
+    await page.screenshot({ path: `${SHOTS}93-occlusion-fade0-full.png` });
+    await page.evaluate(() => {
+      if (window.__qaOriginalExp) {
+        Math.exp = window.__qaOriginalExp;
+        delete window.__qaOriginalExp;
+      }
+    });
+
+    const diff = await compareScreenshots(page, fade1Shot, fade0Shot);
+    check('fade changes the prop screen coverage in rendered pixels',
+      diff.changed > 1500 && diff.meanDelta > 1,
+      `${renderTarget.kind}; ${diff.changed}/${diff.pixels} px changed, ` +
+      `mean delta ${diff.meanDelta.toFixed(2)}`);
+  }
   await setZoom(18);
 
   // --- Volatile elite: kill it at close range, read the warning, take the blast ---
