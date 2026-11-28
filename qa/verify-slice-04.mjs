@@ -2,7 +2,7 @@
  * Slice 4 browser QA: rewards & loot. Verifies the full loop — kills award XP,
  * enemies drop rarity-tagged items, walking over a drop fills the bag, the
  * inventory screen equips items atomically, level-ups toast, and the save
- * stub serializes the character state at schema v2.
+ * stub serializes the character state at the current schema (v7).
  *
  * Run: node qa/verify-slice-04.mjs   (starts `vite preview` on :4173 itself)
  */
