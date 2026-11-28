@@ -37,6 +37,12 @@ const MAX_FAR_CUES = 96;
 const DETAIL_RANGE = 16;
 /** Hard cap on jointed rigs: silhouettes cover the rest without a call spike. */
 const MAX_DETAILED = 8;
+/**
+ * During a live boss encounter the Warden and its pack get the detailed budget;
+ * nearby optional-camp rigs become silhouettes so the end fight stays inside
+ * the draw-call ceiling without reducing the camp count or budget.
+ */
+const MAX_DETAILED_BOSS = 4;
 /** Damaged health bars stay readable slightly beyond the detailed range. */
 const BAR_RANGE = 19;
 const BODY_HEIGHT: Record<EnemyState['defId'], number> = {
@@ -70,10 +76,11 @@ export function selectDetailedIds(
     candidate.boss || (candidate.visible && candidate.distance <= DETAIL_RANGE));
   const byDistance = (a: DetailedSlotCandidate, b: DetailedSlotCandidate): number =>
     a.distance - b.distance;
-  const windups = eligible.filter((candidate) => candidate.windup).sort(byDistance);
-  const bosses = eligible.filter((candidate) => !candidate.windup && candidate.boss).sort(byDistance);
+  const bosses = eligible.filter((candidate) => candidate.boss).sort(byDistance);
+  const windups = eligible.filter((candidate) => !candidate.boss && candidate.windup).sort(byDistance);
   const rest = eligible.filter((candidate) => !candidate.windup && !candidate.boss).sort(byDistance);
-  return [...windups, ...bosses, ...rest].slice(0, max).map((candidate) => candidate.id);
+  // The Warden keeps its rig even when a dense camp pull has eight windups.
+  return [...bosses, ...windups, ...rest].slice(0, max).map((candidate) => candidate.id);
 }
 
 /** Soft radial blob used as a cheap contact shadow for enemy rigs. */
@@ -409,7 +416,10 @@ export class EnemyViews {
       visible: this.isOnScreen(enemy),
       windup: !enemy.dead && (enemy.phase === 'windup' || enemy.phase === 'active'),
     }));
-    for (const id of selectDetailedIds(candidates)) this.detailedIds.add(id);
+    const bossLive = state.objectives.bossSpawned && !state.objectives.bossDefeated;
+    for (const id of selectDetailedIds(candidates, bossLive ? MAX_DETAILED_BOSS : MAX_DETAILED)) {
+      this.detailedIds.add(id);
+    }
 
     this.cueIds.detailed.length = 0;
     for (const enemy of state.enemies) {

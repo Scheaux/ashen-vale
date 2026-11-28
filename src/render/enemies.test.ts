@@ -39,6 +39,15 @@ describe('detailed rig budget', () => {
     ]);
   });
 
+  it('puts the boss first and honours the boss-fight detail cap', () => {
+    const selected = selectDetailedIds([
+      candidate('boss', 40, { boss: true }),
+      ...Array.from({ length: 6 }, (_, i) => candidate(`windup-${i + 1}`, i + 1, { windup: true })),
+      candidate('near', 2),
+    ], 4);
+    expect(selected).toEqual(['boss', 'windup-1', 'windup-2', 'windup-3']);
+  });
+
   it('keeps idle enemies near/on-screen and always includes the boss', () => {
     const selected = selectDetailedIds([
       candidate('near', 5),
