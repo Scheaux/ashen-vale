@@ -12,8 +12,8 @@ ships as save **v8**.
 2. Keep the victory screen, but bind it to clearing the **last zone** of the
    campaign. With one zone, the Warden is the final boss; with three zones, the
    third zone’s boss is the win.
-3. Fix terrain props shrinking when approached, and fix the misaligned warrior
-   Cleave arc instead of removing it.
+3. Fix terrain props shrinking when approached. The misaligned warrior Cleave
+   arc is already fixed on `main` (`5b63f7b`) and keeps its centroid test.
 4. Remove ground attack tells for normal enemies; keep elite/boss tells.
 
 ## Findings
@@ -27,13 +27,10 @@ ships as save **v8**.
   boss (`src/systems/objectives.ts:15-29`).
 - **Current save:** v7 stores exactly 3 camp flags per zone. The 16-camp moor
   needs a v8 migration.
-- **Warrior arc:** `src/render/skillVfx.ts:104-108` builds a ring whose center
-  is at `-Z`, then rotates by `-facing`. At facing 0 the crescent points behind
-  the warrior; at +90 it happens to look correct, so it is mirrored. A Node
-  probe confirms the centroid is at `180°` for facing 0 instead of `0°`.
-  **Two-line fix:** `thetaStart = -Math.PI/2 - arc/2` and
-  `rotation.z = facing`. Add a visual/centroid test. This is easy; keep the
-  indicator.
+- **Warrior arc:** fixed in `5b63f7b`. The old ring was centered at `-Z` and
+  rotated by `-facing`, so facing 0 pointed the crescent behind the warrior.
+  The fix is `thetaStart = -Math.PI/2 - arc/2` and `rotation.z = facing`, with
+  a centroid test over 0/45/90/180/negative facings and the 40° dash arc.
 - **Indicators:** every enemy emits a ground telegraph. The player has a hover
   ring, destination ring, ground-strike runes and the warrior Cleave arc. Elite
   aura rings, health bars, boss toasts and hazards are separate.
@@ -149,12 +146,11 @@ ships as save **v8**.
   fairness tests still see it.
 - **Normal-enemy windup cue:** ramp the existing emissive/flash material during
   `phase === 'windup'`; there is no audio system to carry the tell.
-- **Warrior Cleave arc:** keep it and fix the mirror with the two-line
-  `thetaStart`/`rotation.z` change above. Add a centroid/visual regression test.
-  The arc is the player’s attack indicator the user reported as misaligned.
-- **Other player indicators:** hover/destination rings and ground-strike aim
-  runes are not removed by this change; only the buggy Cleave arc is fixed. If
-  the intent was to remove those as well, that is a separate sign-off.
+- **Warrior Cleave arc:** already fixed and tested (`5b63f7b`); no remaining
+  work for this update.
+- **Other player indicators:** the only player indicator in scope was the
+  Cleave arc, and it is fixed. Hover/destination rings and ground-strike aim
+  runes are unchanged; removing those would be a separate sign-off.
 - Keep elite aura rings, health bars, boss phase toasts and hazards. Decide
   whether boss adds show normal tells during the live fight (recommended: yes).
 - QA: a normal camp produces 0 visible ground tells; an elite camp ≥1; the
@@ -167,7 +163,7 @@ ships as save **v8**.
 1. Prop occlusion fix + close-range scale QA.
 2. Linear bog, 16 optional camps, end Warden, portal, last-zone victory,
    save v8, terrain/props.
-3. Indicator tiering + Cleave arc fix.
+3. Indicator tiering (Cleave arc already fixed).
 4. Full QA, performance rebaseline, release notes/rollback (v8 one-way).
 
 ## Decisions for the human
