@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
+import { distanceToCorridor } from '../content/corridor';
+import { MOOR_CORRIDOR } from '../content/zone';
 import { createTerrain } from './terrain';
 import { TerrainSurface } from './terrainSurface';
 
@@ -98,5 +100,43 @@ describe('TerrainSurface', () => {
     mesh.geometry.dispose();
     (mesh.material as THREE.Material).dispose();
     geometry.dispose();
+  });
+
+  it('holds the bog corridor flat and starts hills outside the band', () => {
+    const { mesh, surface } = createTerrain('ashen-moor');
+    const corridor = MOOR_CORRIDOR;
+
+    // The centerline stays effectively flat, and the bog undulation inside
+    // the band stays gentle enough for camps and the portal to sit on it.
+    for (const point of corridor.points) {
+      expect(Math.abs(surface.heightAt(point.x, point.z))).toBeLessThan(0.02);
+    }
+    for (const t of [0.15, 0.5, 0.85]) {
+      const point = corridor.points[0];
+      const next = corridor.points[1];
+      const x = point.x + (next.x - point.x) * t;
+      const z = point.z + (next.z - point.z) * t;
+      const dx = next.x - point.x;
+      const dz = next.z - point.z;
+      const length = Math.hypot(dx, dz);
+      const nx = dz / length;
+      const nz = -dx / length;
+      for (const offset of [10, 20, 26]) {
+        expect(Math.abs(surface.heightAt(x + nx * offset, z + nz * offset))).toBeLessThan(0.35);
+      }
+    }
+
+    // Hills only exist well outside the corridor; find a clear high sample.
+    let maxOutside = -Infinity;
+    for (let x = -110; x <= 110; x += 10) {
+      for (let z = -110; z <= 110; z += 10) {
+        if (distanceToCorridor(corridor, x, z) <= corridor.radius + 28) continue;
+        maxOutside = Math.max(maxOutside, surface.heightAt(x, z));
+      }
+    }
+    expect(maxOutside).toBeGreaterThan(2);
+
+    mesh.geometry.dispose();
+    (mesh.material as THREE.Material).dispose();
   });
 });

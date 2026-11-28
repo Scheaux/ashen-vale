@@ -1,4 +1,5 @@
 import { getClass } from '../content/classes';
+import { clampToCorridor } from '../content/corridor';
 import type { ZoneLayout } from '../content/types';
 import { getZoneDef } from '../content/zones';
 import { createEnemyState, createGameState, type GameState } from '../sim/state';
@@ -56,7 +57,11 @@ export function restoreGameState(save: SaveGame, layout: ZoneLayout): GameState 
   p.attackTargetId = null;
   p.moveTarget = null;
   p.velocity = { x: 0, z: 0 };
-  p.position = clampToBounds(save.position.x, save.position.z, state.bounds.center, state.bounds.radius - 2);
+  // Corridor saves keep their spot inside the walkable band, including the
+  // rounded caps; only legacy fixtures use the broad circle bounds.
+  p.position = state.corridor
+    ? clampToCorridor(state.corridor, save.position.x, save.position.z, p.radius)
+    : clampToBounds(save.position.x, save.position.z, state.bounds.center, state.bounds.radius - 2);
   p.previousPosition = { ...p.position };
   const dx = state.bounds.center.x - p.position.x;
   const dz = state.bounds.center.z - p.position.z;

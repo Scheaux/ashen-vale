@@ -47,7 +47,8 @@ export function activeBounds(state: GameState): ZoneBounds {
 /**
  * Checkpoint/Continue respawn point: a live boss fight restarts the hero just
  * inside the arena threshold on the zone-spawn side; otherwise the normal zone
- * spawn is used. The result is clamped to the walkable zone bounds.
+ * spawn is used. The result is clamped to the walkable corridor when one
+ * exists (legacy fixtures keep the circle bounds).
  */
 export function respawnPointFor(state: GameState, layout: ZoneLayout): Vec2 {
   const o = state.objectives;
@@ -62,8 +63,12 @@ export function respawnPointFor(state: GameState, layout: ZoneLayout): Vec2 {
   const dist = Math.hypot(dx, dz);
   const nx = dist > 1e-6 ? dx / dist : 0;
   const nz = dist > 1e-6 ? dz / dist : 1;
-  let x = center.x + nx * (radius - inset);
-  let z = center.z + nz * (radius - inset);
+  const x = center.x + nx * (radius - inset);
+  const z = center.z + nz * (radius - inset);
+
+  if (state.corridor) {
+    return clampToCorridor(state.corridor, x, z, state.player.radius);
+  }
 
   // The arena is inside the zone in normal layouts; keep the threshold legal
   // even when a fixture places it close to the outer walkable boundary.
@@ -73,8 +78,10 @@ export function respawnPointFor(state: GameState, layout: ZoneLayout): Vec2 {
   const limit = Math.max(0, layout.bounds.radius - state.player.radius);
   if (boundDist > limit && boundDist > 0) {
     const scale = limit / boundDist;
-    x = layout.bounds.center.x + bx * scale;
-    z = layout.bounds.center.z + bz * scale;
+    return {
+      x: layout.bounds.center.x + bx * scale,
+      z: layout.bounds.center.z + bz * scale,
+    };
   }
   return { x, z };
 }

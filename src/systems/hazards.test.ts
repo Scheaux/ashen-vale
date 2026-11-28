@@ -102,11 +102,11 @@ describe('ground hazards', () => {
 
   it('leaves a cinder pool after the Warden slams', () => {
     const state = createGameState(getClass('marauder'), layout());
-    // Boss at arm's length, already in phase 2 (slam pattern).
-    const boss = createEnemyState({ enemyId: 'ashen-warden', x: 0, z: 16, elite: [], camp: -1 }, 'boss-test');
+    // Boss at home in its arena, already in phase 2 (slam pattern).
+    const boss = createEnemyState({ enemyId: 'ashen-warden', x: 0, z: -30, elite: [], camp: -1 }, 'boss-test');
     boss.bossPhase = 1;
     state.enemies.push(boss);
-    state.player.position = { x: 0, z: 18 };
+    state.player.position = { x: 0, z: -27 };
     state.player.hp = state.player.maxHp;
     const events: SimEvent[] = [];
     for (let i = 0; i < 240 && state.hazards.length === 0; i++) {

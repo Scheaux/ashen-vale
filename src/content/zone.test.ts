@@ -3,7 +3,12 @@ import { CLASSES, getClass } from './classes';
 import { projectToCorridor } from './corridor';
 import { createGameState } from '../sim/state';
 import { activeCampsForZone } from './zones';
-import { generateZoneLayout, MOOR_ARENA, MOOR_CORRIDOR, MOOR_PORTAL } from './zone';
+import {
+  generateZoneLayout,
+  MOOR_ARENA,
+  MOOR_PORTAL,
+  placeMoorCamps,
+} from './zone';
 
 describe('class definitions', () => {
   it('defines three unique playable classes', () => {
@@ -23,39 +28,10 @@ describe('class definitions', () => {
   });
 });
 
-interface CampSummary {
-  index: number;
-  x: number;
-  z: number;
-  count: number;
-  offset: number;
-  side: number;
-}
-
-/** Recover each camp's centre/side from its members for layout assertions. */
-function campSummaries(enemySpawns: ReturnType<typeof generateZoneLayout>['enemySpawns']): CampSummary[] {
-  const summaries: CampSummary[] = [];
-  for (let index = 0; index < 16; index++) {
-    const members = enemySpawns.filter((spawn) => spawn.camp === index);
-    expect(members.length).toBeGreaterThanOrEqual(3);
-    expect(members.length).toBeLessThanOrEqual(5);
-    const x = members.reduce((sum, spawn) => sum + spawn.x, 0) / members.length;
-    const z = members.reduce((sum, spawn) => sum + spawn.z, 0) / members.length;
-    const projection = projectToCorridor(MOOR_CORRIDOR, x, z);
-    const sample = MOOR_CORRIDOR.points[projection.segment];
-    const next = MOOR_CORRIDOR.points[projection.segment + 1];
-    const cross = (x - projection.x) * (next.z - sample.z) -
-      (z - projection.z) * (next.x - sample.x);
-    summaries.push({
-      index,
-      x,
-      z,
-      count: members.length,
-      offset: projection.distance,
-      side: Math.sign(cross),
-    });
-  }
-  return summaries;
+/** Member count per authored camp index. */
+function campEnemyCounts(layout: ReturnType<typeof generateZoneLayout>): number[] {
+  return Array.from({ length: 16 }, (_, index) =>
+    layout.enemySpawns.filter((spawn) => spawn.camp === index).length);
 }
 
 describe('generateZoneLayout', () => {
@@ -83,34 +59,66 @@ describe('generateZoneLayout', () => {
     expect(layout.portal).toEqual(MOOR_PORTAL);
     expect(layout.portal).toEqual({ x: 0, z: -80 });
     expect(layout.bossSpawn).toMatchObject({ enemyId: 'ashen-warden', x: 0, z: -72, camp: -1 });
-    expect(layout.bounds.radius).toBe(90);
+    expect(layout.bounds.radius).toBe(106);
+
+    // The broad circle must contain the full rounded corridor, not just the
+    // polyline, so AI/restore bounds agree with the walkable caps.
+    const corridorReach = layout.corridor!.points.reduce(
+      (max, point) => Math.max(max, Math.hypot(point.x, point.z) + layout.corridor!.radius),
+      0,
+    );
+    expect(corridorReach).toBeLessThanOrEqual(layout.bounds.radius);
+    expect(Math.hypot(layout.arena.center.x, layout.arena.center.z) + layout.arena.radius)
+      .toBeLessThanOrEqual(layout.bounds.radius);
+    expect(Math.hypot(layout.portal!.x, layout.portal!.z)).toBeLessThanOrEqual(layout.bounds.radius);
   });
 
   it('places exactly 16 indexed camps on alternating sides of the route', () => {
     const layout = generateZoneLayout();
-    const camps = campSummaries(layout.enemySpawns);
+    const camps = placeMoorCamps();
     expect(camps.map((camp) => camp.index)).toEqual(Array.from({ length: 16 }, (_, i) => i));
-    expect(camps.reduce((sum, camp) => sum + camp.count, 0)).toBe(layout.enemySpawns.length);
 
+    const counts = campEnemyCounts(layout);
+    expect(counts.reduce((sum, count) => sum + count, 0)).toBe(layout.enemySpawns.length);
     for (let i = 0; i < camps.length; i++) {
       const camp = camps[i];
-      // Members cluster around the seeded camp centre, so the recovered
-      // offset is slightly inside the authored 10-14 band.
-      expect(camp.offset).toBeGreaterThan(8);
-      expect(camp.offset).toBeLessThan(16);
+      expect(counts[i]).toBeGreaterThanOrEqual(3);
+      expect(counts[i]).toBeLessThanOrEqual(5);
+      // Authored anchors, not member centroids, own the side/offset contract.
+      expect(camp.offset).toBeGreaterThanOrEqual(10);
+      expect(camp.offset).toBeLessThanOrEqual(14);
       expect(camp.side).toBe(i % 2 === 0 ? 1 : -1);
+      expect(camp.radius).toBe(6);
+      expect(projectToCorridor(layout.corridor!, camp.x, camp.z).distance + camp.radius)
+        .toBeLessThanOrEqual(layout.corridor!.radius);
+      expect(Math.hypot(camp.x - layout.arena.center.x, camp.z - layout.arena.center.z))
+        .toBeGreaterThanOrEqual(camp.radius + layout.arena.radius + 0.5);
     }
 
-    // Camp discs never overlap, and every spawn is inside the corridor.
+    // Authored camp discs never overlap, and every spawn is inside the corridor.
     for (let i = 0; i < camps.length; i++) {
       for (let j = i + 1; j < camps.length; j++) {
         const distance = Math.hypot(camps[i].x - camps[j].x, camps[i].z - camps[j].z);
-        expect(distance).toBeGreaterThan(12);
+        expect(distance).toBeGreaterThanOrEqual(camps[i].radius + camps[j].radius + 0.5);
       }
     }
     for (const spawn of layout.enemySpawns) {
       expect(projectToCorridor(layout.corridor!, spawn.x, spawn.z).distance)
         .toBeLessThanOrEqual(layout.corridor!.radius - 1);
+    }
+  });
+
+  it('keeps authored camp discs separated across seeds', () => {
+    for (const seed of [1, 123, 456, 20261122, 0xffffffff]) {
+      const camps = placeMoorCamps(seed);
+      for (let i = 0; i < camps.length; i++) {
+        expect(camps[i].offset).toBeGreaterThanOrEqual(10);
+        expect(camps[i].offset).toBeLessThanOrEqual(14);
+        for (let j = i + 1; j < camps.length; j++) {
+          const distance = Math.hypot(camps[i].x - camps[j].x, camps[i].z - camps[j].z);
+          expect(distance).toBeGreaterThanOrEqual(camps[i].radius + camps[j].radius + 0.5);
+        }
+      }
     }
   });
 
@@ -140,7 +148,7 @@ describe('generateZoneLayout', () => {
       new Set(['rock', 'deadTree', 'pillar', 'pillarBroken']),
     );
 
-    const camps = campSummaries(layout.enemySpawns);
+    const camps = placeMoorCamps();
     for (const prop of layout.props) {
       const corridorDistance = projectToCorridor(layout.corridor!, prop.x, prop.z).distance;
       expect(corridorDistance).toBeLessThanOrEqual(layout.corridor!.radius - 1);
@@ -177,7 +185,7 @@ describe('generateZoneLayout', () => {
         const a = layout.colliders[i];
         const b = layout.colliders[j];
         const dist = Math.hypot(a.x - b.x, a.z - b.z);
-        expect(dist).toBeGreaterThan(Math.max(a.radius, b.radius));
+        expect(dist).toBeGreaterThan(a.radius + b.radius);
       }
     }
   });

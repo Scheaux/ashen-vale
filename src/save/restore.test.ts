@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
+import { distanceToCorridor } from '../content/corridor';
 import type { ZoneLayout } from '../content/types';
+import { generateZoneLayout } from '../content/zone';
 import { createGameState, FLASK_MAX_CHARGES } from '../sim/state';
 import { rollItem } from '../sim/items';
 import { createRng } from '../core/rng';
@@ -25,6 +27,27 @@ function campLayout(seed = 7): ZoneLayout {
       { enemyId: 'mire-skitterer', x: -6, z: 2, elite: [], camp: 1 },
       { enemyId: 'ashen-husk', x: 0, z: -8, elite: [], camp: 2 },
     ],
+  };
+}
+
+/**
+ * Straight corridor with rounded caps to z = +/-42. The broad bounds circle
+ * is deliberately smaller than the cap so the old restore would snap a cap
+ * save toward the centre.
+ */
+function corridorLayout(seed = 7): ZoneLayout {
+  return {
+    ...campLayout(seed),
+    bounds: { center: { x: 0, z: 0 }, radius: 35 },
+    spawn: { x: 0, z: 28 },
+    corridor: {
+      points: [
+        { x: 0, z: 30 },
+        { x: 0, z: -30 },
+      ],
+      radius: 12,
+    },
+    portal: { x: 0, z: -40 },
   };
 }
 
@@ -126,6 +149,64 @@ describe('restoreGameState', () => {
     expect(zoneDistance).toBeLessThanOrEqual(layout.bounds.radius - restored.player.radius);
   });
 
+  it('keeps the live-boss respawn threshold inside the corridor', () => {
+    const layout = corridorLayout();
+    const state = createGameState(getClass('witch'), layout);
+    state.objectives.bossSpawned = true;
+    const expected = respawnPointFor(state, layout);
+    const save = createSave(state);
+
+    const restored = restoreGameState(save, layout);
+    expect(restored.player.position).toEqual(expected);
+    expect(distanceToCorridor(
+      layout.corridor!,
+      restored.player.position.x,
+      restored.player.position.z,
+    )).toBeLessThanOrEqual(layout.corridor!.radius - restored.player.radius + 1e-6);
+    const arenaDistance = Math.hypot(
+      restored.player.position.x - layout.arena.center.x,
+      restored.player.position.z - layout.arena.center.z,
+    );
+    expect(arenaDistance).toBeLessThan(layout.arena.radius);
+    expect(arenaDistance).toBeGreaterThan(layout.arena.radius - 2);
+  });
+
+  it('restores a corridor-cap save in place instead of snapping to the broad circle', () => {
+    const layout = corridorLayout();
+    const state = createGameState(getClass('marauder'), layout);
+    state.player.position = { x: 0, z: -40 }; // inside the end cap, outside the radius-35 circle
+    const save = createSave(state);
+
+    const restored = restoreGameState(save, layout);
+    expect(restored.player.position.x).toBeCloseTo(0, 6);
+    expect(restored.player.position.z).toBeCloseTo(-40, 6);
+    // The old broad-circle restore would have moved this to z = -33.
+    expect(Math.abs(restored.player.position.z - -33)).toBeGreaterThan(5);
+    expect(distanceToCorridor(
+      layout.corridor!,
+      restored.player.position.x,
+      restored.player.position.z,
+    )).toBeLessThanOrEqual(layout.corridor!.radius - restored.player.radius + 1e-6);
+  });
+
+  it('clamps an out-of-band save to the corridor edge', () => {
+    const layout = corridorLayout();
+    const state = createGameState(getClass('marauder'), layout);
+    state.player.position = { x: 40, z: 0 };
+    const save = createSave(state);
+
+    const restored = restoreGameState(save, layout);
+    const limit = layout.corridor!.radius - restored.player.radius;
+    expect(restored.player.position.x).toBeCloseTo(limit, 6);
+    expect(restored.player.position.z).toBeCloseTo(0, 6);
+    expect(distanceToCorridor(
+      layout.corridor!,
+      restored.player.position.x,
+      restored.player.position.z,
+    )).toBeLessThanOrEqual(limit + 1e-9);
+  });
+
+
   it('does not respawn a defeated boss', () => {
     const layout = campLayout();
     const state = createGameState(getClass('witch'), layout);
@@ -154,6 +235,26 @@ describe('restoreGameState', () => {
     );
     expect(dist).toBeLessThanOrEqual(layout.bounds.radius - 2 + 1e-9);
     expect(restored.player.hp).toBe(restored.player.maxHp);
+  });
+
+  it('restores corridor-cap and portal saves without a broad-bounds clamp', () => {
+    const layout = generateZoneLayout();
+    const state = createGameState(getClass('marauder'), layout);
+
+    // The spawn cap reaches z≈103 and the portal sits at z=-80; both must fit
+    // inside bounds - player radius (104) or Continue would visibly snap them.
+    for (const position of [{ x: 0, z: 101.5 }, { x: 0, z: -79.5 }]) {
+      state.player.position = { ...position };
+      state.player.previousPosition = { ...position };
+      const save = createSave(state);
+      const restored = restoreGameState(save, layout);
+      expect(restored.player.position.x).toBeCloseTo(position.x, 6);
+      expect(restored.player.position.z).toBeCloseTo(position.z, 6);
+    }
+
+    expect(Math.hypot(layout.arena.center.x, layout.arena.center.z) + layout.arena.radius)
+      .toBeLessThanOrEqual(layout.bounds.radius);
+    expect(Math.hypot(layout.portal!.x, layout.portal!.z)).toBeLessThanOrEqual(layout.bounds.radius);
   });
 
   it('refuses saves from a different zone seed', () => {

@@ -1,5 +1,7 @@
 import { angleDiff, angleLerp, segmentDistanceSq } from '../core/math';
+import { clampCircleToCorridor, clampToCorridor, isInsideCorridor } from '../content/corridor';
 import { getEnemy, type AttackDef, type BossPhaseDef, type EnemyDef } from '../content/enemies';
+import type { ZoneCorridor } from '../content/types';
 import { createEnemyState, type EnemyState, type GameState, type SimEvent } from '../sim/state';
 import { spawnHazard } from '../sim/hazards';
 import { damagePlayer, rollDamage, spawnEnemyBolt } from './combat';
@@ -21,10 +23,19 @@ import { activeBounds, clampCircleToBounds, resolveCircleCollisions } from './mo
  * Perception -> intent -> motion are separate steps per tick: the intent is
  * chosen first, then movement executes it; a decision is never rewritten
  * mid-action. Collision results come from the authoritative collision pass.
+ *
+ * The end-zone boss adds one outer rule: it is leashed to its arena. It chases
+ * while the hero is inside the encounter ring, never steps past the ring, and
+ * walks back to the arena (keeping its current HP and phase) once the hero
+ * retreats beyond it. Camp enemies are only corridor-clamped, never leashed.
  */
 
 const AURA_RADIUS = 9;
 const AURA_SPEED_MULT = 1.2;
+/** The boss encounter leash extends this far past the arena ring. */
+export const BOSS_LEASH_MARGIN = 10;
+/** Close enough to the arena centre to end a leash return. */
+const BOSS_HOME_EPSILON = 0.4;
 
 /** Speed multiplier from living Swift elites' auras. */
 function swiftAura(state: GameState, self: EnemyState): number {
@@ -59,6 +70,27 @@ function phaseSpeedMult(def: EnemyDef, enemy: EnemyState): number {
   return currentBossPhase(def, enemy)?.speedMult ?? 1;
 }
 
+/** Warden encounter ring: the arena radius plus a modest return margin. */
+export function bossLeashRadius(state: GameState): number {
+  return state.arena.radius + BOSS_LEASH_MARGIN;
+}
+
+function distanceToArena(state: GameState, enemy: EnemyState): number {
+  return Math.hypot(enemy.position.x - state.arena.center.x, enemy.position.z - state.arena.center.z);
+}
+
+/** A boss that has been carried outside its ring (e.g. by a committed pounce). */
+function bossOutsideLeash(state: GameState, enemy: EnemyState): boolean {
+  return distanceToArena(state, enemy) > bossLeashRadius(state);
+}
+
+/** The hero has retreated out of the encounter: the boss must not follow. */
+function heroOutsideBossLeash(state: GameState): boolean {
+  const p = state.player;
+  return Math.hypot(p.position.x - state.arena.center.x, p.position.z - state.arena.center.z)
+    > bossLeashRadius(state);
+}
+
 /** Summon a boss phase's minion adds around the boss, already in the fight. */
 function spawnBossAdds(state: GameState, enemy: EnemyState, phase: BossPhaseDef): void {
   for (let i = 0; i < phase.adds.length; i++) {
@@ -89,17 +121,61 @@ function advanceBossPhase(state: GameState, enemy: EnemyState, def: EnemyDef, ev
   }
 }
 
+/**
+ * Furthest distance a straight pounce can travel before its lane leaves the
+ * walkable band. Marched then bisected so the advertised tell and the actual
+ * landing agree; the lunge can never be clamped to an unrelated point.
+ */
+function clipReachToCorridor(
+  corridor: ZoneCorridor,
+  x: number,
+  z: number,
+  vx: number,
+  vz: number,
+  reach: number,
+  margin: number,
+): number {
+  if (reach <= 0) return 0;
+  if (isInsideCorridor(corridor, x + vx * reach, z + vz * reach, margin)) return reach;
+
+  const step = 0.25;
+  let inside = 0;
+  let outside = reach;
+  for (let d = step; d < reach; d += step) {
+    if (!isInsideCorridor(corridor, x + vx * d, z + vz * d, margin)) {
+      outside = d;
+      break;
+    }
+    inside = d;
+  }
+  for (let i = 0; i < 12; i++) {
+    const mid = (inside + outside) / 2;
+    if (isInsideCorridor(corridor, x + vx * mid, z + vz * mid, margin)) inside = mid;
+    else outside = mid;
+  }
+  return inside;
+}
+
 /** Clip the advertised straight pounce lane to the first solid or fight edge. */
 function pounceDistance(state: GameState, enemy: EnemyState, range: number): number {
   const vx = Math.sin(enemy.windupFacing);
   const vz = Math.cos(enemy.windupFacing);
   const { x, z } = enemy.position;
-  const bounds = activeBounds(state);
-  const dx = x - bounds.center.x;
-  const dz = z - bounds.center.z;
-  const dot = dx * vx + dz * vz;
-  const boundary = bounds.radius - enemy.radius;
-  let reach = Math.min(range, Math.max(0, -dot + Math.sqrt(Math.max(0, dot * dot + boundary ** 2 - dx * dx - dz * dz))));
+  let reach = range;
+
+  if (state.corridor) {
+    // In the linear bog the corridor is the walkable edge; the broad bounds
+    // circle can cut off the rounded caps and is not the fight boundary.
+    reach = clipReachToCorridor(state.corridor, x, z, vx, vz, reach, enemy.radius);
+  } else {
+    const bounds = activeBounds(state);
+    const dx = x - bounds.center.x;
+    const dz = z - bounds.center.z;
+    const dot = dx * vx + dz * vz;
+    const boundary = bounds.radius - enemy.radius;
+    reach = Math.min(range, Math.max(0, -dot + Math.sqrt(Math.max(0, dot * dot + boundary ** 2 - dx * dx - dz * dz))));
+  }
+
   for (const collider of state.colliders) {
     const cx = collider.x - x;
     const cz = collider.z - z;
@@ -197,16 +273,27 @@ function resolveStrike(state: GameState, enemy: EnemyState, def: EnemyDef, event
 
 function stepChase(state: GameState, enemy: EnemyState, def: EnemyDef, dt: number): void {
   const p = state.player;
-  const dx = p.position.x - enemy.position.x;
-  const dz = p.position.z - enemy.position.z;
-  const dist = Math.hypot(dx, dz);
   const attack = activeAttack(enemy, def);
   const chillMult = enemy.chillTime > 0 ? 0.65 : 1;
   const speed = enemy.speed * swiftAura(state, enemy) * phaseSpeedMult(def, enemy) * chillMult;
 
+  // The Warden walks home instead of following the hero out of the encounter.
+  // Windup/active never reach this function, so committed attacks always land.
+  const returning = Boolean(def.boss) && (heroOutsideBossLeash(state) || bossOutsideLeash(state, enemy));
+  const targetX = returning ? state.arena.center.x : p.position.x;
+  const targetZ = returning ? state.arena.center.z : p.position.z;
+  const dx = targetX - enemy.position.x;
+  const dz = targetZ - enemy.position.z;
+  const dist = Math.hypot(dx, dz);
+
   let moveX = 0;
   let moveZ = 0;
-  if (def.behavior === 'kiter') {
+  if (returning) {
+    if (dist > 0.001) {
+      moveX = dx / dist;
+      moveZ = dz / dist;
+    }
+  } else if (def.behavior === 'kiter') {
     // Hold a distance band: approach when far, back off when crowded.
     const band = def.preferredRange ?? 10;
     if (dist > band + 2.5) {
@@ -228,10 +315,35 @@ function stepChase(state: GameState, enemy: EnemyState, def: EnemyDef, dt: numbe
   enemy.position.x += enemy.velocity.x * dt;
   enemy.position.z += enemy.velocity.z * dt;
   resolveCircleCollisions(enemy.position, enemy.velocity, enemy.radius, state.colliders);
-  clampCircleToBounds(enemy.position, enemy.velocity, enemy.radius, activeBounds(state));
+  if (state.corridor) {
+    clampCircleToCorridor(enemy.position, enemy.velocity, enemy.radius, state.corridor);
+  } else {
+    clampCircleToBounds(enemy.position, enemy.velocity, enemy.radius, activeBounds(state));
+  }
 
-  // Face the player while closing (chase only; windup locks facing).
-  enemy.facing = angleLerp(enemy.facing, Math.atan2(dx, dz), Math.min(1, 8 * dt));
+  if (def.boss && !returning) {
+    // Normal boss pacing stays inside the ring; the margin already accounts
+    // for its body, so clamp the centre rather than a second body radius.
+    clampCircleToBounds(enemy.position, enemy.velocity, 0, {
+      center: state.arena.center,
+      radius: bossLeashRadius(state),
+    });
+  }
+
+  // Only a boss that had to leave the ring (or chased a hero out of it) resets
+  // at home; it keeps its HP, phase and cooldowns besides the normal reset.
+  if (returning && Math.hypot(
+    enemy.position.x - state.arena.center.x,
+    enemy.position.z - state.arena.center.z,
+  ) <= BOSS_HOME_EPSILON) {
+    resetEnemyCombat(enemy);
+    return;
+  }
+
+  // Face the objective: the hero while fighting, the arena while walking home.
+  const faceX = returning ? state.arena.center.x - enemy.position.x : p.position.x - enemy.position.x;
+  const faceZ = returning ? state.arena.center.z - enemy.position.z : p.position.z - enemy.position.z;
+  enemy.facing = angleLerp(enemy.facing, Math.atan2(faceX, faceZ), Math.min(1, 8 * dt));
 }
 
 export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): void {
@@ -260,12 +372,21 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
     const dx = p.position.x - enemy.position.x;
     const dz = p.position.z - enemy.position.z;
     const dist = Math.hypot(dx, dz);
+    // A boss only starts new aggression while the hero is inside its ring, and
+    // it returns home if its own position was carried outside the ring.
+    const bossReturning = Boolean(def.boss) && (heroOutsideBossLeash(state) || bossOutsideLeash(state, enemy));
 
     switch (enemy.phase) {
       case 'idle': {
         enemy.velocity.x = 0;
         enemy.velocity.z = 0;
-        if (dist <= def.aggroRange) {
+        if (def.boss && bossOutsideLeash(state, enemy)) {
+          // Recover an out-of-ring boss even if the hero is nowhere near.
+          enemy.aggro = true;
+          enterPhase(enemy, 'chase');
+          break;
+        }
+        if (dist <= def.aggroRange && (!def.boss || !heroOutsideBossLeash(state))) {
           enemy.aggro = true;
           enterPhase(enemy, 'chase');
         }
@@ -273,11 +394,15 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
       }
 
       case 'chase': {
-        if (canStartAttack(enemy, def, attack, dist)) {
+        if (!bossReturning && canStartAttack(enemy, def, attack, dist)) {
           // The player can read and leave the locked danger area.
           enemy.windupFacing = Math.atan2(dx, dz);
           enemy.attackId = `${enemy.id}:${state.tick}`;
-          if (attack.shape === 'slam') enemy.strikeTarget = { x: p.position.x, z: p.position.z };
+          if (attack.shape === 'slam') {
+            enemy.strikeTarget = state.corridor
+              ? clampToCorridor(state.corridor, p.position.x, p.position.z, enemy.radius)
+              : { x: p.position.x, z: p.position.z };
+          }
           enemy.lungeRemaining = attack.shape === 'pounce' ? pounceDistance(state, enemy, attack.range) : 0;
           enemy.lungeHit = false;
           enemy.velocity.x = 0;
@@ -335,6 +460,14 @@ export function stepEnemies(state: GameState, dt: number, events: SimEvent[]): v
           enemy.velocity.z = Math.cos(enemy.windupFacing) * distance / dt;
           enemy.position.x += enemy.velocity.x * dt;
           enemy.position.z += enemy.velocity.z * dt;
+          if (state.corridor
+            && clampCircleToCorridor(enemy.position, enemy.velocity, enemy.radius, state.corridor)) {
+            // The lane left the band mid-dash (a bend could defeat the launch
+            // clip); stop at the rim instead of skimming along it.
+            enemy.lungeRemaining = 0;
+            enemy.velocity.x = 0;
+            enemy.velocity.z = 0;
+          }
           if (!enemy.lungeHit && segmentDistanceSq(p.position.x, p.position.z, x, z, enemy.position.x, enemy.position.z)
             <= (p.radius + enemy.radius) ** 2) {
             enemy.lungeHit = true;

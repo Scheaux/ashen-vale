@@ -3,7 +3,6 @@ import {
   corridorSample,
   corridorSegmentLength,
   distanceToCorridor,
-  type CorridorSample,
 } from './corridor';
 import type {
   CircleCollider,
@@ -39,10 +38,16 @@ export const MOOR_CORRIDOR: ZoneCorridor = {
 
 export const MOOR_ARENA = { center: { x: 0, z: -72 }, radius: 8 };
 export const MOOR_PORTAL: Vec2 = { x: 0, z: -80 };
+export const MOOR_SPAWN: Vec2 = { x: 0, z: 74 };
 
 const PROP_MIN_SEPARATION = 0.8;
 const CLEAR_RADIUS_AROUND_SPAWN = 10;
 const CAMP_RADIUS = 6;
+/** Authored anchor gap beyond the two camp discs (discs are radius 6 each). */
+const CAMP_MIN_GAP = 0.75;
+const CAMP_MIN_SEPARATION = CAMP_RADIUS * 2 + CAMP_MIN_GAP;
+/** Keep the final camp disc off the Warden's end clearing. */
+const CAMP_ARENA_GAP = 0.75;
 /** The last leg is half the length of the first two, so it holds five camps. */
 const CAMP_SEGMENT_COUNTS: readonly number[] = [6, 5, 5];
 const PROP_TARGET = 150;
@@ -62,12 +67,21 @@ const ARCHETYPE_WEIGHTS: Array<{ id: EnemyId; weight: number }> = [
 
 const ELITE_POOL: EliteModifier[] = ['vital', 'savage', 'swift', 'volatile'];
 
-interface CampDef extends Vec2 {
+/** Authored camp anchor used by population and layout tests. */
+export interface MoorCamp extends Vec2 {
   index: number;
   radius: number;
   segment: number;
   side: number;
+  /** Authored distance from the corridor centerline, 10-14 units. */
   offset: number;
+}
+
+interface CampCandidate extends Vec2 {
+  t: number;
+  offset: number;
+  score: number;
+  minDistance: number;
 }
 
 function pickKind(rng: Rng): PropKind {
@@ -95,11 +109,77 @@ function pickArchetype(rng: Rng): EnemyId {
 }
 
 /**
+ * Pick the authored anchor closest to the seeded target while keeping every
+ * accepted camp disc apart. Searches a small local window of t and offset so
+ * cross-segment camps cannot overlap at a bend; side alternation is fixed.
+ */
+function chooseCampAnchor(
+  corridor: ZoneCorridor,
+  accepted: readonly MoorCamp[],
+  segment: number,
+  targetT: number,
+  targetOffset: number,
+  side: number,
+): CampCandidate {
+  const offsetSteps: number[] = [];
+  for (let offset = 10; offset <= 14 + 1e-9; offset += 0.25) offsetSteps.push(offset);
+  if (!offsetSteps.some((offset) => Math.abs(offset - targetOffset) < 1e-9)) {
+    offsetSteps.push(Math.max(10, Math.min(14, targetOffset)));
+  }
+
+  let best: CampCandidate | null = null;
+  let fallback: CampCandidate | null = null;
+  for (let deltaIndex = -16; deltaIndex <= 16; deltaIndex++) {
+    const t = targetT + deltaIndex * 0.005;
+    if (t < 0 || t > 1) continue;
+    const sample = corridorSample(corridor, segment, t);
+    for (const offset of offsetSteps) {
+      const x = sample.x + sample.normalX * offset * side;
+      const z = sample.z + sample.normalZ * offset * side;
+      if (Math.hypot(x - MOOR_ARENA.center.x, z - MOOR_ARENA.center.z) <
+        CAMP_RADIUS + MOOR_ARENA.radius + CAMP_ARENA_GAP - 1e-6) {
+        continue;
+      }
+      if (Math.hypot(x - MOOR_SPAWN.x, z - MOOR_SPAWN.z) <
+        CAMP_RADIUS + CLEAR_RADIUS_AROUND_SPAWN + 5) {
+        continue;
+      }
+      let minDistance = Infinity;
+      for (const other of accepted) {
+        minDistance = Math.min(minDistance, Math.hypot(x - other.x, z - other.z));
+      }
+      const candidate: CampCandidate = {
+        x,
+        z,
+        t,
+        offset,
+        minDistance,
+        score: Math.abs(t - targetT) * 3 + Math.abs(offset - targetOffset) * 0.05,
+      };
+      if (candidate.minDistance >= CAMP_MIN_SEPARATION &&
+        (!best || candidate.score < best.score)) {
+        best = candidate;
+      }
+      if (!fallback || candidate.minDistance > fallback.minDistance) fallback = candidate;
+    }
+  }
+
+  return best ?? fallback ?? {
+    x: corridorSample(corridor, segment, targetT).x,
+    z: corridorSample(corridor, segment, targetT).z,
+    t: targetT,
+    offset: targetOffset,
+    minDistance: 0,
+    score: Infinity,
+  };
+}
+
+/**
  * Place 16 camp centres on alternating sides of the corridor. Camps use their
  * own seeded stream, so changing camp content never reshuffles scenery.
  */
-function placeCamps(corridor: ZoneCorridor, rng: Rng): CampDef[] {
-  const camps: CampDef[] = [];
+function placeCamps(corridor: ZoneCorridor, rng: Rng): MoorCamp[] {
+  const camps: MoorCamp[] = [];
   const lengths = corridor.points.slice(0, -1).map((_, segment) => corridorSegmentLength(corridor, segment));
   const lastSegment = corridor.points.length - 2;
   let index = 0;
@@ -112,12 +192,12 @@ function placeCamps(corridor: ZoneCorridor, rng: Rng): CampDef[] {
     // stretch backs off the junction with the shorter final leg.
     const start = segment === 0
       ? Math.min(0.42, 20 / Math.max(1, length))
-      : last ? 0.1 : 0.12;
+      : last ? 0.06 : 0.12;
     let end = segment === 1 ? 0.88 : 0.94;
     if (last) {
       // Keep the final camp disc out of the Warden's end clearing. The last
       // camp sits at the widest allowed offset, so it can approach the end.
-      const clearance = CAMP_RADIUS + MOOR_ARENA.radius + 0.5;
+      const clearance = CAMP_RADIUS + MOOR_ARENA.radius + CAMP_ARENA_GAP;
       const lastOffset = 14;
       const along = Math.sqrt(Math.max(0, clearance * clearance - lastOffset * lastOffset));
       end = 1 - along / Math.max(1, length);
@@ -127,20 +207,20 @@ function placeCamps(corridor: ZoneCorridor, rng: Rng): CampDef[] {
 
     for (let member = 0; member < count; member++) {
       const baseT = count > 1 ? start + spacing * member : (start + end) / 2;
-      const t = Math.max(0, Math.min(1, baseT + (rng() - 0.5) * spacing * 0.1));
-      const offset = last
+      const targetT = Math.max(0, Math.min(1, baseT + (rng() - 0.5) * spacing * 0.1));
+      const targetOffset = last
         ? (member === count - 1 ? 14 : range(rng, 12.5, 14))
         : range(rng, 10, 14);
-      const sample: CorridorSample = corridorSample(corridor, segment, t);
       const side = index % 2 === 0 ? 1 : -1;
+      const anchor = chooseCampAnchor(corridor, camps, segment, targetT, targetOffset, side);
       camps.push({
         index,
-        x: sample.x + sample.normalX * offset * side,
-        z: sample.z + sample.normalZ * offset * side,
+        x: anchor.x,
+        z: anchor.z,
         radius: CAMP_RADIUS,
         segment,
         side,
-        offset,
+        offset: anchor.offset,
       });
       index++;
     }
@@ -149,13 +229,17 @@ function placeCamps(corridor: ZoneCorridor, rng: Rng): CampDef[] {
   return camps;
 }
 
+/** Deterministic authored camp anchors for layout tests and QA fixtures. */
+export function placeMoorCamps(seed: number = ZONE_SEED): MoorCamp[] {
+  return placeCamps(MOOR_CORRIDOR, createRng((seed ^ 0x9e3779b9) >>> 0));
+}
+
 export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
-  const campRng = createRng((seed ^ 0x9e3779b9) >>> 0);
   const enemyRng = createRng((seed ^ 0x7f4a7c15) >>> 0);
   const propRng = createRng((seed ^ 0x85ebca6b) >>> 0);
 
-  const bounds = { center: { x: 0, z: 0 }, radius: 90 };
-  const spawn = { x: 0, z: 74 };
+  const bounds = { center: { x: 0, z: 0 }, radius: 106 };
+  const spawn = { ...MOOR_SPAWN };
   const arena = { center: { ...MOOR_ARENA.center }, radius: MOOR_ARENA.radius };
   const portal = { ...MOOR_PORTAL };
   const corridor: ZoneCorridor = {
@@ -163,7 +247,7 @@ export function generateZoneLayout(seed: number = ZONE_SEED): ZoneLayout {
     radius: MOOR_CORRIDOR.radius,
   };
 
-  const camps = placeCamps(corridor, campRng);
+  const camps = placeMoorCamps(seed);
   const props: PropPlacement[] = [];
   const colliders: CircleCollider[] = [];
   const enemySpawns: EnemySpawn[] = [];

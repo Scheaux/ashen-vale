@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { getClass } from '../content/classes';
+import { distanceToCorridor } from '../content/corridor';
 import { getEnemy } from '../content/enemies';
 import type { CircleCollider, EnemySpawn, ZoneLayout } from '../content/types';
-import { createGameState, drainEvents, type GameState, type SimEvent } from '../sim/state';
+import { createEnemyState, createGameState, drainEvents, type GameState, type SimEvent } from '../sim/state';
 import { stepRun } from '../sim/run';
-import { stepEnemies } from './enemyAi';
+import { bossLeashRadius, stepEnemies } from './enemyAi';
 
 /**
  * Deterministic AI fixtures (per tune-enemy-ai): assert state transitions and
@@ -31,6 +32,33 @@ function layoutWith(
 
 function husk(x: number, z: number, elite: EnemySpawn['elite'] = []): EnemySpawn {
   return { enemyId: 'ashen-husk', x, z, elite };
+}
+
+/** Close enough to the arena centre to count as returned home. */
+const BOSS_HOME_SLACK = 0.5;
+
+/** Narrow straight corridor: x in [-10, 10], z in [-30, 30]. */
+function corridorLayout(enemies: EnemySpawn[] = []): ZoneLayout {
+  return {
+    ...layoutWith(enemies),
+    bounds: { center: { x: 0, z: 0 }, radius: 80 },
+    spawn: { x: 0, z: 28 },
+    arena: { center: { x: 0, z: -30 }, radius: 8 },
+    bossSpawn: { enemyId: 'ashen-warden', x: 0, z: -30, elite: [], camp: -1 },
+    corridor: {
+      points: [
+        { x: 0, z: 30 },
+        { x: 0, z: -30 },
+      ],
+      radius: 10,
+    },
+  };
+}
+
+function spawnLeashedWarden(state: GameState): ReturnType<typeof createEnemyState> {
+  const boss = createEnemyState(state.bossSpawn, 'warden-leash');
+  state.enemies.push(boss);
+  return boss;
 }
 
 function run(state: GameState, events: SimEvent[], ticks: number, onTick?: (state: GameState) => void, dt = 1 / 60): void {
@@ -301,5 +329,149 @@ describe('determinism', () => {
     const snap = (s: GameState) => JSON.stringify({ player: s.player, enemies: s.enemies, projectiles: s.projectiles });
     expect(snap(a)).toBe(snap(b));
     expect(evA).toEqual(evB);
+  });
+});
+
+describe('corridor-aware enemy movement', () => {
+  it('clamps a chase to the corridor band, not the broad circle', () => {
+    const layout = corridorLayout([husk(6, 0)]);
+    const state = createGameState(getClass('marauder'), layout);
+    state.player.position = { x: 20, z: 0 }; // beyond the band, within aggro
+    const corridor = layout.corridor!;
+    const enemy = state.enemies[0];
+    let sawChase = false;
+    let maxDistance = 0;
+    for (let i = 0; i < 300; i++) {
+      stepEnemies(state, 1 / 60, []);
+      if (enemy.phase !== 'idle') sawChase = true;
+      maxDistance = Math.max(maxDistance, distanceToCorridor(corridor, enemy.position.x, enemy.position.z));
+    }
+
+    expect(sawChase).toBe(true);
+    expect(maxDistance).toBeLessThanOrEqual(corridor.radius - enemy.radius + 1e-6);
+    // The husk reached the rim instead of stopping at the old circle bounds.
+    expect(maxDistance).toBeGreaterThan(corridor.radius - enemy.radius - 0.2);
+  });
+
+  it('clips a pounce tell and landing to the corridor band', () => {
+    const layout = corridorLayout([{ enemyId: 'mire-skitterer', x: 4, z: 0, elite: [] }]);
+    const state = createGameState(getClass('marauder'), layout);
+    state.player.position = { x: 10.05, z: 0 }; // target just outside the band
+    const corridor = layout.corridor!;
+    const enemy = state.enemies[0];
+    let tell: Extract<SimEvent, { kind: 'telegraph' }> | undefined;
+    let maxDistance = 0;
+
+    for (let i = 0; i < 300; i++) {
+      const events: SimEvent[] = [];
+      stepEnemies(state, 1 / 60, events);
+      tell ??= events.find(
+        (event): event is Extract<SimEvent, { kind: 'telegraph' }> =>
+          event.kind === 'telegraph' && event.shape === 'pounce',
+      );
+      maxDistance = Math.max(maxDistance, distanceToCorridor(corridor, enemy.position.x, enemy.position.z));
+    }
+
+    expect(tell).toBeDefined();
+    // The tell advertises the clipped lane, not the full 5.5-unit pounce.
+    expect(tell!.range).toBeGreaterThan(3);
+    expect(tell!.range).toBeLessThan(5.5);
+    expect(maxDistance).toBeLessThanOrEqual(corridor.radius - enemy.radius + 1e-6);
+  });
+
+  it('keeps legacy enemies on circle bounds when no corridor exists', () => {
+    const layout: ZoneLayout = {
+      ...layoutWith([husk(0, 30)]),
+      bounds: { center: { x: 0, z: 0 }, radius: 32 },
+    };
+    const state = createGameState(getClass('marauder'), layout);
+    expect(state.corridor).toBeUndefined();
+    state.player.position = { x: 0, z: 44 }; // outside the circle, within aggro
+
+    const enemy = state.enemies[0];
+    let sawChase = false;
+    let maxDistance = 0;
+    for (let i = 0; i < 300; i++) {
+      stepEnemies(state, 1 / 60, []);
+      if (enemy.phase !== 'idle') sawChase = true;
+      maxDistance = Math.max(maxDistance, Math.hypot(enemy.position.x, enemy.position.z));
+    }
+
+    expect(sawChase).toBe(true);
+    expect(maxDistance).toBeLessThanOrEqual(state.bounds.radius - enemy.radius + 1e-6);
+  });
+});
+
+describe('Warden arena leash', () => {
+  it('chases while the hero stays inside the leash and never leaves it', () => {
+    const state = createGameState(getClass('marauder'), corridorLayout());
+    const boss = spawnLeashedWarden(state);
+    state.player.position = { x: 0, z: -18 }; // 12 from the arena centre
+    const leash = bossLeashRadius(state);
+    const startGap = Math.hypot(
+      state.player.position.x - boss.position.x,
+      state.player.position.z - boss.position.z,
+    );
+    let chased = false;
+    let maxArenaDistance = 0;
+
+    for (let i = 0; i < 300; i++) {
+      stepEnemies(state, 1 / 60, []);
+      if (boss.phase === 'chase' || boss.phase === 'windup' || boss.phase === 'active') chased = true;
+      maxArenaDistance = Math.max(
+        maxArenaDistance,
+        Math.hypot(boss.position.x - state.arena.center.x, boss.position.z - state.arena.center.z),
+      );
+    }
+
+    const endGap = Math.hypot(
+      state.player.position.x - boss.position.x,
+      state.player.position.z - boss.position.z,
+    );
+    expect(chased).toBe(true);
+    expect(maxArenaDistance).toBeLessThanOrEqual(leash + 1e-6);
+    expect(endGap).toBeLessThan(startGap);
+  });
+
+  it('returns to the arena and de-aggros when the hero retreats beyond the leash', () => {
+    const state = createGameState(getClass('marauder'), corridorLayout());
+    const boss = spawnLeashedWarden(state);
+    state.player.position = { x: 0, z: -18 };
+    for (let i = 0; i < 120; i++) stepEnemies(state, 1 / 60, []);
+    expect(boss.aggro).toBe(true);
+
+    // The hero disengages up the corridor (40 from the arena centre), still
+    // inside the walkable band but well beyond the 18-unit leash.
+    state.player.position = { x: 0, z: 10 };
+    const leash = bossLeashRadius(state);
+    let maxArenaDistance = 0;
+    for (let i = 0; i < 60 * 8; i++) {
+      stepEnemies(state, 1 / 60, []);
+      maxArenaDistance = Math.max(
+        maxArenaDistance,
+        Math.hypot(boss.position.x - state.arena.center.x, boss.position.z - state.arena.center.z),
+      );
+    }
+
+    expect(maxArenaDistance).toBeLessThanOrEqual(leash + 1e-6);
+    expect(boss.phase).toBe('idle');
+    expect(boss.aggro).toBe(false);
+    expect(Math.hypot(
+      boss.position.x - state.arena.center.x,
+      boss.position.z - state.arena.center.z,
+    )).toBeLessThan(BOSS_HOME_SLACK);
+  });
+
+  it('re-engages when the hero steps back inside the leash', () => {
+    const state = createGameState(getClass('marauder'), corridorLayout());
+    const boss = spawnLeashedWarden(state);
+    state.player.position = { x: 0, z: 10 };
+    for (let i = 0; i < 60 * 8; i++) stepEnemies(state, 1 / 60, []);
+    expect(boss.phase).toBe('idle');
+
+    state.player.position = { x: 0, z: -18 };
+    for (let i = 0; i < 30; i++) stepEnemies(state, 1 / 60, []);
+    expect(boss.aggro).toBe(true);
+    expect(boss.phase).not.toBe('idle');
   });
 });
