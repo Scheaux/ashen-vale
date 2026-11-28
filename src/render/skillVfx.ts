@@ -29,6 +29,21 @@ const RING_SEGMENTS = 40;
 /** Hard cap on simultaneous skill transients; oldest is retired first. */
 const MAX_TRANSIENTS = 48;
 
+/**
+ * Flat crescent for a melee slash. RingGeometry angles start on +X; after the
+ * flat X rotation, a thetaStart centred on -PI/2 puts the crescent on +Z,
+ * which is the game's facing 0 (atan2(dx, dz)).
+ */
+export function slashArcGeometry(arcDeg: number): THREE.RingGeometry {
+  const arc = (arcDeg * Math.PI) / 180;
+  return new THREE.RingGeometry(0.65, 2.3, 28, 1, -Math.PI / 2 - arc / 2, arc);
+}
+
+/** Local Z rotation (world Y after the flat X rotation) for a slash facing. */
+export function slashArcRotation(facing: number): number {
+  return facing;
+}
+
 export class SkillVfxLayer {
   private readonly group = new THREE.Group();
   private readonly transients: Transient[] = [];
@@ -102,8 +117,7 @@ export class SkillVfxLayer {
 
   /** Crescent slash for sweeps and charges, lying flat along the committed facing. */
   private spawnArc(color: number, x: number, z: number, facing: number, arcDeg: number): void {
-    const arc = (arcDeg * Math.PI) / 180;
-    const geometry = new THREE.RingGeometry(0.65, 2.3, 28, 1, Math.PI / 2 - arc / 2, arc);
+    const geometry = slashArcGeometry(arcDeg);
     const material = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -114,7 +128,7 @@ export class SkillVfxLayer {
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.rotation.z = -facing;
+    mesh.rotation.z = slashArcRotation(facing);
     const root = new THREE.Group();
     root.position.set(x, this.terrain.heightAt(x, z) + 0.12, z);
     root.add(mesh);
