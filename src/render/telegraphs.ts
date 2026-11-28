@@ -14,6 +14,7 @@ interface TelegraphView {
   rimMaterial: THREE.MeshBasicMaterial;
   /** Tier that produced this tell (normal tells never reach a view). */
   tier: TelegraphTier;
+  shape: Extract<SimEvent, { kind: 'telegraph' }>['shape'];
   /** Seconds since the tell started, plus its advertised duration. */
   age: number;
   duration: number;
@@ -191,6 +192,7 @@ export class TelegraphLayer {
         fillMaterial,
         rimMaterial,
         tier: ev.tier,
+        shape: ev.shape,
         age: 0,
         duration: Math.max(0.15, ev.duration),
         fade: 0,
@@ -229,11 +231,18 @@ export class TelegraphLayer {
   }
 
   /**
-   * QA probe: the first live warning's identity, draped vertex count and the
-   * worst vertex-to-heightfield error (should be float noise, far below 0.03).
-   * Fading ghosts are not warnings and return null when none are active.
+   * QA probe: the first live warning's identity, tier/shape, draped vertex
+   * count and the worst vertex-to-heightfield error (should be float noise,
+   * far below 0.03). Fading ghosts are not warnings and return null when none
+   * are active.
    */
-  probe(): { id: string; vertices: number; maxError: number } | null {
+  probe(): {
+    id: string;
+    tier: TelegraphTier;
+    shape: Extract<SimEvent, { kind: 'telegraph' }>['shape'];
+    vertices: number;
+    maxError: number;
+  } | null {
     for (const [id, view] of this.views) {
       if (!view.active) continue;
       let vertices = 0;
@@ -252,7 +261,7 @@ export class TelegraphLayer {
           maxError = Math.max(maxError, Math.abs(position.getY(i) - (this.terrain.heightAt(x, z) + clearance)));
         }
       }
-      return { id, vertices, maxError };
+      return { id, tier: view.tier, shape: view.shape, vertices, maxError };
     }
     return null;
   }

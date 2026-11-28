@@ -186,6 +186,8 @@ async function main() {
   let normalHiddenDelta = 0;
   let normalCounts = null;
   let normalProbeId = null;
+  let normalNearCues = null;
+  let normalRetreat = null;
   if (isolatedNormal) {
     let hiddenBefore = s.telegraphs.hiddenNormal;
     let sawReadyPhase = false;
@@ -209,17 +211,54 @@ async function main() {
         normalHiddenDelta = now.telegraphs.hiddenNormal - hiddenBefore;
         normalCounts = now.telegraphs;
         normalProbeId = now.probes.telegraph?.id ?? null;
+        normalNearCues = now.enemyCues;
+        // Retreat while the committed windup is still live: the target must
+        // switch from a detailed rig to the far additive cue.
+        const dx = now.playerPos.x - current.x;
+        const dz = now.playerPos.z - current.z;
+        const length = Math.hypot(dx, dz) || 1;
+        await page.evaluate(([x, z]) => {
+          window.__ashen.healPlayer(9999);
+          window.__ashen.teleportPlayer(x, z);
+        }, [current.x + (dx / length) * 22, current.z + (dz / length) * 22]);
+        await sleep(60);
+        const farNow = await snap();
+        const farTarget = farNow.enemies.find((e) => e.id === isolatedNormal.id);
+        if (farTarget && (farTarget.phase === 'windup' || farTarget.phase === 'active')) {
+          normalRetreat = {
+            id: farTarget.id,
+            distance: distanceTo(farTarget, farNow.playerPos),
+            cues: farNow.enemyCues,
+            counts: farNow.telegraphs,
+            probeId: farNow.probes.telegraph?.id ?? null,
+          };
+        }
       }
       await page.evaluate(() => window.__ashen.healPlayer(9999));
     }
   }
+  const cueHas = (cues, id) => cues !== null && (cues.detailed.includes(id) || cues.far.includes(id));
   check('a live normal-enemy windup is observed', normalWindup,
     isolatedNormal ? `${isolatedNormal.type} ${isolatedNormal.id}` : 'no normal enemy');
   check('normal windups stay in the sim but are filtered from rendering',
     normalHiddenDelta > 0, `${normalHiddenDelta} hidden normal tells`);
+  check('the observed near normal windup has a body cue',
+    normalWindup && cueHas(normalNearCues, isolatedNormal?.id),
+    normalNearCues ? JSON.stringify(normalNearCues) : 'no cue sample');
   check('the observed normal windup has no ground-tell view',
-    normalWindup && normalProbeId !== isolatedNormal.id,
-    `probe ${normalProbeId ?? 'null'}, ${normalCounts ? JSON.stringify(normalCounts) : 'no counts'}`);
+    normalWindup && normalCounts.visible === 0 && normalProbeId !== isolatedNormal?.id,
+    `visible ${normalCounts?.visible ?? 'n/a'}, probe ${normalProbeId ?? 'null'}`);
+  check('a normal windup beyond the detail range keeps a far cue',
+    normalRetreat !== null && normalRetreat.distance > 16 && cueHas(normalRetreat.cues, normalRetreat.id),
+    normalRetreat
+      ? `distance ${normalRetreat.distance.toFixed(1)}, ${JSON.stringify(normalRetreat.cues)}`
+      : 'windup resolved before the retreat sample');
+  check('the far normal windup still has no ground tell',
+    normalRetreat !== null && normalRetreat.counts.visible === 0 &&
+    normalRetreat.probeId !== normalRetreat.id,
+    normalRetreat
+      ? `visible ${normalRetreat.counts.visible}, probe ${normalRetreat.probeId ?? 'null'}`
+      : 'no retreat sample');
 
   s = await snap();
   const eliteTarget = [...s.enemies]
@@ -238,14 +277,70 @@ async function main() {
       if (now.telegraphs.visibleElite > 0) eliteTell = now.telegraphs;
       await page.evaluate(() => window.__ashen.healPlayer(9999));
     }
-    const bars = (await snap()).render.healthBars;
-    check('a damaged elite still shows its health bar', bars >= 1, `${bars} bars`);
+    const afterEliteHit = await snap();
+    const eliteNow = afterEliteHit.enemies.find((e) => e.id === eliteTarget.id);
+    const ring = await page.evaluate(([id]) => window.__ashen.eliteRingProbe(id), [eliteTarget.id]);
+    check('a damaged elite still shows its health bar',
+      eliteNow !== undefined && eliteNow.hp < eliteNow.maxHp && afterEliteHit.render.healthBars >= 1,
+      `${eliteNow?.hp ?? '?'}/${eliteNow?.maxHp ?? '?'} hp, ${afterEliteHit.render.healthBars} bars`);
+    check('the damaged elite keeps its aura ring',
+      ring?.present === true && ring.opacity > 0, JSON.stringify(ring));
   }
   check('an elite windup keeps a visible ground tell',
     eliteTell !== null && eliteTell.visibleElite > 0,
     eliteTell ? JSON.stringify(eliteTell) : 'no elite tell within 5s');
   check('elite nameplates are unaffected by the indicator filter',
     (await page.locator('.nameplate').count()) >= 1);
+
+  // --- Dense two-camp pull: >8 normals cannot hide the windup body cue ---
+  s = await snap();
+  const livingNormals = s.enemies.filter((e) => !e.dead && e.elite.length === 0);
+  const localDensity = (enemy) => livingNormals.filter((other) => distanceTo(enemy, other) <= 6).length;
+  const anchors = [...livingNormals].sort((a, b) => localDensity(b) - localDensity(a));
+  const campA = anchors[0];
+  const campB = anchors.find((enemy) => campA && distanceTo(enemy, campA) > 12);
+  let dense = null;
+  if (campA && campB) {
+    const hiddenBefore = s.telegraphs.hiddenNormal;
+    for (const anchor of [campA, campB]) {
+      await page.evaluate(([x, z]) => {
+        window.__ashen.healPlayer(9999);
+        window.__ashen.teleportPlayer(x, z);
+      }, [anchor.x, anchor.z]);
+      await sleep(450);
+    }
+    await page.evaluate(([x, z]) => {
+      window.__ashen.healPlayer(9999);
+      window.__ashen.teleportPlayer(x, z);
+    }, [(campA.x + campB.x) / 2, (campA.z + campB.z) / 2]);
+    for (let i = 0; i < 100 && !dense; i++) {
+      await sleep(100);
+      const now = await snap();
+      await page.evaluate(() => window.__ashen.healPlayer(9999));
+      const nearNormals = now.enemies.filter((e) =>
+        !e.dead && e.elite.length === 0 && distanceTo(e, now.playerPos) <= 16).length;
+      const target = now.enemies.find((e) =>
+        !e.dead && e.elite.length === 0 && nearNormals > 8 &&
+        (e.phase === 'windup' || e.phase === 'active') &&
+        (now.enemyCues.detailed.includes(e.id) || now.enemyCues.far.includes(e.id)));
+      if (target) {
+        dense = {
+          targetId: target.id,
+          nearNormals,
+          hiddenDelta: now.telegraphs.hiddenNormal - hiddenBefore,
+          cues: now.enemyCues,
+          counts: now.telegraphs,
+        };
+      }
+    }
+  }
+  check('a dense pull puts more than eight normals within detail range',
+    dense !== null && dense.nearNormals > 8,
+    dense ? `${dense.nearNormals} normals near ${dense.targetId}` : 'no dense windup within 10s');
+  check('a windup in the dense pull still carries a body cue while its ground tell is filtered',
+    dense !== null && dense.hiddenDelta > 0 &&
+    (dense.cues.detailed.includes(dense.targetId) || dense.cues.far.includes(dense.targetId)),
+    dense ? `${JSON.stringify(dense.cues)}, hidden +${dense.hiddenDelta}` : 'no dense sample');
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
 

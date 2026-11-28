@@ -136,6 +136,8 @@ export interface AshenDebug {
     hazards: number;
     /** Ground-tell visibility by tier plus filtered normal tells. */
     telegraphs: ReturnType<TelegraphLayer['counts']>;
+    /** Windup body-cue coverage: detailed rigs vs far additive halos. */
+    enemyCues: ReturnType<EnemyViews['probeWindupCues']>;
     camera: { yaw: number; pitch: number; distance: number };
     markers: {
       hover: { x: number; y: number; z: number } | null;
@@ -217,6 +219,8 @@ export interface AshenDebug {
   propProbe(): ReturnType<PropsView['probe']>;
   /** Review fixture: force one prop's fade; null resumes occlusion. */
   propFadeAt(x: number, z: number, fade: number | null): boolean;
+  /** Review fixture: elite aura ring presence/opacity for one enemy. */
+  eliteRingProbe(enemyId: string): ReturnType<EnemyViews['probeEliteRing']>;
   /** Review fixture: heal to keep multi-step QA flows stable under pack pressure. */
   healPlayer(amount: number): void;
   /** Review fixture: grant XP to reach the level-up edge state. */
@@ -1435,6 +1439,7 @@ class Game {
       strikes: state?.strikes.length ?? 0,
       hazards: state?.hazards.length ?? 0,
       telegraphs: this.telegraphs.counts(),
+      enemyCues: this.enemyViews.probeWindupCues(),
       camera: { yaw: this.rig.yaw, pitch: this.rig.pitch, distance: this.rig.distance },
       markers: this.cursor.probe(),
       probes: {
@@ -1613,6 +1618,10 @@ class Game {
     return this.propsView.forceFadeAt(x, z, fade);
   }
 
+  eliteRingProbe(enemyId: string): ReturnType<AshenDebug['eliteRingProbe']> {
+    return this.enemyViews.probeEliteRing(enemyId);
+  }
+
   hazardPoints(): ReturnType<AshenDebug['hazardPoints']> {
     const state = this.state;
     if (!state) return [];
@@ -1756,6 +1765,7 @@ const game = new Game(canvas, uiRoot);
   sceneryPoints: () => game.sceneryPoints(),
   propProbe: () => game.propProbe(),
   propFadeAt: (x, z, fade) => game.propFadeAt(x, z, fade),
+  eliteRingProbe: (enemyId) => game.eliteRingProbe(enemyId),
   exportSave: () => game.exportSave(),
   saves: () => game.saves(),
 };

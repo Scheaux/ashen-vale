@@ -32,6 +32,7 @@ const HIT_DURATION = 0.26;
 const DEATH_DURATION = 1.4;
 const MAX_BARS = 64;
 const MAX_BLOBS = 96;
+const MAX_FAR_CUES = 96;
 /** Detailed jointed rigs are only worth their draw calls up close. */
 const DETAIL_RANGE = 16;
 /** Hard cap on jointed rigs: silhouettes cover the rest without a call spike. */
@@ -45,6 +46,36 @@ const BODY_HEIGHT: Record<EnemyState['defId'], number> = {
   'ashen-warden': 2.9,
 };
 
+export interface DetailedSlotCandidate {
+  id: string;
+  boss: boolean;
+  distance: number;
+  visible: boolean;
+  /** True while the enemy is committed to a strike (windup or active). */
+  windup: boolean;
+}
+
+/**
+ * Detail budget selection. A windup/active enemy inside the detail range always
+ * gets a jointed rig first (nearest first if the cap is exceeded), so a dense
+ * pull cannot hide the only body-language tell behind eight idle rigs. Beyond
+ * the range the far-silhouette halo carries the cue. The boss keeps its rig
+ * next, then nearby on-screen enemies fill the remaining slots.
+ */
+export function selectDetailedIds(
+  candidates: readonly DetailedSlotCandidate[],
+  max = MAX_DETAILED,
+): string[] {
+  const eligible = candidates.filter((candidate) =>
+    candidate.boss || (candidate.visible && candidate.distance <= DETAIL_RANGE));
+  const byDistance = (a: DetailedSlotCandidate, b: DetailedSlotCandidate): number =>
+    a.distance - b.distance;
+  const windups = eligible.filter((candidate) => candidate.windup).sort(byDistance);
+  const bosses = eligible.filter((candidate) => !candidate.windup && candidate.boss).sort(byDistance);
+  const rest = eligible.filter((candidate) => !candidate.windup && !candidate.boss).sort(byDistance);
+  return [...windups, ...bosses, ...rest].slice(0, max).map((candidate) => candidate.id);
+}
+
 /** Soft radial blob used as a cheap contact shadow for enemy rigs. */
 function createBlobTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -54,6 +85,21 @@ function createBlobTexture(): THREE.CanvasTexture {
   gradient.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
   gradient.addColorStop(0.55, 'rgba(0, 0, 0, 0.3)');
   gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(canvas);
+}
+
+/** Warm additive halo: the far-silhouette windup cue (never a ground tell). */
+function createWindupGlowTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const context = canvas.getContext('2d')!;
+  const gradient = context.createRadialGradient(32, 32, 1, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+  gradient.addColorStop(0.3, 'rgba(255, 220, 180, 0.55)');
+  gradient.addColorStop(0.7, 'rgba(255, 130, 70, 0.2)');
+  gradient.addColorStop(1, 'rgba(255, 90, 40, 0)');
   context.fillStyle = gradient;
   context.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(canvas);
@@ -142,6 +188,7 @@ export class EnemyViews {
   private readonly barBg: THREE.InstancedMesh;
   private readonly barFill: THREE.InstancedMesh;
   private readonly blob: THREE.InstancedMesh;
+  private readonly farCue: THREE.InstancedMesh;
   private readonly barMatrix = new THREE.Matrix4();
   private readonly barPos = new THREE.Vector3();
   private readonly barScale = new THREE.Vector3();
@@ -153,6 +200,10 @@ export class EnemyViews {
   private readonly blobPosition = new THREE.Vector3();
   private readonly blobQuaternion = new THREE.Quaternion();
   private readonly blobScale = new THREE.Vector3();
+  private readonly farCueMatrix = new THREE.Matrix4();
+  private readonly farCuePosition = new THREE.Vector3();
+  private readonly farCueScale = new THREE.Vector3();
+  private readonly cueIds: { detailed: string[]; far: string[] } = { detailed: [], far: [] };
   private readonly frustum = new THREE.Frustum();
   private readonly projectionScreen = new THREE.Matrix4();
   private readonly boundingSphere = new THREE.Sphere();
@@ -211,6 +262,26 @@ export class EnemyViews {
     this.blob.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.group.add(this.blob);
 
+    const cueGeometry = new THREE.PlaneGeometry(1, 1);
+    this.farCue = new THREE.InstancedMesh(
+      cueGeometry,
+      new THREE.MeshBasicMaterial({
+        map: createWindupGlowTexture(),
+        color: 0xff8a50,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      }),
+      MAX_FAR_CUES,
+    );
+    this.farCue.count = 0;
+    this.farCue.frustumCulled = false;
+    this.farCue.renderOrder = 4;
+    this.farCue.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.group.add(this.farCue);
+
     // Build all silhouettes once so the first distant archetype never hitches
     // and the GPU resource count is stable across run/quit cycles.
     for (const def of ENEMIES) this.farGeometryFor(def.id);
@@ -253,6 +324,35 @@ export class EnemyViews {
     return this.barBg.count;
   }
 
+  /**
+   * Windup cue coverage: detailed rigs and far additive halos carrying the
+   * body-language tell, with ids for targeted browser checks.
+   */
+  probeWindupCues(): {
+    detailedWindups: number;
+    farWindups: number;
+    detailed: string[];
+    far: string[];
+  } {
+    return {
+      detailedWindups: this.cueIds.detailed.length,
+      farWindups: this.cueIds.far.length,
+      detailed: [...this.cueIds.detailed],
+      far: [...this.cueIds.far],
+    };
+  }
+
+  /** QA probe: elite aura ring presence/opacity for one enemy view. */
+  probeEliteRing(enemyId: string): { present: boolean; opacity: number } | null {
+    const view = this.views.get(enemyId);
+    if (!view) return null;
+    if (!view.eliteRing) return { present: false, opacity: 0 };
+    return {
+      present: true,
+      opacity: (view.eliteRing.material as THREE.MeshBasicMaterial).opacity,
+    };
+  }
+
   clear(): void {
     for (const view of this.views.values()) {
       disposeMeshTree(view.model.root);
@@ -265,6 +365,9 @@ export class EnemyViews {
     this.barBg.count = 0;
     this.barFill.count = 0;
     this.blob.count = 0;
+    this.farCue.count = 0;
+    this.cueIds.detailed.length = 0;
+    this.cueIds.far.length = 0;
   }
 
   /** Consume authoritative events: damage -> hit flinch + flash. */
@@ -293,23 +396,28 @@ export class EnemyViews {
     this.projectionScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projectionScreen);
 
-    // Detail budget: on-screen rigs near the hero get jointed animation;
-    // everyone else keeps a one-call silhouette (the boss always keeps its rig).
+    // Detail budget: a windup/active enemy always gets a rig (nearest first
+    // over the cap), then the boss and nearby on-screen enemies fill the rest.
     this.detailedIds.clear();
-    const candidates = state.enemies
-      .map((enemy) => ({
-        id: enemy.id,
-        defId: enemy.defId,
-        distance: Math.hypot(
-          enemy.position.x - state.player.position.x,
-          enemy.position.z - state.player.position.z,
-        ),
-        visible: this.isOnScreen(enemy),
-      }))
-      .filter((candidate) =>
-        candidate.defId === 'ashen-warden' || (candidate.distance <= DETAIL_RANGE && candidate.visible))
-      .sort((a, b) => a.distance - b.distance);
-    for (const candidate of candidates.slice(0, MAX_DETAILED)) this.detailedIds.add(candidate.id);
+    const candidates: DetailedSlotCandidate[] = state.enemies.map((enemy) => ({
+      id: enemy.id,
+      boss: enemy.defId === 'ashen-warden',
+      distance: Math.hypot(
+        enemy.position.x - state.player.position.x,
+        enemy.position.z - state.player.position.z,
+      ),
+      visible: this.isOnScreen(enemy),
+      windup: !enemy.dead && (enemy.phase === 'windup' || enemy.phase === 'active'),
+    }));
+    for (const id of selectDetailedIds(candidates)) this.detailedIds.add(id);
+
+    this.cueIds.detailed.length = 0;
+    for (const enemy of state.enemies) {
+      if (this.detailedIds.has(enemy.id) && !enemy.dead &&
+        (enemy.phase === 'windup' || enemy.phase === 'active')) {
+        this.cueIds.detailed.push(enemy.id);
+      }
+    }
 
     for (const enemy of state.enemies) {
       let view = this.views.get(enemy.id);
@@ -320,6 +428,7 @@ export class EnemyViews {
       }
       this.updateView(view, enemy, dt, alpha);
     }
+    this.updateFarCues(state, camera);
     this.updateBars(state, camera);
     this.updateBlobs(state);
     this.bossId = state.enemies.find((enemy) => enemy.defId === 'ashen-warden' && !enemy.dead)?.id ?? null;
@@ -490,6 +599,35 @@ export class EnemyViews {
       const mat = view.eliteRing.material as THREE.MeshBasicMaterial;
       mat.opacity = 0.4 + 0.18 * (0.5 + 0.5 * Math.sin(performance.now() / 420));
     }
+  }
+
+  /**
+   * One instanced additive halo for far-silhouette windups. The halo is
+   * billboarded and body-height (not on the ground), so it survives the detail
+   * cap and any retreat beyond DETAIL_RANGE without becoming a ground tell.
+   */
+  private updateFarCues(state: GameState, camera: THREE.Camera): void {
+    this.cueIds.far.length = 0;
+    let count = 0;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 120);
+    const material = this.farCue.material as THREE.MeshBasicMaterial;
+    material.opacity = 0.34 + 0.3 * pulse;
+    const grow = 1 + 0.18 * pulse;
+    for (const enemy of state.enemies) {
+      if (count >= MAX_FAR_CUES) break;
+      if (enemy.dead || this.detailedIds.has(enemy.id)) continue;
+      if (enemy.phase !== 'windup' && enemy.phase !== 'active') continue;
+      const view = this.views.get(enemy.id);
+      if (!view || !view.far.visible) continue;
+      const body = BODY_HEIGHT[enemy.defId];
+      this.farCuePosition.set(view.far.position.x, view.far.position.y + body * 0.5, view.far.position.z);
+      this.farCueScale.set(enemy.radius * 3.2 * grow, body * 1.05 * grow, 1);
+      this.farCueMatrix.compose(this.farCuePosition, camera.quaternion, this.farCueScale);
+      this.farCue.setMatrixAt(count++, this.farCueMatrix);
+      this.cueIds.far.push(enemy.id);
+    }
+    this.farCue.count = count;
+    if (count > 0) this.farCue.instanceMatrix.needsUpdate = true;
   }
 
   /** One instanced background + one instanced fill draw call for every visible bar. */
